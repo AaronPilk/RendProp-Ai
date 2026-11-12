@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "asset": "clip-frames-known-good.mp4",
+  "sha256": "b16c9f4cb5aaf826f9820ac4846a44c54fbe989c861b88f925095d789ccc60a3",
+  "bytes": 10369,
+  "codec": "h264",
+  "width": 96,
+  "height": 64,
+  "frames": 60,
+  "frameRate": "30/1",
+  "durationSeconds": 2.0,
+  "createdWith": "Original unchanged makeVideo fixture logic, local actual iOS AVAssetWriter; diagnostic-only observations/error descriptions added, timing/frame generation/appends/assertions unchanged.",
+  "generatorSource": "ClipFramesFixtureWriter.swift.txt",
+  "generatorSourceSHA256": "9fc7aaad823cee28fa141b71fcea96ed8c6d07415c7e382404733309ca62bea4",
+  "originalRepositoryFixture": "apps/ios/tests/ClipFramesTests.swift",
+  "originalFixtureSHA256": "98fe315552de995eef9adf960e553fb4726696ba5fda5e299e284d7ac999aa63",
+  "originalGeneratorBodySHA256": "cdedf0fbcadcafbb993f2362cf3339a3a8aff483e16a2bed8a5144999e05220d",
+  "generationSourceCommit": "c60e4c20f39cfdef3ab0609677100d931886bffd",
+  "sameCoveredSourceAtPriorGreenCommit": "a6cf755dc462280b584a185b9f29b80d8a44b62f",
+  "generationRuntime": "Local Xcode26.4.1 / iOS26.4 simulator, command-line executable; no UI or app launch.",
+  "pixelRecipe": "For each BGRA pixel: B=30+frame, G=50+x, R=70+y, A=255;60frames at30fps.",
+  "hostedFailure": {
+    "run": "38501706161",
+    "commit": "c60e4c20f39cfdef3ab0609677100d931886bffd",
+    "job": 115649941098,
+    "stage": "Original synthetic encoder input readiness10second timeout, before decoder assertions.",
+    "SDK": "iOS26.5 / Xcode26.6",
+    "cause": "Underlying hosted writer status/error/frame were not logged and remain unresolved."
+  },
+  "changeReason": "This gate tests production decoding/extension normalization, not encoder availability. Pinning known-good identical bytes removes unrelated test-fixture encoder startup. It does not turn the failed hosted gate into a pass, rerun CI, prove the hosted writer recovered, or modify production. All16 decoder assertions and both compiled failure controls remain."
+}

@@ -43,7 +43,12 @@ import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts"
 import { adminClient, isServiceRole } from "../_shared/supabase.ts";
 import * as apns from "./apns.ts";
 import * as email from "./email.ts";
-import { deliverEmail, deliverPush, type DeviceRow, type OutboxRow } from "./deliver.ts";
+import { deliverEmail, deliverPush, type DeviceRow, type OperationalEmailState, type OutboxRow } from "./deliver.ts";
+import { prepareClientMessage } from "./client-delivery.ts";
+import { hostingNoticeCurrent } from "../_shared/hosting-retention.ts";
+import { opsAlertCurrent } from "../_shared/ops-alert.ts";
+import {propertyVideoJob,propertyVideoNoticeCurrent,propertyVideoDeviceCurrent}from'./property-video.ts';
+import { leadNoticeCurrent } from "./lead-access.ts";
 
 /** Same default as functions/me: the routed domain, never rendprop.app. */
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -110,6 +115,10 @@ async function handleDrain(limit: number): Promise<Response> {
     ...r,
     payload: (r.payload && typeof r.payload === "object" ? r.payload : {}) as Record<string, unknown>,
   }));
+  // An ops push has no native destination. If its paired email was claimed in
+  // this batch, deliver that actionable channel first so the push can close
+  // only after the email has a confirmed provider receipt.
+  rows.sort((a, b) => Number(b.category === "ops_alert" && b.channel === "email") - Number(a.category === "ops_alert" && a.channel === "email"));
   if (rows.length === 0) {
     return json({
       ok: true,
@@ -133,8 +142,9 @@ async function handleDrain(limit: number): Promise<Response> {
   // user_id is nullable since 0053 (an invitee has no account), and a row that
   // carries its own to_email needs no lookup at all — so both are filtered out
   // before the profile query rather than being sent as nulls.
+  const explicitRecipient = (row: OutboxRow) => ["team_invite", "client_lead_received", "client_recipient_verification"].includes(row.category);
   const mailUsers = [...new Set(
-    rows.filter((r) => r.channel === "email" && !r.to_email && r.user_id).map((r) => r.user_id as string),
+    rows.filter((r) => r.channel === "email" && !explicitRecipient(r) && r.user_id).map((r) => r.user_id as string),
   )];
 
   const devicesByUser = new Map<string, DeviceRow[]>();
@@ -153,9 +163,12 @@ async function handleDrain(limit: number): Promise<Response> {
   }
 
   const emailByUser = new Map<string, string>();
+  let emailLookupFailed = false;
   if (mailUsers.length > 0 && email.configured()) {
-    const { data, error } = await admin.from("profiles").select("id, email").in("id", mailUsers);
-    if (error) console.error("profile lookup failed:", error.message);
+    // Editable profile contact details never select a private notification
+    // destination. Only the current verified, named Auth identity can do that.
+    const { data, error } = await admin.rpc("notification_verified_recipients", { p_users: mailUsers });
+    if (error) { emailLookupFailed = true; console.error("verified notification recipient lookup failed"); }
     for (const p of (data ?? []) as Array<{ id: string; email: string | null }>) {
       const address = (p.email ?? "").trim();
       if (address) emailByUser.set(p.id, address);
@@ -170,13 +183,40 @@ async function handleDrain(limit: number): Promise<Response> {
 
   for (const row of rows) {
     try {
+      if (["first_tour_nudge", "free_week_ending"].includes(row.category)) {
+        await mark(row.id, "skipped", "Promotional lifecycle messages are disabled until explicit marketing opt-in is supported.", null);
+        skipped++; continue;
+      }
+      if (row.channel === "email" && !explicitRecipient(row) && emailLookupFailed) throw new Error("Verified notification recipient lookup is temporarily unavailable.");
+      const clientMessage=["client_lead_received", "client_recipient_verification"].includes(row.category) && email.configured() ? await prepareClientMessage(admin,row) : undefined;
+      // null means SQL already canceled/expired this claim. Do not revive it.
+      if(clientMessage===null){skipped++;continue;}
+      if(!await hostingNoticeCurrent(admin,row)){skipped++;continue;}
+      // An admin alert is re-validated at delivery: the finding must still be
+      // present and the recipient must still be an admin, or SQL expires it.
+      if(!await opsAlertCurrent(admin,row)){skipped++;continue;}
+      if(!await propertyVideoNoticeCurrent(admin,row)){await mark(row.id,"skipped","The private video job or account access changed.",null);skipped++;continue;}
+      if(!await leadNoticeCurrent(admin,row)){await mark(row.id,"skipped","Inquiry or account access changed.",null);skipped++;continue;}
+      let operationalEmailState: OperationalEmailState = "missing";
+      if (row.channel === "push" && row.category === "ops_alert" && row.user_id && row.dedupe_key.endsWith(":push")) {
+        const emailKey = row.dedupe_key.slice(0, -":push".length) + ":email";
+        const { data: pair, error: pairError } = await admin.from("notification_outbox")
+          .select("state,sent_at")
+          .eq("dedupe_key", emailKey).eq("user_id", row.user_id)
+          .eq("category", "ops_alert").eq("channel", "email").maybeSingle();
+        if (pairError) operationalEmailState = "lookup_unavailable";
+        else if (pair?.state === "sent") operationalEmailState = pair.sent_at ? "sent" : "lookup_unavailable";
+        else if (pair && ["queued", "sending", "failed", "skipped", "expired"].includes(pair.state)) {
+          operationalEmailState = pair.state as OperationalEmailState;
+        }
+      }
       const outcome = row.channel === "push"
-        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE)
+        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE,fetch,propertyVideoJob(row)?device=>propertyVideoDeviceCurrent(admin,row,device):row.category==="lead_received"?()=>leadNoticeCurrent(admin,row):undefined,operationalEmailState)
         // to_email wins. An invitee has no profile to look an address up
         // from — that is precisely what is being invited — so the row carries
         // the destination itself (migration 0053). Ordinary rows leave it null
-        // and fall through to the profile lookup exactly as before.
-        : await deliverEmail(row, row.to_email ?? (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE);
+        // and fall through to the verified Auth lookup.
+        : await deliverEmail(row, explicitRecipient(row) ? row.to_email ?? null : (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE,fetch,clientMessage);
       disabledTokens.push(...outcome.deadTokens);
 
       await mark(row.id, outcome.state, outcome.reason, outcome.providerId);

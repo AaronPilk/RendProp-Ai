@@ -127,5 +127,6 @@ struct DriftCheckRequest: Sendable {
     var spaceType: String?
     var listingServerID: UUID?
     var provenanceID: String?
+    var sourceAssetID: String? = nil
     var attempt: Int = 1
 }

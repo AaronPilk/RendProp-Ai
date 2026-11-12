@@ -1,3 +1,4 @@
+import {isPrivateMediaURL,privateMediaCapability,type PrivateMediaScope} from "../../data/private-media";
 import type { Listing } from "../../data/contracts";
 
 export type Edit =
@@ -333,9 +334,10 @@ export type CreativeResult = {
   qcPublishable: boolean;
   qcMessage: string | null;
 };
-function mediaLink(value: unknown): string | null {
+function mediaLink(value: unknown, scope?: PrivateMediaScope): string | null {
   if (!value) return null;
   const parsed = new URL(requiredText(value, "a media link", 8192));
+  if(isPrivateMediaURL(parsed.href)){if(!scope)throw new Error("Refresh this account before downloading saved media.");privateMediaCapability(parsed.href,scope);return parsed.href;}
   if (
     parsed.protocol !== "https:" ||
     !/^[a-f0-9]{32}\.r2\.cloudflarestorage\.com$/.test(parsed.hostname) ||
@@ -343,12 +345,12 @@ function mediaLink(value: unknown): string | null {
   ) throw new Error("The creative result has an invalid media link.");
   return parsed.href;
 }
-export function decodeResult(value: unknown): CreativeResult {
+export function decodeResult(value: unknown, scope?: PrivateMediaScope): CreativeResult {
   const r = record(value), id = requiredText(r.id, "a result identifier", 80);
   if (
     !/^[a-f0-9-]{36}$/i.test(id) || !["voice", "video"].includes(String(r.kind))
   ) throw new Error("The creative service returned an invalid result.");
-  const url = mediaLink(r.url);
+  const url = mediaLink(r.url, scope);
   return {
     id,
     kind: r.kind as "voice" | "video",
@@ -357,7 +359,7 @@ export function decodeResult(value: unknown): CreativeResult {
     expiresAt: text(r.expires_at, 80) || null,
     assetId: text(r.asset_id, 80) || null,
     sourceAssetId: text(r.source_asset_id, 80) || null,
-    sourceUrl: mediaLink(r.source_url),
+    sourceUrl: mediaLink(r.source_url, scope ? {...scope,bucket:"renders",key:undefined,review:undefined} : undefined),
     provenanceId: text(r.provenance_id, 80) || null,
     requestId: text(r.request_id, 500) || null,
     label: text(r.label, 80),

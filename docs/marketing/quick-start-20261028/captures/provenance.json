@@ -1,0 +1,506 @@
+{
+  "toolbox-clean": {
+    "file": "toolbox-clean.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "47e3dbac37b61c058906d510e047a1eb71a257aab715de64a68ee075c5dc51be",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "54e61c135c82f13b8d6faee1d8dd12ed84293d271d537b128f841d7dc5e3752f"
+  },
+  "video-choose-photos": {
+    "file": "video-choose-photos.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "14f2cef114b14f63889dd2feb6a1c82b0bcd9f50fc3fdb6cc8e1d747c2708516",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "d0881dff5cde9123f267fc77d76adef3c596ca48feb7f2a63b69d6b3a0d77e2c"
+  },
+  "video-review": {
+    "file": "video-review.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "1b0476637ff861f9ac5e9e0d3e4f7fde1b2328461133485db77b5d14d9ea3b17",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "cbafddcc76973e6b7ba478df9ec014f72208c5b48ffa3ecd87203f3376150994"
+  },
+  "sim-studio": {
+    "file": "sim-studio.jpg",
+    "source": "Current app simulator XCUITest capture, Build 130 source",
+    "original_sha256": "0ad7ddf4b2fffe031c46afb9e39474ae58d00a3582597cc8887dde7f371aa3ae",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "0fa34b67984d145c73d032f7e78db797e49291b2a16453d9549e71b9448a979e"
+  },
+  "sim-photos": {
+    "file": "sim-photos.jpg",
+    "source": "Current app simulator XCUITest capture, Build 130 source",
+    "original_sha256": "d5897fa7706f5566563d6d30759c9bafedb1201d0537d20afdb58e16e7c6cdc4",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "67733bc84448e17d95ca3e459c48b7cf09e7792ee6e23a2348edaf19362d6c4c"
+  },
+  "sim-contact": {
+    "file": "sim-contact.jpg",
+    "source": "Current app simulator XCUITest capture, Build 130 source",
+    "original_sha256": "2c163b31ef585f7bfb28e53005e921710cc3e4f781a0c326b8d2f42ad4ec5779",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "19c58da216f906229e70502aa6f97f94ced68d9d7ff8788aa820b673a203205f"
+  },
+  "sim-aerial-status": {
+    "file": "sim-aerial-status.jpg",
+    "source": "Current app simulator XCUITest capture, Build 130 source",
+    "original_sha256": "326325142f2b1adfd714c42556b96a298c87562796ba077a3a6ddc5df64c3f4f",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "271833d9d584140a42251c1fdbcc2ca7f7b270e141a72217617f244decbcc4b0"
+  },
+  "sim-share-zip": {
+    "file": "sim-share-zip.jpg",
+    "source": "Current app simulator XCUITest capture, Build 130 source",
+    "original_sha256": "03d8d6b25ac4e9fbc773ccf65792e687bab8def1eb5fc6cfe06370247b8e2fdf",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "c03610129f75060344ab1d9e142702465d349a27831b84d5e5589c25722ac0fe"
+  },
+  "sim-video-review": {
+    "file": "sim-video-review.jpg",
+    "source": "Current app simulator XCUITest capture, Build 130 source",
+    "original_sha256": "eba88cf052e5969944ba0df09f89d0e081efdffedad592a1d19f6ca982bbe690",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "624e19eadf9805b40b0db5dbca5403310da695741b7a272c4790db4fd0175254"
+  },
+  "sim-share-everything": {
+    "file": "sim-share-everything.jpg",
+    "source": "Current app simulator XCUITest capture, Build 130 source",
+    "original_sha256": "c5024fcd82a20d252141d672fedde0c67ac11ca86fd3ccbc13ee1fa86ce6a7d9",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "413863cc19c37c677a84942ffa27332de85d50d2f4d388dd17f608d131ec862d"
+  },
+  "photos-original-grid": {
+    "file": "photos-original-grid.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "bbf18917fa4f6615fe18ba378f85957985d5c08bae1446e51cb376b35e154d31",
+    "file_sha256": "1c521e24a1b0e964ff87f534e667f160dbfea4d71e2c00e2a89df6aedbcd4756",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "photos-decluttered-selection": {
+    "file": "photos-decluttered-selection.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "d2b335dd62e35fb0fe0f0a9646c65301a6eb99f6861776f98969656d5f45d5df",
+    "file_sha256": "527be937c61cbe1f554be89263bcb83dd3a7258f9085f055a8f054796a496841",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "photo-versions-original": {
+    "file": "photo-versions-original.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "6f24a43e4d9a1cf5bde821fb125d73f30890bb7986fbaf0e078a07dcf957a454",
+    "file_sha256": "68bdff25a490dc47e115d98b7b17a5b8faef5a6f61da94dddab4a936e578e675",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "photo-versions-decluttered": {
+    "file": "photo-versions-decluttered.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "83fcf65eabe5db2aa9f67e797bf44fcd1406fdac8a3aa61dd60b16b22df77ff3",
+    "file_sha256": "195b2ec922c01a671d6ed43cbc2653a26b3e68f973f64e926951ef53ff075b49",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "photo-compare-original": {
+    "file": "photo-compare-original.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "df64487fda2724aabaff325b43cb72d01bd426bef14c0727fd92406dbc600412",
+    "file_sha256": "dcd1adb4c69879df519d557f04c5e05d0147f366f58735eb4d13fba5d9c1feed",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "photo-compare-edited": {
+    "file": "photo-compare-edited.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "aec4bc1c335a3058160921f486003206a8ad04d38f7f5bd2c1fc58d061e524c2",
+    "file_sha256": "ac6dc02609355b9f0a53095658cf87ed77cff6069df01f736ee1fefd2536be99",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "activity-ready": {
+    "file": "activity-ready.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "6ccb9308a1fd8252bae7305a4a7325d5042bfee7353ff9df88552f2fde3af3c9",
+    "file_sha256": "fbd732b2ddb668f1dacc0eb45f6bd91a2cc8d91c2e4524a7d95ebe9c489b25a9",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "activity-needs-attention": {
+    "file": "activity-needs-attention.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "a8a0c05b5bad426dbc9245b22dc171cc9c0846d155a8ca4c457861f4c04b115c",
+    "file_sha256": "46d20a97668366aa482a5e533de847641097caed1fdaf0a67c3f6d9995f4b609",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "activity-aerial-review-detail": {
+    "file": "activity-aerial-review-detail.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "2ce8467a8b371c4680b5f4c6bd32d3b8a4d92c449d01aac7f89bf0fc58ffae0f",
+    "file_sha256": "fe32ef58fc5015873c30c6b000005acc3efe33c054bba5ec50edb5c60278a407",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "settings": {
+    "file": "settings.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "a07589102e136c59d56c6d634a96c2fc84144d2fb1f7f494ee60d172b609c9c6",
+    "file_sha256": "a53efde49b1720f62f4a8344401df8c7892987bbb0e7a1035fe4fbfa84d64de7",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false
+  },
+  "activity-ready-clean": {
+    "file": "activity-ready-clean.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "6ccb9308a1fd8252bae7305a4a7325d5042bfee7353ff9df88552f2fde3af3c9",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "4bce02b18551768bfb4a66757f651479852cdc81fbce454fb71bec8a73511925"
+  },
+  "activity-needs-attention-clean": {
+    "file": "activity-needs-attention-clean.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "a8a0c05b5bad426dbc9245b22dc171cc9c0846d155a8ca4c457861f4c04b115c",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "19c9357dcea66824b07fc2897890c3f1cb60476aed249cb0c1b787c8bf5f3da8"
+  },
+  "activity-aerial-review-detail-clean": {
+    "file": "activity-aerial-review-detail-clean.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "2ce8467a8b371c4680b5f4c6bd32d3b8a4d92c449d01aac7f89bf0fc58ffae0f",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "a392af28dff697672004422893fdfccd422e97a7ecfc4c73ab8d21b87cc94bd8"
+  },
+  "live-property-site-hero": {
+    "file": "live-property-site-hero.jpg",
+    "source": "Current live mobile browser, rendprop.com public property site, 390px viewport, 2026-10-28",
+    "original_sha256": "aabca5d3979121768cacac033a64c8b1b42c8574489f8205e190e64ecf4904ff",
+    "capture_crop": null,
+    "synthetic_fixture_content": false,
+    "file_sha256": "b1612fe6b7e8e4d10730cc536a74459fc6e7c73c9f95333c54ef85aacfdab345"
+  },
+  "credits-balance": {
+    "file": "credits-balance.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "96d51164b7cf1020f325c685864d1d4e0fdf1a6cd72b87b465a5770a40feacc8",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "82ff0b97d96a1eea875d24ee2a9e3c46ccdfb58090afb5fa2967bd776d3a04e9"
+  },
+  "my-listings": {
+    "file": "my-listings.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "75d64f40aa159a3583eca153408eb11285e58e3f5924c80995b6cdd23c7eb3bd",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "88da4004ab4a88213bcc1bd9354ee3bcf10e045b8d6d11311d483cb362d58cfd"
+  },
+  "settings-clean": {
+    "file": "settings-clean.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "a07589102e136c59d56c6d634a96c2fc84144d2fb1f7f494ee60d172b609c9c6",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "991a2f4b34915bd2f1d368da098074fd83709b2b2e2ab9a7e2bca37e6431c125"
+  },
+  "website-share-links": {
+    "file": "website-share-links.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "6b4347c14ca8b06a1b5f555ae86cc467ba1fda3a01eb7a14ddded983c173941a",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "3c92ccae4b015cb20e105011c35775ec8c14946ae19fd959ecddfd882a8188fc"
+  },
+  "website-design-classic": {
+    "file": "website-design-classic.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "35f933a14ef8651d646f58e2dc533e1ac5c5f5e0c61bd2bb8c884e5b6bf95b0b",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "a422c9adf578a03b962a2319c437b522c8b990ab54e1b292acaaa2fec82d45b0"
+  },
+  "website-design-signature": {
+    "file": "website-design-signature.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "67634e6d6bf6baed844bcd4afe7769ac53f8fceee1786cdae18877c8d8a79d47",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "275fcc71548a0274c2806248434c7cd1e6360364a4a7f33cd8ea689e601af0f1"
+  },
+  "website-design-coastal": {
+    "file": "website-design-coastal.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "03fb5dc26674b03a3c417a6b52cf4fc6ca87807a02ea31bd2ff7ad042070fa7c",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "f2441ee7a5c10ba0a12f7bd2934f933dad5656f300e08558263051623867b186"
+  },
+  "live-property-site-gallery": {
+    "file": "live-property-site-gallery.jpg",
+    "source": "Current live mobile browser, rendprop.com public property site, 390px viewport, 2026-10-28",
+    "original_sha256": "70548483ef037ae9c2d1c2d768b3dcb831f6450bef4c89f3d1cd15b42ad1a812",
+    "capture_crop": null,
+    "synthetic_fixture_content": false,
+    "file_sha256": "1e59d343dacfebb1806bf6cda65ec903e36bb8bd6d4bf9bd8d26e6bd5f69e172"
+  },
+  "video-framing": {
+    "file": "video-framing.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "d47b7f674641a609df0b209f6425feb32c94dfd5c7e3062d3b9c18fbf91d2da8",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "d4be6597ebbd09929bde70920d6221429f2191bd5cc5a60423a799ab32883c33"
+  },
+  "video-framing-review": {
+    "file": "video-framing-review.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "ae81f0ff0a3eda38d77269e13d98ff3649fd0f75e9006d681a104d9a5b1ca60b",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "8624b175612b308651c3502e0857c621234f2c71efe1bc630b9ba842b4819a5a"
+  },
+  "video-voice-music": {
+    "file": "video-voice-music.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "4711df1c2d603781092370b17b1064a033a418909963e29f26fe1d31ae41ea99",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "05df7b2107e84669e89068a4cc2f6a0925d48cc60a2089301ef847b56074490b"
+  },
+  "video-review-audio-entry": {
+    "file": "video-review-audio-entry.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "ac24961736da4db520b19c97cb001f3a477bac5681a4a426ff11d38d1313191c",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "c4eb38d10e1f2bb4924f8051d279efc014baf9eb9bc3f33bbaf0c701e1966c56"
+  },
+  "saved-video-clean": {
+    "file": "saved-video-clean.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "8a2bea88bbbf573b1d550437e6b864712f7ad405b9ca70dca48661ec92983e07",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "fc8b7a3e3702ac3939027e26064d5e609516c82fbbc68af857a85e61b76caf02"
+  },
+  "coastal-luxe-real-hero": {
+    "file": "coastal-luxe-real-hero.jpg",
+    "source": "Physical iPhone Safari, TestFlight Build 129 paid-design preview, 2026-10-28",
+    "original_sha256": "10eb6ee73a398cef51cd476fea550850c41fa56cb45fb485057213564d1f3e69",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      640
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "a043da8ff835a505b93de0fc18cc37e9e7d9dee04d64d1504a29e9e8130ea197"
+  },
+  "listing-edit-address": {
+    "file": "listing-edit-address.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "2a95e4a38ff1e624e4c6adcb5d921e90cb155e80a73548b95b2e2bfd03a2d6fe",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "eefa36a2905c865dcf1f0fb2ff25253cd2bb2bd107e5573892d0e787f626f84a"
+  },
+  "aerial-front-photo-selection": {
+    "file": "aerial-front-photo-selection.jpg",
+    "source": "Physical iPhone, TestFlight Build 129 unaccepted Aerial review, 2026-10-28; excerpt shows input selection only",
+    "original_sha256": "3efc114ea3fe83f696a81e76f4b25ba393cddeb24dcc541db603bc06c0ef4260",
+    "capture_crop": [
+      8,
+      370,
+      402,
+      688
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "865a64842c9dd2783df1123075c63778d89b588076918fb2172d063b0d3622b0"
+  },
+  "leads-qa-empty": {
+    "file": "leads-qa-empty.jpg",
+    "source": "Physical iPhone, TestFlight Build 129, 2026-10-28",
+    "original_sha256": "3c9c479e5ea0fca90abbed2ab7bbfaad102d9d92ca714cb62cf794a344a5a725",
+    "capture_crop": [
+      8,
+      38,
+      402,
+      894
+    ],
+    "synthetic_fixture_content": false,
+    "file_sha256": "44410d37be5d5e8dd9e64f6d9b65219895c02d83bd94295bc26b28984785fe61"
+  },
+  "paywall-public-four-plans-build132": {
+    "file": "paywall-public-four-plans-build132.png",
+    "source": "Current app simulator, Build 132 paywall source ba53bb64, iPhone 17 Pro Max iOS 26.4.1, 2026-10-28",
+    "original_sha256": "73bd4afeec41ccf16c36c961f33b5c953cda5a9645a5877944c367e49d512dd4",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "73bd4afeec41ccf16c36c961f33b5c953cda5a9645a5877944c367e49d512dd4"
+  },
+  "video-look-automatic-build131": {
+    "file": "video-look-automatic-build131.png",
+    "source": "Current app simulator, Build 131 source with Build 132 paywall copy, iPhone 17 Pro Max iOS 26.4.1, 2026-10-28",
+    "original_sha256": "9a4144c69b48490a309586b4d7457ada68af4ad20efa91137ac50da4eed3c8e8",
+    "capture_crop": null,
+    "synthetic_fixture_content": true,
+    "file_sha256": "9a4144c69b48490a309586b4d7457ada68af4ad20efa91137ac50da4eed3c8e8"
+  }
+}

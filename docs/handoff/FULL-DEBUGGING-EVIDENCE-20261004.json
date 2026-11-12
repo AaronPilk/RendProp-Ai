@@ -1,0 +1,548 @@
+{
+  "createdAt": "2026-10-05T04:12:48.719570+00:00",
+  "baseCommit": "f97e841ae88623aaf043734c768ffeb2d5ff8271",
+  "branch": "fix/full-debugging-20261004",
+  "scope": "Source fixes; owned synthetic/offline fixtures; no new deploy or Apple upload",
+  "sourceHashes": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "7b818c1f53006f07979b7c81ad96f24e73c90793eb2746ff2040438077da40ae"
+    },
+    {
+      "path": "apps/ios/Rendprop/Auth/AuthStore.swift",
+      "sha256": "9051da2b228a86a69bac80162662f193a9491908a55656a004809c738a6b83a4"
+    },
+    {
+      "path": "apps/ios/Rendprop/Auth/SignInView.swift",
+      "sha256": "cc2db229524520bd64ee63e9d120ecf40a0d7a78ab07988af1fdd475b75c83ab"
+    },
+    {
+      "path": "apps/ios/Rendprop/Models/Listing.swift",
+      "sha256": "a5efe2853a44a76e4188d2f75bad76563bbfa1dccdd869363f35ba1a1e3f56f9"
+    },
+    {
+      "path": "apps/ios/Rendprop/Networking/LiveAPIClient.swift",
+      "sha256": "82e871391c640b2eb2060f25869efc53b797947cb32a72e19ccb2db08df4471d"
+    },
+    {
+      "path": "apps/ios/Rendprop/Networking/WorkspaceSync.swift",
+      "sha256": "51e314613e5a726778b71a153833bcffa555aa214aa2ab1bc64d3a51e1760c0c"
+    },
+    {
+      "path": "apps/ios/Rendprop/RendpropApp.swift",
+      "sha256": "5f52a91d3f24b4261438dad2daf2ec2b8074c18f2ae708bf0fdc93293647354d"
+    },
+    {
+      "path": "apps/ios/Rendprop/Screens/FlythroughDetailView.swift",
+      "sha256": "2f95de67443cbd59b7434f21f327ab76a56f2f15398d818d2009ccb0c110522c"
+    },
+    {
+      "path": "apps/ios/Rendprop/Screens/NewListingView.swift",
+      "sha256": "103b00d9eb23dacf7d2323f1ac95ea4f904e9798792047f7ab07ed64aab9c9bf"
+    },
+    {
+      "path": "apps/ios/Rendprop/Screens/RenderStatusView.swift",
+      "sha256": "774c12070f063d6f309955b5149c5bcccfc42deb804487c8a0b23608102c5d5c"
+    },
+    {
+      "path": "apps/ios/tests/SpatialBackgroundAdmissionTests.swift",
+      "sha256": "b2c8ed6a951264cf5139c09071c35f92ad00c5fe42de1dd1aded325154ed5166"
+    },
+    {
+      "path": "apps/ios/tests/run-app-store-boundaries.sh",
+      "sha256": "2def0a3d0e3dbd5d852851448a2b37a47fb999ec1da63b00c0febc0112ed77cd"
+    },
+    {
+      "path": "apps/studio/src/App.tsx",
+      "sha256": "c87d0b5be5b69206164aa9be6d3dde1a71d8ccd33edf9f1b237e57af3fe0c61f"
+    },
+    {
+      "path": "apps/studio/src/features/listings/ClientContactEditor.tsx",
+      "sha256": "8d07d0e00db093668f1068d08d6e44a1d921589ebdc7cf12e5d40aa4719f91bd"
+    },
+    {
+      "path": "apps/studio/src/features/listings/ListingWorkflow.tsx",
+      "sha256": "b50c3574f225562d37db4a22a4b7563cad4fabe17bda2e1302efd997225369c1"
+    },
+    {
+      "path": "apps/studio/src/features/listings/model.ts",
+      "sha256": "86acf56e44d7b8d56383a20725eb9f1b7398109031cdcb71ad316dff8325094c"
+    },
+    {
+      "path": "apps/studio/tests/contact-navigation-browser.mjs",
+      "sha256": "902e018c37b7a7d11e802340db29cc9a46343a3e08a728c5ef64195c858e9fe7"
+    },
+    {
+      "path": "apps/studio/tests/fixtures/connected.tsx",
+      "sha256": "e803760a0afe7f0f761430134d544d904817b9a345acf4f6098f45da49d92312"
+    },
+    {
+      "path": "apps/studio/tests/listing-facts-browser.mjs",
+      "sha256": "fcaddec5d89ed13e5670078fe8ef04058c4e9e7dadad6ac471ee037e611b0f72"
+    },
+    {
+      "path": "apps/studio/tests/listing-workflow-browser.mjs",
+      "sha256": "3eed872dccc624c55be7f980e53bbd731ed77046025cdf25e05a1398845e0a03"
+    },
+    {
+      "path": "apps/studio/tests/listing-workflow-fixture.tsx",
+      "sha256": "8f6794ea9291d882eb2de2fa0c4c35c1ee422d6bac65b42d9d1843b585556b87"
+    },
+    {
+      "path": "services/supabase/functions/_shared/applejws.test.ts",
+      "sha256": "6fa2193180c03257de6a8066581c90acfe2edf467d0ba801f8f50d6e4cce7e58"
+    },
+    {
+      "path": "services/supabase/functions/apple-subscriptions/index.ts",
+      "sha256": "f1259e762c19e0d51250635627b6996ab8d7b95c86f2af0c5f759dc756788c78"
+    },
+    {
+      "path": "services/supabase/functions/apple-subscriptions/logic.ts",
+      "sha256": "32b966bd1b020e614bdd79eaf4946585aef93bf7be87688431d5594250b0808d"
+    },
+    {
+      "path": "services/supabase/functions/apple-subscriptions/notify.test.ts",
+      "sha256": "4421d4715cf3110214b7bac8e4f1a91679ace5ac10add546fe0d302e9ca70c68"
+    },
+    {
+      "path": "services/supabase/functions/listings/index.ts",
+      "sha256": "d1e09c06cc7cafb9935ec0b95fb32278e5f2a44e57a6300cfe0d67417d149d2a"
+    },
+    {
+      "path": "services/supabase/functions/listings/main-photo.test.ts",
+      "sha256": "d1e8cabb0ff90fb6ebbabc4e1e456f3ab0d120d0ab4b1b332adf7f8a90acafc9"
+    },
+    {
+      "path": "services/supabase/functions/me/index.ts",
+      "sha256": "9d3b13e8ed9c41c43ef3cb59963389070997042d4f9e64f4b4104a23f86581fd"
+    },
+    {
+      "path": "services/supabase/functions/me/workspaces.test.ts",
+      "sha256": "57c758e01f99215a274123769fc213fe68ec0466d1fadcccee03c8a00e6792bd"
+    },
+    {
+      "path": "services/supabase/functions/studio/listing-actions.test.ts",
+      "sha256": "c5aa85963697392b50b8a730c23399cb32708a09a9369f0b137836541daafde1"
+    },
+    {
+      "path": "services/supabase/functions/studio/listing-actions.ts",
+      "sha256": "1407598fad7caaca10cb7718d8b2bdf0150bdad674f69bdc9aac7e7cd0de0524"
+    },
+    {
+      "path": "services/supabase/migrations/20261005024539_apple_entitlement_chronology.sql",
+      "sha256": "0023a725dfebb6e9c8a6eb4bf94c886ddea745807b685e4bfafed74a54329839"
+    },
+    {
+      "path": "services/supabase/migrations/20261005024702_listing_facts_intent_cas.sql",
+      "sha256": "a74d9b398201b813f2dc33074325e4e2881080b0b916a18d8ea487eefa0bc57f"
+    },
+    {
+      "path": "services/supabase/migrations/20261005032635_apple_entitlement_legacy_cutover.sql",
+      "sha256": "8829dd7a0afd183e5491e9fe16cec23f1b0c765a59bf8b38cfcaada533569e94"
+    },
+    {
+      "path": "services/supabase/migrations/20261005034754_studio_floorplan_attachment_cas.sql",
+      "sha256": "7d5e5efb0c4f7a8b70d88c848fa71bc1642009e3e6d4ad95fd4d066820ec93b9"
+    },
+    {
+      "path": "services/supabase/tests/invariants.sql",
+      "sha256": "8c411503bf9d33a9d759dd152d47d29bc134acb11b0d187b5c253599e1c9aded"
+    },
+    {
+      "path": "services/supabase/tests/listing_facts_cas.sql",
+      "sha256": "a745677560d9568251ed19e13f969f225b494fd736d3cbfcda69fde9904c4dad"
+    },
+    {
+      "path": "services/supabase/tests/listing_gallery_selection.sql",
+      "sha256": "3ea9d25f955bf13edc61fbff92a7265023edf48e77ef96ce63b4d82ed3bedf1d"
+    },
+    {
+      "path": "services/supabase/tests/studio_floorplan_cas.sql",
+      "sha256": "e5ee23bc6cd43819db499efaf0b917ea81a79895442c8716eff76b1d4f309b8d"
+    },
+    {
+      "path": "services/supabase/tests/subscription_chronology.sql",
+      "sha256": "5868d3e76c4476f707e13a78fa66b4480b01f25892e57460bbb2787fbad03e5e"
+    },
+    {
+      "path": "services/supabase/tests/subscription_confirmed_trial.sql",
+      "sha256": "45878d92b4bbf03ab813a687e57ef32230aa47b30edd487370f5868b33abdff7"
+    },
+    {
+      "path": "tools/audit/apple-code-session-20261004/Fixture.swift.template",
+      "sha256": "56250556901801e0da69b0198390fd88bb00a6ef3fa741af01abbca2cca23796"
+    },
+    {
+      "path": "tools/audit/apple-code-session-20261004/README.md",
+      "sha256": "c6c54b7ef37704894784dfc451758ff6b98df992cc62bfc5514092876a667b42"
+    },
+    {
+      "path": "tools/audit/apple-code-session-20261004/run.py",
+      "sha256": "e616f8d287850c86a57be1a82c4db25c8f0169f90e45ecf9246a86dc64a076c6"
+    },
+    {
+      "path": "tools/audit/complete-product-20260922/photos_sync.py",
+      "sha256": "c7552fd493e98083778a36481fc6ebee91862b61923c9d65367689e73d34f647"
+    },
+    {
+      "path": "tools/audit/floor-measurement-sync-20261004/Fixture.swift.template",
+      "sha256": "3bed97516831d393cc1bec91f46973b40d0c306bf038f6f8a39e6ffa663cf3f1"
+    },
+    {
+      "path": "tools/audit/floor-measurement-sync-20261004/README.md",
+      "sha256": "c2a2046e49f93db046899cf1f9246fb68a3cf92b36de06e826e14ce67d84637c"
+    },
+    {
+      "path": "tools/audit/floor-measurement-sync-20261004/run.py",
+      "sha256": "9631c2904bf5ba3b62fea325b832003ce2e3d2aeed9408b4d32504f261e21364"
+    },
+    {
+      "path": "tools/audit/listing-create-intent-20261004/Fixture.swift.template",
+      "sha256": "a763edbdd6956b3da90bf4cd5fbe85a1eb126d540756cf31e4094a45bcd52842"
+    },
+    {
+      "path": "tools/audit/listing-create-intent-20261004/README.md",
+      "sha256": "5967148d415997f8334c14164e9ae0602b6aa80a732adce304e0b848e3b62759"
+    },
+    {
+      "path": "tools/audit/listing-create-intent-20261004/run.py",
+      "sha256": "e53e59fea90516b84bdcb2e78b618a18cbc5c752b3346a64941747eed5c4ab2a"
+    },
+    {
+      "path": "tools/audit/listing-facts-handler-20261004.ts",
+      "sha256": "2af8566fc32b85463393ae8f449dde865b6e52edcac8bcb5a1a758d2128d22ba"
+    },
+    {
+      "path": "tools/audit/listing-facts-review-20261004/Fixture.swift.template",
+      "sha256": "e85593155484269b42927fd2ac2d769d9782b4e6b62c476bf220f825bde7ba82"
+    },
+    {
+      "path": "tools/audit/listing-facts-review-20261004/README.md",
+      "sha256": "9a501942bcdd16a19d0380273f894baa16e6a023d3c2359e7e691296d0a5c2a7"
+    },
+    {
+      "path": "tools/audit/listing-facts-review-20261004/run.py",
+      "sha256": "8aea6414c262392a9d8027e16f2483650c0764c57e5379293a3372b26f9fb23d"
+    },
+    {
+      "path": "tools/audit/listing-facts-sync-20261004/Fixture.swift.template",
+      "sha256": "3d9874726192a14edd0ba313b99f52654bcd2f3c938027b7f799ca7716ef29ee"
+    },
+    {
+      "path": "tools/audit/listing-facts-sync-20261004/README.md",
+      "sha256": "f1e95a51f848b8747a69e0f10fb288621b06042ef8714ae2136369d7a0b38ce2"
+    },
+    {
+      "path": "tools/audit/listing-facts-sync-20261004/run.py",
+      "sha256": "cfac2b4862a04de17b242efe91712f37bd9008a32114bd830813d2edd4449cd4"
+    },
+    {
+      "path": "tools/audit/listing-form-intent-20261004/Fixture.swift.template",
+      "sha256": "9f7251b83c96e40b348326572733d95ed3a1977e3b396d6c583133d4c45d639a"
+    },
+    {
+      "path": "tools/audit/listing-form-intent-20261004/README.md",
+      "sha256": "835248b24715bae8be34718ad58d29f3bb6d9c8dd1ecad932ca5f054fdabd5d9"
+    },
+    {
+      "path": "tools/audit/listing-form-intent-20261004/run.py",
+      "sha256": "7da7d3f64d22aa1cff6890d17db3ef95a91cdebfa9aaf6d3804b5cfb7ba1cc3e"
+    },
+    {
+      "path": "tools/audit/native-media-export-20261004/Fixture.swift.template",
+      "sha256": "4bdaf2808aef2d99d4b726a7153bb8fd792388b55acfd4c0a6975deb91d33d80"
+    },
+    {
+      "path": "tools/audit/native-media-export-20261004/README.md",
+      "sha256": "030f1360020b15d2eb79d19b9bee646d8bf4911427c069d35445b9d64de83120"
+    },
+    {
+      "path": "tools/audit/native-media-export-20261004/run.py",
+      "sha256": "0e06739341488f1e624050f3006639600c90311c8726b1777579e7728b465320"
+    },
+    {
+      "path": "tools/audit/run_database_regression.py",
+      "sha256": "8f4cf605a62da73f72231a9d7008f433b1ea8dfe4b696a198aa9bc8854b1b031"
+    },
+    {
+      "path": "tools/audit/run_listing_facts_cas.py",
+      "sha256": "3221d7dc4ef3d6d9c7fe15968d0bf46bf2c6ea77a19a5c5f92047779ab7fc518"
+    },
+    {
+      "path": "tools/audit/run_listing_measurement_cas.py",
+      "sha256": "f8ffb2c23f1a4110b3142c89948f1dd6b0f46eed6e03b8bf33b7d77717a6348d"
+    },
+    {
+      "path": "tools/audit/run_subscription_chronology.py",
+      "sha256": "7325ff8cb4c6df7956338761ec36dc72f27085b088ceba4e8e323bab2536b77b"
+    },
+    {
+      "path": "tools/audit/run_subscription_trial_regression.py",
+      "sha256": "ea68c0791af4f3326ff9ac0b884a49ae5a7eaf35c378937bb4abe5c20c9d3400"
+    },
+    {
+      "path": "tools/audit/test_database_runner.py",
+      "sha256": "9270b5c0efcd9087721a1a42480396beb4d228b7342a4094d4f2ca4368899e6b"
+    }
+  ],
+  "verifiedLocalReceipts": [
+    {
+      "name": "Native facts and receipt scope",
+      "assertions": 65,
+      "receiptPath": "/tmp/rendprop-listing-facts-sync-nzvpzavj/receipt.json",
+      "receiptSHA256": "cb66524b901455862b2bdaeae97c0e78331b1562a5fc24cc518e55cfa70e1b7e",
+      "passed": true
+    },
+    {
+      "name": "Native form intent",
+      "assertions": 26,
+      "receiptPath": "/tmp/rendprop-listing-form-intent-g88lhdil/receipt.json",
+      "receiptSHA256": "df1c2c2e738df946b52e889c022b34d7323750bcfcfa8509cef69b8c9c2d583e",
+      "passed": true
+    },
+    {
+      "name": "Connected Studio facts",
+      "assertions": 10,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/studio/tmp/rendprop-listing-facts-browser-8C9uk3/receipt.json",
+      "receiptSHA256": "b1609cd76d7aa446965687015611517bbc406307bbd203a040adbf64194cbc72",
+      "passed": true
+    },
+    {
+      "name": "Facts SQL fresh/replay and real concurrent clients",
+      "assertions": 52,
+      "receiptPath": "/tmp/rendprop-listing-facts-pg-x_l620cw/receipt.json",
+      "receiptSHA256": "5a292ed3a8126b00636a0fdb53db20c4de4b810da902920f93ae533f2364b26a",
+      "passed": true
+    },
+    {
+      "name": "Subscription chronology and atomic floorplan",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/subscription-chronology-final-v3/receipt.json",
+      "receiptSHA256": "4aa0912ac5b7d1b30108297c840e7a7b1c1c4d131969950e3b36cbe9a25d084b",
+      "passed": true
+    },
+    {
+      "name": "Subscription policy regression",
+      "assertions": 26,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/subscription-trial-source-refresh-final/receipt.json",
+      "receiptSHA256": "8b08d134170d9ca71bf3d14cde441460853aed071b0b0abda2791f02b14779e9",
+      "passed": true
+    },
+    {
+      "name": "Unsigned ARM64 iPhone Release build",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/ios/release-build-frozen-receipt.json",
+      "receiptSHA256": "dcbc83f02580efaa5d5acd175cf10508e223916b4395f7667060cb1c193d315a",
+      "passed": true
+    },
+    {
+      "name": "Create/replay positive",
+      "assertions": 79,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/ios/listing-create-intent/final/positive/receipt.json",
+      "receiptSHA256": "514d309b5dace5ceed9af817a3196726f1f6d21cda6b74012f7acaa857d486a6",
+      "passed": true
+    },
+    {
+      "name": "Corrected central database inventory and actual full DB gates",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-invariant-count-full-db-final/receipt.json",
+      "receiptSHA256": "fc05218fe6b7d06b78359fbca0a7453b368454290877f7d0fc4930047cdc205a",
+      "passed": true
+    },
+    {
+      "name": "Corrected gallery/measurement fixture remainder: twelve actual owned runners",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-gallery-measurement-remainder-final/receipt.json",
+      "receiptSHA256": "d3f17ca7d421c10912c1c2188c2161f35887ec786c8262b61f25b1eaad9847f8",
+      "passed": true
+    },
+    {
+      "name": "Measurement final positive and all 21 exact altered-source controls",
+      "assertions": 140,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/ios/measurement-sync/final-control-refresh/summary.json",
+      "receiptSHA256": "59e5c65525c75046f93f6db8fbc251d8071c578c5ab8ba34cd2d97339486790b",
+      "passed": true
+    },
+    {
+      "name": "Supported removal/deletion/adoption serialize with facts save; old actor is refused",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/facts-supported-authority-lock-proof.json",
+      "receiptSHA256": "40db47edadc0f15082691d49913daee3dc8c94c55cfc3f1ed6c5de187863d764",
+      "passed": true
+    },
+    {
+      "name": "App Store isolation: five delayed/normal cases and two compiled cleanup/completion faults",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/ios/ci-37264850514/boundary-fixed/receipt.json",
+      "receiptSHA256": "70b6172a6b255baaaca7a59cf54c6faaa17a7247e58fec955114d42ee28ea698",
+      "passed": true
+    },
+    {
+      "name": "Remaining actual public browser, native/worker HD encoding and Studio MP4 exports",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/studio/ci-tail-20261005/receipt.json",
+      "receiptSHA256": "80717d9449343c56fd65dbdd11d32faf821a0fc8ab153b075f2943c1fab6d3d6",
+      "passed": true
+    },
+    {
+      "name": "Complete final CI backend receipts and source-binding summary",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-37266689307-receipts/summary.json",
+      "receiptSHA256": "07e7e51df913f1485759c6fe6e575b8ebbd71ded47d824cf7f3a7ecd435d97db",
+      "passed": true
+    },
+    {
+      "name": "Independent root check of final CI backend receipts and all current/historical source hashes",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-37266689307-root-verification.json",
+      "receiptSHA256": "e7ca3a139be18708163b7a943d1ca620e04c27cbf7590653bc753e963d72c5f9",
+      "passed": true
+    },
+    {
+      "name": "Final complete CI native measurement and App Store boundary receipts",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/ios/ci-37266689307/summary.json",
+      "receiptSHA256": "c9b36801be4990455097183ec622c4a2927984b8fe7a6cf6a1c0a9113e69a928",
+      "passed": true
+    }
+  ],
+  "localGates": {
+    "nativeFacts": 65,
+    "nativeForm": 26,
+    "nativeCreateReplay": 79,
+    "nativeAppleCode": 27,
+    "nativeExport": 102,
+    "nativeFactsReview": 27,
+    "nativeMeasurementSync": 140,
+    "studioUnit": 441,
+    "studioConnectedFacts": 10,
+    "studioWorkflow": 16,
+    "studioContactNavigation": 9,
+    "studioCreation": 6,
+    "factsHandler": 66,
+    "factsSQL": 52,
+    "subscriptionChronologySQL": 39,
+    "subscriptionTrialSQL": 26,
+    "subscriptionSignedAdapters": 69,
+    "subscriptionConcurrentReceipts": 12,
+    "floorplanSQL": 25,
+    "floorplanHandler": 17,
+    "invariants": {
+      "passed": 269,
+      "expectedRed": 1,
+      "expectedRedName": "each astra ceiling clears its route's visible answer and stays under the code clamp"
+    },
+    "nativeMeasurementControls": 21,
+    "appStoreBoundaryPositiveCases": 5,
+    "appStoreBoundaryFaultControls": 2
+  },
+  "completeCI": {
+    "state": "passed",
+    "firstRunId": 37262547517,
+    "firstRunSource": "3253bf8207e0d616dfeb81ad8743b4f9d2998cab",
+    "secondRunId": 37262945554,
+    "secondRunSource": "95f5af11b2908075117542a8dfa9498b154353b4",
+    "secondRunFailure": "Gallery fixture direct address write correctly refused after facts revocation; measurement negative expectation corrected before rerun",
+    "thirdRunId": 37263672387,
+    "thirdRunSource": "3a30f68609686c7a7816b335675d8acbbed6d6ed",
+    "thirdRunResult": "Eleven jobs passed; measurement positive passed140, but direct replay assignment removal was repaired by independent facts acknowledgement; fault control corrected without runtime/assertion change",
+    "fourthRunId": 37264850514,
+    "fourthRunSource": "4fbb1e7520ac61ebda646b414d1c44f3efb85a07",
+    "fourthRunResult": "All21 measurement controls and exports passed; existing fixed250ms drain observation failed; deterministic completion observation corrected without runtime change",
+    "runId": 37266689307,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37266689307",
+    "sourceCommit": "e72503c995509af140888db068f2374794b4acb7",
+    "testedMergeCommit": "5b8238802910d69155fe11c5aa0d793a73fd0824",
+    "jobsPassed": 12,
+    "jobs": [
+      {
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "conclusion": "success"
+      },
+      {
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Studio contracts, build and property workflows (offline)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Python workers (render, spatial, training adapter)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Secret scan",
+        "conclusion": "success"
+      },
+      {
+        "name": "iOS static gates",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (tour-host)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase edge functions (deno check + tests)",
+        "conclusion": "success"
+      }
+    ],
+    "edgeTests": {
+      "passed": 1395,
+      "failed": 0,
+      "ignored": 1,
+      "directUploadFixturePassed": 61,
+      "actualListingIntentGate": "passed",
+      "derivedFromCompletedJobLog": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-37266689307-edge.log",
+      "jobLogSHA256": "30cfa39aabe626ffdf04257e86fda1fe601f0f47a56a0b0bfa8d9e8a5369898b",
+      "actualListingIntentAssertions": 66
+    },
+    "databaseReceiptCount": 23,
+    "databaseSourceHashMatches": 2062,
+    "databaseSourcePathCount": 296,
+    "databaseCurrentSourceHashEntries": 1975,
+    "databaseHistoricalControlHashMatches": 33,
+    "runtimeChangesAfterTestedSource": false,
+    "nativeMeasurementReceipts": 22,
+    "nativeMeasurementFaultControls": 21,
+    "nativeBoundaryPositiveCases": 5,
+    "nativeBoundaryFaultControls": 2
+  },
+  "liveTestFlight": "1.0.4 (44); historical receipt unchanged",
+  "productionMutations": 0,
+  "appleUploads": 0,
+  "paidProviderJobs": 0,
+  "limits": [
+    "Physical camera/AR and real output quality are not certified",
+    "Live cross-device and actual purchase/restore acceptance remain pending",
+    "One exact owner-retained Astra ceiling invariant remains red; no price/allowance changes or margin certification",
+    "Coordinated native upgrade, facts migration/function/web delivery and staged Apple handlers required"
+  ],
+  "correctedTestExpectations": [
+    "Central inventory exact270; named exception/contiguous order/negative controls retained",
+    "Workspace test uses current scoped PUT facts; separately tests legacy426 refuses without write",
+    "Two exact historical checksum fingerprints recomputed; current fields separate path/sha256",
+    "Gallery unrelated address mutation uses scoped facts RPC; authenticated gallery grants and all negatives retained",
+    "Measurement authenticated session-variable bypass must be permission-denied; accepted private plan remains unchanged",
+    "Measurement replay control retains stale typed plan at final replay persistence across both valid adoption paths; exact original rejection retained; all21 compile and reject locally",
+    "App Store isolation observes actual completion with bounded failure deadline; delayed400ms positive and compiled missing-end/completion faults preserve exact assertions; runtime20s drain unchanged"
+  ],
+  "verifiedAt": "2026-10-05T05:42:34.647255+00:00"
+}

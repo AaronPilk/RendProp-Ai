@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "createdAt": "2026-10-09T02:22:40.988Z",
+  "mode": "run",
+  "status": "verified",
+  "projectRef": "ymgqpbnjpztwjsyvceld",
+  "functions": [
+    "ai-photo",
+    "ai-video",
+    "ai-copy",
+    "coach",
+    "me"
+  ],
+  "jwtPolicy": {
+    "ai-photo": true,
+    "ai-video": true,
+    "ai-copy": true,
+    "coach": true,
+    "me": false
+  },
+  "modernServiceTransport": false,
+  "before": {
+    "ai-photo": {
+      "id": "ed6f9fc0-e651-4622-b79a-e752770279be",
+      "version": 62,
+      "verifyJwt": true
+    },
+    "ai-video": {
+      "id": "9dd26656-ea6d-454d-bb29-951a7e03b3dd",
+      "version": 60,
+      "verifyJwt": true
+    },
+    "ai-copy": {
+      "id": "a21425d9-8959-4a6b-9399-c928abd148e6",
+      "version": 29,
+      "verifyJwt": true
+    },
+    "coach": {
+      "id": "2fa42061-bdbb-4231-b651-9a149c4a1b59",
+      "version": 31,
+      "verifyJwt": true
+    },
+    "me": {
+      "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
+      "version": 59,
+      "verifyJwt": false
+    }
+  },
+  "completed": {
+    "ai-photo": {
+      "status": "source-verified",
+      "matchedSourceFiles": 32,
+      "runtimeSourceFiles": 32,
+      "stagedTypeOnlyNotInRuntime": []
+    },
+    "ai-video": {
+      "status": "source-verified",
+      "matchedSourceFiles": 44,
+      "runtimeSourceFiles": 44,
+      "stagedTypeOnlyNotInRuntime": [
+        "studio/context.ts"
+      ]
+    },
+    "ai-copy": {
+      "status": "source-verified",
+      "matchedSourceFiles": 22,
+      "runtimeSourceFiles": 22,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts"
+      ]
+    },
+    "coach": {
+      "status": "source-verified",
+      "matchedSourceFiles": 21,
+      "runtimeSourceFiles": 21,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts"
+      ]
+    },
+    "me": {
+      "status": "source-verified",
+      "matchedSourceFiles": 48,
+      "runtimeSourceFiles": 48,
+      "stagedTypeOnlyNotInRuntime": [
+        "_shared/providers/types.ts",
+        "studio/context.ts"
+      ]
+    }
+  },
+  "after": {
+    "ai-photo": {
+      "id": "ed6f9fc0-e651-4622-b79a-e752770279be",
+      "version": 63,
+      "verifyJwt": true
+    },
+    "ai-video": {
+      "id": "9dd26656-ea6d-454d-bb29-951a7e03b3dd",
+      "version": 61,
+      "verifyJwt": true
+    },
+    "ai-copy": {
+      "id": "a21425d9-8959-4a6b-9399-c928abd148e6",
+      "version": 30,
+      "verifyJwt": true
+    },
+    "coach": {
+      "id": "2fa42061-bdbb-4231-b651-9a149c4a1b59",
+      "version": 32,
+      "verifyJwt": true
+    },
+    "me": {
+      "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
+      "version": 60,
+      "verifyJwt": false
+    }
+  },
+  "migration": {
+    "version": "20261009022239",
+    "name": "admit_pre_and_grants",
+    "repoFile": "services/supabase/migrations/20261009022239_admit_pre_and_grants.sql"
+  },
+  "note": "Launch audit fixes 2026-10-09: admit no longer double-nets video/erase holds; per-attempt ledger rows (ai-copy every billed call, QC judges carry stage, coach ledgers before parsing, photo helpers ledgered); /me pool carries starts_at; ledger_id index; TRUNCATE/TRIGGER/REFERENCES revoked from client roles. SQL 189 + races, deno 1,804."
+}

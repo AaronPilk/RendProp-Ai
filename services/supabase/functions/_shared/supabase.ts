@@ -9,13 +9,17 @@
 //                     user. Use for every owner route so a user can only ever
 //                     touch their own org's rows.
 
-import { createClient } from "npm:@supabase/supabase-js@2";
-import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.116.0";
+import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError } from "./http.ts";
+import { runtimeApiKey, serviceKeyMatches } from "./api-key-config.ts";
+import { workspaceDirectory } from "./workspaces.ts";
+import { listingLibraryScope, requireLibraryWrite } from "./library-access.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+const LEGACY_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SERVICE_ROLE_KEY = runtimeApiKey(Deno.env.get("SUPABASE_SECRET_KEYS"), Deno.env.get("RENDPROP_SECRET_KEY_NAME") ?? "default", "secret", LEGACY_SERVICE_ROLE_KEY);
+const ANON_KEY = runtimeApiKey(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS"), Deno.env.get("RENDPROP_PUBLISHABLE_KEY_NAME") ?? "default", "publishable", Deno.env.get("SUPABASE_ANON_KEY"));
 
 function requireEnv(name: string, value: string | undefined): string {
   if (!value) throw new HttpError(500, `Missing required env var: ${name}`);
@@ -29,7 +33,7 @@ export function adminClient(): SupabaseClient {
   if (_admin) return _admin;
   _admin = createClient(
     requireEnv("SUPABASE_URL", SUPABASE_URL),
-    requireEnv("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ROLE_KEY),
+    requireEnv("SUPABASE_SECRET_KEYS", SERVICE_ROLE_KEY),
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
   return _admin;
@@ -40,7 +44,7 @@ export function userClient(req: Request): SupabaseClient {
   const authHeader = req.headers.get("Authorization") ?? "";
   return createClient(
     requireEnv("SUPABASE_URL", SUPABASE_URL),
-    requireEnv("SUPABASE_ANON_KEY", ANON_KEY),
+    publicApiKey(),
     {
       global: { headers: { Authorization: authHeader } },
       auth: { persistSession: false, autoRefreshToken: false },
@@ -57,10 +61,11 @@ export function getBearer(req: Request): string | null {
   return token.trim();
 }
 
-/** True when the caller presented the service-role key as its bearer (worker path). */
+export function publicApiKey(): string { return requireEnv("SUPABASE_PUBLISHABLE_KEYS", ANON_KEY); }
+
+/** Exact server credential, never a caller's unverified JWT role claim. */
 export function isServiceRole(req: Request): boolean {
-  const token = getBearer(req);
-  return !!token && !!SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY;
+  return serviceKeyMatches(req, SERVICE_ROLE_KEY, LEGACY_SERVICE_ROLE_KEY, Deno.env.get("RENDPROP_LEGACY_SERVICE_AUTH"));
 }
 
 /** Validate the bearer JWT against Supabase Auth and return the auth user, or 401. */
@@ -72,54 +77,65 @@ export async function getUser(req: Request): Promise<User> {
   return data.user;
 }
 
-// Prefer owner > admin > agent > marketing when a user has multiple memberships.
-const ROLE_RANK: Record<string, number> = { owner: 0, admin: 1, agent: 2, marketing: 3 };
+export type PaidAiCaller = Pick<User, "id" | "is_anonymous">;
 
 /**
- * Resolve the org a user is acting under.
- * If `preferredOrgId` is given (e.g. from an `X-Org-Id` header) we verify the
- * user is a member of it; otherwise we pick their highest-privilege membership.
- * Uses the admin client so it works regardless of the caller's RLS context.
+ * A free allowance cannot be renewed by minting another anonymous account.
+ * Use the Auth-validated user and the route's already resolved workspace, before
+ * charging a meter. An explicit StoreKit purchase remains usable by its guest
+ * owner: only a current, server-bound Apple subscription permits that exception.
+ * General getUser() deliberately continues to support anonymous local work.
+ */
+export async function assertPaidAiIdentity(user: PaidAiCaller, orgId: string): Promise<void> {
+  if (user.is_anonymous === false) return;
+  // 403, not 401: the public 1.0.3 build treats a repeated 401 as a dead session
+  // and signs the guest out, orphaning their workspace. This is a refusal of
+  // the action, not of the session.
+  const denied = () => new HttpError(403, "Sign in with Apple to use AI tools (Settings → Account), or restore your active subscription.", "forbidden");
+  if (user.is_anonymous !== true) throw denied();
+  const unavailable = () => new HttpError(503, "Subscription access could not be verified. Please retry.", "upstream");
+  // The SQL operation/reservation/result readers use this identical retail
+  // predicate. A loose active/grace row cannot admit an unfunded guest first.
+  const { data, error } = await adminClient().rpc("org_has_verified_retail_guest", {
+    p_actor: user.id, p_org: orgId,
+  });
+  if (error) throw unavailable();
+  if (data !== true) throw denied();
+}
+
+/**
+ * Resolve a currently authorized content library, including explicit Team-owner
+ * delegation. The SQL directory is the authority; raw memberships or a cached
+ * selection cannot give an invited agent another member's private library.
  */
 export async function orgForUser(userId: string, preferredOrgId?: string): Promise<string> {
-  const admin = adminClient();
-  if (preferredOrgId) {
-    const { data, error } = await admin
-      .from("memberships")
-      .select("org_id")
-      .eq("user_id", userId)
-      .eq("org_id", preferredOrgId)
-      .maybeSingle();
-    if (error) throw new HttpError(500, `Membership lookup failed: ${error.message}`);
-    if (!data) throw new HttpError(403, "Not a member of the requested org");
-    return preferredOrgId;
+  return (await workspaceDirectory(adminClient(), userId, preferredOrgId)).active_org_id;
+}
+
+/** Resolve one authorized listing's real storage org without exposing the rest
+ * of an old shared Team org. The selected logical library and the row's real
+ * org are both accepted only after the fresh listing-specific SQL authority. */
+export async function contentOrgForUser(userId: string, preferredOrgId?: string, listingId?: string | null, write = false): Promise<string> {
+  if (listingId != null) {
+    const scope = await listingLibraryScope(adminClient(), userId, listingId, write);
+    if (preferredOrgId && preferredOrgId !== scope.org_id && preferredOrgId !== scope.library_org_id) {
+      throw new HttpError(403, "This listing belongs to a different library.", "forbidden");
+    }
+    return scope.org_id;
   }
-
-  // The active workspace first (migration 0033). Joining a team no longer
-  // deletes the joiner's personal workspace, so a person can hold two
-  // memberships — and role rank alone would send an agent back to their own
-  // owner-role personal org instead of the team they just joined.
-  // active_org_for_user re-checks that the recorded choice is still a real
-  // membership in a live org, and falls back to highest privilege, which is
-  // also what makes a REMOVED member land somewhere instead of nowhere.
-  const { data: active, error: activeErr } = await admin
-    .rpc("active_org_for_user", { p_user: userId });
-  if (!activeErr && typeof active === "string" && active) return active;
-
-  const { data, error } = await admin
-    .from("memberships")
-    .select("org_id, role")
-    .eq("user_id", userId);
-  if (error) throw new HttpError(500, `Membership lookup failed: ${error.message}`);
-  if (!data || data.length === 0) throw new HttpError(403, "User has no org membership");
-
-  data.sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9));
-  return data[0].org_id as string;
+  const org = await orgForUser(userId, preferredOrgId);
+  if (write) await requireLibraryWrite(adminClient(), userId, org);
+  return org;
 }
 
 /** Read an optional preferred org from the request header. */
 export function preferredOrg(req: Request): string | undefined {
-  return req.headers.get("x-org-id") ?? undefined;
+  const raw = req.headers.get("x-org-id");
+  if (raw === null) return undefined;
+  // A uuid is compared against Postgres' lowercase text downstream; anything
+  // else is left untouched so validation still rejects it as before. Kept
+  // self-contained on purpose: coach/admission_test.ts inlines this function.
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw.trim()) ? raw.trim().toLowerCase() : raw;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

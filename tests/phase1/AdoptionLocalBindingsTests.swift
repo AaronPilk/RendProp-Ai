@@ -27,8 +27,19 @@ struct AdoptionLocalBindingsTests {
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false)
         FileStore.documents = path
         AuthStore.shared.userID = source.uuidString
+        WorkspaceContext.selectedOrgID = nil; WorkspaceContext.ownerSelections = [:]
+        Config.useLiveBackend = false
         AuthStore.shared.pendingExists = true; AuthStore.shared.pendingReadFails = false
         let model = AppModel(); await model.load(); return model
+    }
+    /// Invoke the real extracted AppModel callback in AuthStore's source-first
+    /// order. Assigning destination before this callback masks guest custody bugs.
+    static func activate(_ model: AppModel, as userID: UUID) {
+        let previous = AuthStore.shared.userID
+        AuthStore.shared.onAccountChanged?(userID)
+        check(AuthStore.shared.userID == previous && model.identityOwnerUserID == userID,
+              "Actual outgoing callback finishes while the source subject is still active")
+        AuthStore.shared.userID = userID.uuidString
     }
     static func rejects(_ label: String, _ action: () throws -> Void) {
         do { try action(); check(false, label) } catch { check(true, label) }
@@ -45,8 +56,7 @@ struct AdoptionLocalBindingsTests {
         check(model.prepareLocalAdoption(transfer), "snapshot persists before session replacement")
         let before = PersistentStore.load()
         check(before.adoptionBindings?.matches(transfer) == true && before.listings[0].serverID == original.serverID, "exact source/op/destination with original IDs durable together")
-        AuthStore.shared.userID = destination.uuidString
-        model.forgetServerIdentities(for: destination)
+        activate(model, as: destination)
         check(model.listings[0].serverID == nil && model.listings[0].shareURL == nil, "account switch clears active foreign IDs")
         let cleared = PersistentStore.load()
         check(cleared.listings[0].serverID == nil && cleared.adoptionBindings?.entries[0].serverID == original.serverID, "clearing preserves original journal")
@@ -69,8 +79,7 @@ struct AdoptionLocalBindingsTests {
         check(!restarted.confirmLocalAdoption(pending(), orgID: org), "confirmed journal still rejects another operation")
         check(restarted.listings[0].shareURL?.hasSuffix("newer-publication") == true, "replay cannot roll back later publication")
         check(!restarted.confirmLocalAdoption(transfer, orgID: foreign), "different org receipt cannot rebind")
-        AuthStore.shared.userID = foreign.uuidString
-        restarted.forgetServerIdentities(for: foreign)
+        activate(restarted, as: foreign)
         check(!restarted.confirmLocalAdoption(transfer, orgID: org), "late callback for former destination refused")
         check(restarted.listings[0].serverID == nil, "arbitrary account switch never inherits restored IDs")
         AuthStore.shared.userID = destination.uuidString
@@ -78,7 +87,7 @@ struct AdoptionLocalBindingsTests {
         check(returned.confirmLocalAdoption(transfer, orgID: org), "retained receipt can rebind after switch-away and relaunch")
         check(returned.listings.first { $0.id == original.id }?.shareURL?.hasSuffix("newer-publication") == true,
               "failed Keychain clear/switch/retry preserves latest confirmed publication")
-        AuthStore.shared.userID = foreign.uuidString; returned.forgetServerIdentities(for: foreign)
+        activate(returned, as: foreign)
         AuthStore.shared.pendingReadFails = true
         do { _ = try await returned.ensureServerListing(returned.listings[0]); check(false, "locked recovery storage is not absence") }
         catch { check(returned.api.calls == 0, "Keychain read failure preserves pending fence") }
@@ -108,6 +117,210 @@ struct AdoptionLocalBindingsTests {
         check(!journal.blocks(original.id, currentUserID: source), "failed optional sign-in leaves source usable")
         check(!journal.blocks(UUID(), currentUserID: destination), "unrelated new listings remain usable")
 
+        let offline = try await fresh()
+        var offlineListing = listing(); offlineListing.serverID = nil
+        offline.listings = [offlineListing]
+        let offlineTransfer = pending()
+        let offlineDraft = ProductionPlanCache.Draft(plan: .starter(listingID: offlineListing.id), revision: 0, dirty: true)
+        try ProductionPlanCache.save(offlineDraft, owner: source.uuidString.lowercased(), listingID: offlineListing.id)
+        defer { ProductionPlanCache.remove(listingID: offlineListing.id) }
+        ProductionVideoLibrary.shared.busy = true
+        check(!offline.prepareLocalAdoption(offlineTransfer), "in-flight picker blocks session replacement before its import is indexed")
+        ProductionVideoLibrary.shared.busy = false
+        check(offline.prepareLocalAdoption(offlineTransfer), "offline-only property enters receipt-bound production transfer")
+        WorkspaceContext.selectedOrgID = org
+        WorkspaceContext.ownerSelections[source] = org
+        activate(offline, as: destination)
+        check(offline.listings[0].cloudSyncOwnerID == source, "Actual callback retains source custody before verified adoption")
+        do { _ = try await offline.ensureServerListing(offline.listings[0]); check(false, "offline pending transfer must not create a duplicate") }
+        catch { check(offline.api.calls == 0, "offline draft waits for verified receipt before cloud create") }
+        check(offline.confirmLocalAdoption(offlineTransfer, orgID: org), "verified receipt also recovers offline-only production draft")
+        let transferredDraft = try ProductionPlanCache.load(owner: destination.uuidString.lowercased(), listingID: offlineListing.id)
+        check(transferredDraft?.plan == offlineDraft.plan && transferredDraft?.adoptedOperationID == offlineTransfer.operationID,
+              "actual AppModel confirm calls production transfer before clearing recovery")
+        check(offline.adoptionBindings?.productionTransferred == true, "local metadata commits production transfer completion")
+        Config.useLiveBackend = true
+        check(offline.listings[0].cloudSyncOwnerID == destination && offline.listings[0].cloudDraftOrgID == org,
+              "Verified adoption transfers unsynced draft custody and receipt library")
+        check(offline.isInSelectedWorkspace(offline.listings[0]), "Adopting account sees the offline draft after confirmation")
+        check(CloudDraftCreation.canAutoSync(offline.listings[0], userID: destination), "Adopting account can auto-sync the same offline draft")
+        let adoptedReload = AppModel(); await adoptedReload.load()
+        check(adoptedReload.listings.contains { $0.id == offlineListing.id && adoptedReload.isInSelectedWorkspace($0) },
+              "Adopted offline draft remains in the visible/exportable workspace after disk reload")
+        Config.useLiveBackend = false
+
+        let scoped = try await fresh()
+        var ownedOffline = offlineListing; ownedOffline.id = UUID(); ownedOffline.cloudSyncOwnerID = source
+        var otherOffline = offlineListing; otherOffline.id = UUID(); otherOffline.cloudSyncOwnerID = foreign
+        var otherCloud = original; otherCloud.id = UUID(); otherCloud.cloudSyncOwnerID = foreign
+        var excludedSample = original; excludedSample.id = UUID(); excludedSample.isSample = true; excludedSample.serverID = nil
+        scoped.listings = [ownedOffline, otherOffline, otherCloud, excludedSample]
+        let scopedTransfer = pending()
+        check(scoped.prepareLocalAdoption(scopedTransfer), "Owned guest journal coexists with preserved other-account drafts")
+        check(scoped.adoptionBindings?.productionLocalIDs == [ownedOffline.id] && scoped.adoptionBindings?.entries.isEmpty == true,
+              "Capture records only source-custody IDs, excluding foreign server rows and samples")
+        var unjournaled = ownedOffline; unjournaled.id = UUID()
+        scoped.listings.append(unjournaled)
+        // Emulate a prior-version journal that included a foreign ID. It must
+        // not authorize metadata/cache transfer for that foreign local row.
+        scoped.adoptionBindings?.productionLocalIDs?.append(otherOffline.id)
+        scoped.adoptionBindings?.entries.append(.init(localID: otherCloud.id, serverID: otherCloud.serverID!,
+            shareSlug: otherCloud.shareSlug, shareURL: otherCloud.shareURL, unbrandedShareURL: otherCloud.unbrandedShareURL,
+            publishedRenderID: otherCloud.publishedRenderID))
+        WorkspaceContext.selectedOrgID = org; WorkspaceContext.ownerSelections[source] = org
+        activate(scoped, as: destination)
+        check(scoped.confirmLocalAdoption(scopedTransfer, orgID: org), "Verified receipt scopes an old overbroad journal to current custody")
+        let scopedByID = Dictionary(uniqueKeysWithValues: scoped.listings.map { ($0.id, $0) })
+        check(scopedByID[ownedOffline.id]?.cloudSyncOwnerID == destination, "Exact source journal draft transfers")
+        check(scopedByID[otherOffline.id]?.cloudSyncOwnerID == foreign && scopedByID[otherCloud.id]?.cloudSyncOwnerID == foreign,
+              "Foreign offline/server-backed custody never transfers even if an older journal names it")
+        check(scopedByID[otherCloud.id]?.serverID == nil, "Older foreign journal cannot restore another account's server identity")
+        check(scopedByID[unjournaled.id]?.cloudSyncOwnerID == source, "A draft not in the prepared journal is never silently adopted")
+        check(scopedByID[excludedSample.id]?.cloudSyncOwnerID == nil, "Sample listing is never account-owned through adoption")
+        Config.useLiveBackend = true
+        check(scoped.isInSelectedWorkspace(scopedByID[ownedOffline.id]!) && !scoped.isInSelectedWorkspace(scopedByID[otherOffline.id]!) &&
+              !scoped.isInSelectedWorkspace(scopedByID[unjournaled.id]!), "Adopting library includes exact guest draft and excludes unrelated custody")
+        Config.useLiveBackend = false
+
+        _ = try await fresh()
+        var oldOffline = ownedOffline; oldOffline.id = UUID(); oldOffline.cloudDraftOrgID = org
+        var completed = try AdoptionLocalBindings.capture(pending(), listings: [oldOffline])
+        completed.confirmedOrgID = org; completed.appliedToCurrentState = true
+        completed.productionTransferred = true; completed.ownedIdentityTransferred = true
+        check(PersistentStore.save(listings: [oldOffline], assets: [:], tours: [:], renders: [:],
+              identityOwnerUserID: destination, adoptionBindings: completed), "Completed build55-style adoption fixture is durable")
+        AuthStore.shared.userID = destination.uuidString
+        WorkspaceContext.selectedOrgID = org; Config.useLiveBackend = true
+        let repaired = AppModel(); await repaired.load()
+        check(repaired.listings[0].cloudSyncOwnerID == destination && repaired.isInSelectedWorkspace(repaired.listings[0]),
+              "Loading a previously completed receipt repairs the build55 hidden offline draft")
+        check(PersistentStore.load().listings[0].cloudSyncOwnerID == destination && CloudDraftCreation.canAutoSync(repaired.listings[0], userID: destination),
+              "Completed-receipt custody repair persists and enables automatic sync")
+        let laterDestinationOrg = UUID()
+        repaired.listings[0].cloudDraftOrgID = laterDestinationOrg
+        check(repaired.restoreAdoptedProductionLibrary() && repaired.listings[0].cloudDraftOrgID == laterDestinationOrg,
+              "Completed receipt never rolls back an already-adopted draft's later library metadata")
+        repaired.listings[0].cloudSyncOwnerID = source
+        let repairState = FileStore.documents.appendingPathComponent("rendprop-state.json")
+        let repairPrior = FileStore.documents.appendingPathComponent("synthetic-completed-before-failure.json")
+        let repairBefore = try Data(contentsOf: repairState)
+        try FileManager.default.moveItem(at: repairState, to: repairPrior)
+        try FileManager.default.createDirectory(at: repairState, withIntermediateDirectories: false)
+        check(!repaired.restoreAdoptedProductionLibrary() && repaired.listings[0].cloudSyncOwnerID == source,
+              "Completed-receipt atomic write failure rolls local custody back")
+        try FileManager.default.removeItem(at: repairState)
+        try FileManager.default.moveItem(at: repairPrior, to: repairState)
+        check(try Data(contentsOf: repairState) == repairBefore, "Completed-receipt repair failure preserves prior durable bytes")
+        check(repaired.restoreAdoptedProductionLibrary() && repaired.listings[0].cloudSyncOwnerID == destination,
+              "Same completed receipt repairs successfully after storage recovers")
+        Config.useLiveBackend = false
+
+        let legacyIDs = try await fresh(); legacyIDs.listings = [original, oldOffline]
+        let legacyTransfer = pending()
+        check(legacyIDs.prepareLocalAdoption(legacyTransfer), "Older journal fallback fixture prepares")
+        legacyIDs.adoptionBindings?.productionLocalIDs = nil
+        WorkspaceContext.selectedOrgID = org; WorkspaceContext.ownerSelections[source] = org
+        activate(legacyIDs, as: destination)
+        check(legacyIDs.confirmLocalAdoption(legacyTransfer, orgID: org), "Journal without production IDs restores only its recorded server entries")
+        check(legacyIDs.listings.first { $0.id == original.id }?.cloudSyncOwnerID == destination &&
+              legacyIDs.listings.first { $0.id == oldOffline.id }?.cloudSyncOwnerID == source,
+              "Legacy entries fallback never invents authorization for unrecorded offline IDs")
+
+        // Sign-out cancels a handoff that never received a receipt. Its copy
+        // promises those tours stay on this phone and can be published again.
+        let cancelled = try await fresh()
+        var cancelledDraft = offlineListing; cancelledDraft.id = UUID()
+        var cancelledPublished = original; cancelledPublished.id = UUID()
+        var retainedOther = offlineListing; retainedOther.id = UUID(); retainedOther.cloudSyncOwnerID = foreign
+        cancelled.listings = [cancelledDraft, cancelledPublished, retainedOther]
+        let cancelledTransfer = pending()
+        check(cancelled.prepareLocalAdoption(cancelledTransfer), "Cancelled handoff fixture prepares")
+        // A build-55 journal captured every non-sample row, including a retained foreign draft.
+        cancelled.adoptionBindings?.productionLocalIDs?.append(retainedOther.id)
+        WorkspaceContext.selectedOrgID = org; WorkspaceContext.ownerSelections[source] = org
+        activate(cancelled, as: destination)
+        var cancelledByID = Dictionary(uniqueKeysWithValues: cancelled.listings.map { ($0.id, $0) })
+        check(cancelledByID[cancelledDraft.id]?.cloudSyncOwnerID == source && cancelledByID[cancelledDraft.id]?.cloudDraftOrgID == org &&
+              cancelledByID[cancelledPublished.id]?.cloudDetachedServerID == original.serverID,
+              "Pending handoff keeps source custody and the detached server identity")
+        cancelled.discardLocalAdoption(operationID: UUID())
+        check(cancelled.adoptionBindings?.matches(cancelledTransfer) == true &&
+              cancelled.listings.first { $0.id == cancelledDraft.id }?.cloudSyncOwnerID == source,
+              "A different operation never releases a pending journal or its custody")
+        cancelled.discardLocalAdoption(operationID: cancelledTransfer.operationID)
+        cancelledByID = Dictionary(uniqueKeysWithValues: cancelled.listings.map { ($0.id, $0) })
+        check(cancelled.adoptionBindings == nil && PersistentStore.load().adoptionBindings == nil, "Explicit discard drops the unconfirmed journal durably")
+        check(cancelledByID[cancelledDraft.id]?.cloudSyncOwnerID == nil && cancelledByID[cancelledDraft.id]?.cloudDraftOrgID == nil,
+              "Cancelled handoff releases the guest's own offline draft to this phone")
+        check(cancelledByID[cancelledPublished.id]?.cloudSyncOwnerID == nil && cancelledByID[cancelledPublished.id]?.serverID == nil &&
+              cancelledByID[cancelledPublished.id]?.cloudDetachedServerID == original.serverID,
+              "Released published row keeps its detached identity: republish is explicit, never a silent duplicate")
+        check(cancelledByID[retainedOther.id]?.cloudSyncOwnerID == foreign, "Another account's retained custody survives a cancelled guest handoff")
+        WorkspaceContext.selectedOrgID = UUID()
+        Config.useLiveBackend = true
+        check(cancelled.isInSelectedWorkspace(cancelledByID[cancelledDraft.id]!) && CloudDraftCreation.canAutoSync(cancelledByID[cancelledDraft.id]!, userID: destination),
+              "Next sign-in sees and can publish the released draft")
+        check(cancelled.isInSelectedWorkspace(cancelledByID[cancelledPublished.id]!) && !CloudDraftCreation.canAutoSync(cancelledByID[cancelledPublished.id]!, userID: destination),
+              "Released published row is visible but never auto-created under the next account")
+        check(!cancelled.isInSelectedWorkspace(cancelledByID[retainedOther.id]!), "Cancelled handoff does not expose another account's draft")
+        let cancelledReload = AppModel(); await cancelledReload.load()
+        check(cancelledReload.listings.contains { $0.id == cancelledDraft.id && $0.cloudSyncOwnerID == nil && cancelledReload.isInSelectedWorkspace($0) },
+              "Released custody survives disk reload")
+        Config.useLiveBackend = false
+        WorkspaceContext.selectedOrgID = nil
+
+        // A guest whose session died for good (revoked refresh token, a
+        // definitive 4xx) never journals a handoff: nobody can become that
+        // identity again, so its never-synced work belongs to this phone.
+        // The next Apple sign-in receives it instead of hiding it forever.
+        let orphaned = try await fresh()
+        var orphanDraft = offlineListing; orphanDraft.id = UUID()
+        var orphanPublished = original; orphanPublished.id = UUID(); orphanPublished.cloudSyncOwnerID = source
+        var orphanForeign = offlineListing; orphanForeign.id = UUID(); orphanForeign.cloudSyncOwnerID = foreign
+        orphaned.listings = [orphanDraft, orphanPublished, orphanForeign]
+        AuthStore.rememberedSessionWasAnonymous = true
+        WorkspaceContext.selectedOrgID = org; WorkspaceContext.ownerSelections[source] = org
+        activate(orphaned, as: destination)
+        AuthStore.rememberedSessionWasAnonymous = false
+        let orphanByID = Dictionary(uniqueKeysWithValues: orphaned.listings.map { ($0.id, $0) })
+        check(orphanByID[orphanDraft.id]?.cloudSyncOwnerID == nil && orphanByID[orphanDraft.id]?.cloudDraftOrgID == nil,
+              "Dead guest's offline draft is released to this phone when no handoff is pending")
+        check(orphanByID[orphanPublished.id]?.cloudSyncOwnerID == nil && orphanByID[orphanPublished.id]?.serverID == nil &&
+              orphanByID[orphanPublished.id]?.cloudDetachedServerID == original.serverID,
+              "Dead guest's published row is released but keeps its detached identity")
+        check(orphanByID[orphanForeign.id]?.cloudSyncOwnerID == foreign, "Another account's custody survives a dead-guest release")
+        check(PersistentStore.load().listings.first { $0.id == orphanDraft.id }?.cloudSyncOwnerID == nil, "Dead-guest release is durable")
+        Config.useLiveBackend = true
+        WorkspaceContext.selectedOrgID = UUID()
+        check(orphaned.isInSelectedWorkspace(orphanByID[orphanDraft.id]!) && CloudDraftCreation.canAutoSync(orphanByID[orphanDraft.id]!, userID: destination),
+              "Next sign-in sees and auto-publishes the dead guest's draft")
+        check(orphaned.isInSelectedWorkspace(orphanByID[orphanPublished.id]!) && !CloudDraftCreation.canAutoSync(orphanByID[orphanPublished.id]!, userID: destination),
+              "Dead guest's published row is visible but never auto-created under the next account")
+        check(!orphaned.isInSelectedWorkspace(orphanByID[orphanForeign.id]!), "Dead-guest release does not expose another account's draft")
+        Config.useLiveBackend = false
+        WorkspaceContext.selectedOrgID = nil
+        // Controls: an identified (or unknown) outgoing session keeps its
+        // fence, and so does an anonymous one with a handoff still pending.
+        let fenced = try await fresh()
+        var fencedDraft = offlineListing; fencedDraft.id = UUID()
+        fenced.listings = [fencedDraft]
+        AuthStore.rememberedSessionWasAnonymous = false
+        WorkspaceContext.selectedOrgID = org; WorkspaceContext.ownerSelections[source] = org
+        activate(fenced, as: destination)
+        check(fenced.listings[0].cloudSyncOwnerID == source && fenced.listings[0].cloudDraftOrgID == org,
+              "An identified or unknown outgoing session keeps custody of its offline draft")
+        let journaled = try await fresh()
+        var journaledDraft = offlineListing; journaledDraft.id = UUID()
+        journaled.listings = [journaledDraft]
+        check(journaled.prepareLocalAdoption(pending()), "Anonymous handoff fixture prepares")
+        AuthStore.rememberedSessionWasAnonymous = true
+        WorkspaceContext.selectedOrgID = org; WorkspaceContext.ownerSelections[source] = org
+        activate(journaled, as: destination)
+        AuthStore.rememberedSessionWasAnonymous = false
+        check(journaled.listings[0].cloudSyncOwnerID == source && journaled.listings[0].cloudDraftOrgID == org,
+              "A pending handoff fences the anonymous source's draft until its receipt")
+        WorkspaceContext.selectedOrgID = nil
+
         let busy = try await fresh(); busy.listings = [original]
         for kind in 0..<3 {
             busy.syncInFlight = kind == 0 ? [original.id] : []
@@ -121,12 +334,19 @@ struct AdoptionLocalBindingsTests {
         busy.listings[0].shareSlug = "updated-before-activation"
         check(busy.prepareLocalAdoption(transfer), "same source retry can refresh still-active metadata")
         check(busy.adoptionBindings?.entries[0].shareSlug == "updated-before-activation", "latest source link preserved")
-        AuthStore.shared.userID = destination.uuidString; busy.forgetServerIdentities(for: destination)
+        activate(busy, as: destination)
         let path = FileStore.documents, snapshot = try Data(contentsOf: path.appendingPathComponent("rendprop-state.json"))
-        FileStore.documents = path.appendingPathComponent("does-not-exist")
+        // Keep the valid media parent so the new profile preflight reaches the
+        // actual PersistentStore failure. Occupy its exact JSON path with a
+        // directory; a missing parent would now fail at an earlier guard.
+        let stateFile = path.appendingPathComponent("rendprop-state.json")
+        let savedState = path.appendingPathComponent("synthetic-state-before-failure.json")
+        try FileManager.default.moveItem(at:stateFile,to:savedState)
+        try FileManager.default.createDirectory(at:stateFile,withIntermediateDirectories:false)
         check(!busy.confirmLocalAdoption(transfer, orgID: org), "real atomic file-write failure refuses completion")
         check(busy.adoptionBindings?.confirmedOrgID == nil && busy.listings[0].serverID == nil, "write failure rolls back in-memory marker and IDs")
-        FileStore.documents = path
+        try FileManager.default.removeItem(at:stateFile)
+        try FileManager.default.moveItem(at:savedState,to:stateFile)
         check(try Data(contentsOf: path.appendingPathComponent("rendprop-state.json")) == snapshot, "write failure leaves previous durable bytes unchanged")
         check(busy.confirmLocalAdoption(transfer, orgID: org), "same receipt can retry after write failure")
 
@@ -142,6 +362,76 @@ struct AdoptionLocalBindingsTests {
         finishCreate?.resume(); _ = try await firstCreate.value
         check(racing.prepareLocalAdoption(transfer), "finished create participates in source snapshot")
         check(racing.adoptionBindings?.entries.first?.serverID == racing.listings[0].serverID, "actual returned server identity captured")
+
+        let pinned = try await fresh()
+        var localA = original; localA.serverID = nil; localA.cloudDraftOrgID = org
+        pinned.listings = [localA]
+        _ = try await pinned.ensureServerListing(localA)
+        check(pinned.listings[0].serverOrgID == org, "Actual create binds returned row to the saved intended workspace")
+        check(PersistentStore.load().listings[0].cloudDraftOrgID == org, "Workspace intent survives process-style disk reload")
+        var savedWrongWorkspace = false
+        do {
+            _ = try await CloudDraftCreation.ensure(snapshot: localA, identity: .init(userID: source.uuidString, revision: 0),
+                create: { value in var wrong = value; wrong.serverID = UUID(); wrong.serverOrgID = UUID(); return wrong },
+                current: { localA }, activeIdentity: { .init(userID: source.uuidString, revision: 0) },
+                save: { _ in savedWrongWorkspace = true }, deleteRemoved: { _ in })
+            check(false, "Wrong-workspace create must fail")
+        } catch { check(!savedWrongWorkspace, "Different-org create response cannot rebind saved local draft") }
+        let switchDrafts = try await fresh()
+        var unassigned = original; unassigned.serverID = nil; unassigned.serverOrgID = nil; unassigned.cloudDraftOrgID = nil
+        switchDrafts.listings = [unassigned]
+        WorkspaceContext.selectedOrgID = org
+        check(switchDrafts.prepareWorkspaceSwitch(), "Workspace switch persists older draft ownership before changing selection")
+        check(PersistentStore.load().listings[0].cloudDraftOrgID == org, "Older draft remains pinned to outgoing workspace across restart")
+        ProductionVideoLibrary.shared.busy = true
+        check(!switchDrafts.prepareWorkspaceSwitch(), "Workspace switch waits for active media import")
+        ProductionVideoLibrary.shared.busy = false
+        switchDrafts.clientContactSyncInFlight = [original.id]
+        check(!switchDrafts.prepareWorkspaceSwitch(), "Workspace switch waits for a client-contact save or photo upload")
+        switchDrafts.clientContactSyncInFlight = []
+        check(switchDrafts.prepareWorkspaceSwitch(), "Workspace switch resumes after client-contact work settles")
+        WorkspaceContext.selectedOrgID = nil
+
+        let legacyDraftModel = try await fresh()
+        var legacyDraft = original
+        legacyDraft.serverID = nil; legacyDraft.serverOrgID = nil
+        legacyDraft.cloudDraftOrgID = nil; legacyDraft.cloudSyncOwnerID = nil
+        legacyDraftModel.listings = [legacyDraft]
+        WorkspaceContext.selectedOrgID = org
+        AuthStore.shared.userID = source.uuidString
+        activate(legacyDraftModel, as: foreign)
+        let preservedDraft = legacyDraftModel.listings[0]
+        check(preservedDraft.cloudSyncOwnerID == source && preservedDraft.cloudDraftOrgID == org,
+              "Unstamped guest draft retains outgoing account and library custody")
+        check(preservedDraft.id == legacyDraft.id && preservedDraft.address == legacyDraft.address,
+              "Custody fencing preserves the original local draft")
+        AuthStore.shared.userID = foreign.uuidString
+        Config.useLiveBackend = true
+        check(!legacyDraftModel.isInSelectedWorkspace(preservedDraft), "Other account cannot see outgoing guest draft")
+        check(!CloudDraftCreation.canAutoSync(preservedDraft, userID: foreign), "Other account cannot auto-create outgoing guest draft")
+        let retainedDraft = PersistentStore.load().listings[0]
+        check(retainedDraft.cloudSyncOwnerID == source && retainedDraft.cloudDraftOrgID == org,
+              "Outgoing guest custody survives actual disk reload")
+        AuthStore.shared.userID = source.uuidString
+        check(legacyDraftModel.isInSelectedWorkspace(preservedDraft) && CloudDraftCreation.canAutoSync(preservedDraft, userID: source),
+              "Returning owner recovers the same preserved draft")
+        Config.useLiveBackend = false
+        WorkspaceContext.selectedOrgID = nil
+
+        _ = try await fresh()
+        var restoredLegacyDraft = legacyDraft; restoredLegacyDraft.id = UUID()
+        check(PersistentStore.save(listings: [restoredLegacyDraft], assets: [:], tours: [:], renders: [:], identityOwnerUserID: source),
+              "Saved outgoing-owner draft exists before another account launches")
+        let destinationOrg = UUID()
+        WorkspaceContext.ownerSelections[source] = org
+        WorkspaceContext.ownerSelections[foreign] = destinationOrg
+        WorkspaceContext.selectedOrgID = destinationOrg
+        AuthStore.shared.userID = foreign.uuidString
+        let switchedLoad = AppModel(); await switchedLoad.load()
+        check(switchedLoad.listings[0].cloudSyncOwnerID == source && switchedLoad.listings[0].cloudDraftOrgID == org,
+              "Actual load reads prior owner's library instead of stamping current account's selection")
+        check(PersistentStore.load().listings[0].cloudDraftOrgID == org,
+              "Previous-owner library custody survives the cross-account reload write")
 
         let empty = try await fresh()
         empty.listings = []

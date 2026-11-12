@@ -45,7 +45,11 @@ enum Config { static let useLiveBackend = true }
 }
 @MainActor final class AIConsent {
     static let shared = AIConsent()
-    func ensureGranted() async -> Bool { true }
+    var isGranted = true
+    var revocationRevision: UInt64 = 0
+    func ensureGranted() async -> Bool { isGranted }
+    func revoke() { isGranted = false; revocationRevision &+= 1 }
+    func grant() { isGranted = true }
 }
 @MainActor final class Gate {
     var arrivals = 0
@@ -126,9 +130,15 @@ enum Config { static let useLiveBackend = true }
     var rejectedSubmission: Int?
     var submissionRejectionStatus = 402
     var applyGate: Gate?
+    var quoteGate: Gate?
+    var submitGate: Gate?
+    var pollGate: Gate?
+    var pollCalls = 0
+    var processingPolls = 0
     var failCancellation = false
     func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote {
-        ReflectionQuote(available: true, remainingClips: 20, maxClipSeconds: 4.8, maxBatchCents: 240, unitCostCents: 4)
+        if let gate = quoteGate { await gate.wait() }
+        return ReflectionQuote(available: true, remainingClips: 20, maxClipSeconds: 4.8, maxBatchCents: 240, unitCostCents: 4)
     }
     func removeReflections(assetID: String, listingID: UUID, batchID: UUID, idempotencyKey: UUID) async throws -> AIVideoJob {
         if cancelled.contains(batchID) { throw APIError.badResponse(409) }
@@ -138,11 +148,15 @@ enum Config { static let useLiveBackend = true }
         }
         let job = jobs[idempotencyKey] ?? AIVideoJob(requestId: idempotencyKey.uuidString)
         jobs[idempotencyKey] = job
+        if let gate = submitGate { await gate.wait() }
         if loseSubmitResponseOnce { loseSubmitResponseOnce = false; throw URLError(.timedOut) }
         return job
     }
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
-        .completed(URL(string: "https://generated.invalid/offline-fixture.mp4")!)
+        pollCalls += 1
+        if let gate = pollGate { await gate.wait() }
+        if processingPolls > 0 { processingPolls -= 1; return .processing }
+        return .completed(URL(string: "https://generated.invalid/offline-fixture.mp4")!)
     }
     func cancelReflectionBatch(_ batchID: UUID) async throws {
         cancelCalls += 1
@@ -175,6 +189,8 @@ enum Config { static let useLiveBackend = true }
 @MainActor func fixture() throws -> (ReflectionRemoval, AppModel, Listing, CaptureAsset) {
     Boundaries.extractGate = nil; Boundaries.uploadGate = nil; Boundaries.invalidOutput = false
     AuthStore.shared.userID = "owner-a"
+    AIConsent.shared.isGranted = true; AIConsent.shared.revocationRevision = 0
+    UploadManager.shared.uploads = []
     let listing = Listing()
     let original = FileStore.documents.appendingPathComponent("original-" + UUID().uuidString + ".mov")
     try Data(repeating: 9, count: 16).write(to: original)
@@ -212,6 +228,108 @@ enum Config { static let useLiveBackend = true }
             try await waitUntil { !controller.isBusy }
         }
         // FIXED_ONLY_START
+        do {
+            let (controller, model, listing, _) = try fixture()
+            AIConsent.shared.revoke()
+            controller.start(clips: [ReflectionClip(startS: 1, endS: 4)], model: model, listing: listing)
+            try await waitUntil { !controller.isBusy }
+            precondition(controller.work == nil && model.api.submissions.isEmpty && UploadManager.shared.uploads.isEmpty)
+            results["deniedConsentStartsNoWorkOrRequests"] = true
+        }
+        do {
+            let (controller, model, listing, original) = try fixture()
+            let gate = Gate(); model.api.quoteGate = gate
+            let quoteTask = Task { await controller.loadQuote(model: model, listing: listing) }
+            try await waitUntil { gate.arrivals == 1 }
+            AIConsent.shared.revoke(); AIConsent.shared.grant()
+            gate.release(); await quoteTask.value
+            precondition(controller.quote == nil && controller.work == nil && model.api.submissions.isEmpty)
+            precondition(FileStore.fileSize(original.localURL) == 16)
+            results["regrantRejectsQuoteFromRevokedPermissionEpoch"] = true
+        }
+        do {
+            let (controller, model, listing, original) = try fixture()
+            let gate = Gate(); Boundaries.extractGate = gate
+            controller.start(clips: [ReflectionClip(startS: 1, endS: 4)], model: model, listing: listing)
+            try await waitUntil { gate.arrivals == 1 }
+            AIConsent.shared.revoke()
+            gate.release()
+            try await waitUntil { !controller.isBusy }
+            precondition(UploadManager.shared.uploads.isEmpty && model.api.submissions.isEmpty && model.api.pollCalls == 0)
+            precondition(controller.error?.contains("processing was turned off") == true)
+            precondition(controller.work?.pieces[0].inputPath != nil && FileStore.fileSize(controller.source.localURL) == 16)
+            precondition(model.assets[listing.id]?.id == original.id && FileStore.fileSize(original.localURL) == 16)
+            results["revokeDuringExtractionStopsUploadAndPreservesOriginal"] = true
+        }
+        do {
+            let (controller, model, listing, original) = try fixture()
+            let gate = Gate(); Boundaries.uploadGate = gate
+            controller.start(clips: [ReflectionClip(startS: 1, endS: 4)], model: model, listing: listing)
+            try await waitUntil { gate.arrivals == 1 }
+            AIConsent.shared.revoke(); AIConsent.shared.grant()
+            gate.release()
+            try await waitUntil { !controller.isBusy }
+            precondition(UploadManager.shared.uploads.count == 1 && model.api.submissions.isEmpty && model.api.pollCalls == 0)
+            precondition(controller.work?.pieces[0].assetID != nil && controller.work?.pieces[0].job == nil)
+            precondition(controller.error?.contains("processing was turned off") == true)
+            precondition(model.assets[listing.id]?.id == original.id && FileStore.fileSize(controller.source.localURL) == 16)
+            results["regrantDuringUploadDoesNotRestartRevokedOperation"] = true
+        }
+        do {
+            let (controller, model, listing, original) = try fixture()
+            let gate = Gate(); model.api.submitGate = gate
+            let clip = ReflectionClip(startS: 1, endS: 4)
+            controller.start(clips: [clip], model: model, listing: listing)
+            try await waitUntil { gate.arrivals == 1 }
+            AIConsent.shared.revoke(); AIConsent.shared.grant()
+            gate.release()
+            try await waitUntil { !controller.isBusy }
+            precondition(model.api.submissions == [clip.id] && model.api.jobs.count == 1 && model.api.pollCalls == 0)
+            precondition(controller.work?.pieces[0].job != nil && controller.work?.pieces[0].outputPath == nil)
+            precondition(controller.error?.contains("processing was turned off") == true && !controller.canPreview)
+            precondition(model.assets[listing.id]?.id == original.id && model.api.cancelCalls == 0)
+            // A new explicit user action captures the new permission epoch;
+            // it polls the journaled job instead of submitting another clip.
+            model.api.submitGate = nil
+            controller.start(clips: [], model: model, listing: listing)
+            try await waitUntil { !controller.isBusy }
+            precondition(controller.canPreview && model.api.submissions == [clip.id] && model.api.jobs.count == 1)
+            precondition(model.api.pollCalls == 1 && model.assets[listing.id]?.id == original.id)
+            results["regrantAfterSubmissionRequiresExplicitResumeOfSameJob"] = true
+        }
+        do {
+            let (controller, model, listing, original) = try fixture()
+            let gate = Gate(); model.api.pollGate = gate; model.api.processingPolls = 1
+            let clip = ReflectionClip(startS: 1, endS: 4)
+            controller.start(clips: [clip], model: model, listing: listing)
+            try await waitUntil { gate.arrivals == 1 }
+            AIConsent.shared.revoke(); AIConsent.shared.grant()
+            gate.release()
+            try await waitUntil { !controller.isBusy }
+            precondition(model.api.pollCalls == 1 && model.api.submissions == [clip.id])
+            precondition(controller.work?.pieces[0].outputPath == nil && !controller.canPreview)
+            precondition(controller.error?.contains("processing was turned off") == true)
+            precondition(model.assets[listing.id]?.id == original.id && FileStore.fileSize(controller.source.localURL) == 16)
+            results["regrantDuringProcessingPollStopsAllSubsequentPolls"] = true
+        }
+        do {
+            let (controller, model, listing, original) = try fixture()
+            let gate = Gate(); model.api.pollGate = gate
+            let clips = [ReflectionClip(startS: 1, endS: 4), ReflectionClip(startS: 5, endS: 8)]
+            controller.start(clips: clips, model: model, listing: listing)
+            try await waitUntil { gate.arrivals == 1 }
+            AIConsent.shared.revoke()
+            gate.release()
+            try await waitUntil { !controller.isBusy }
+            precondition(model.api.submissions == [clips[0].id] && model.api.pollCalls == 1 && UploadManager.shared.uploads.count == 1)
+            let completedPath = controller.work!.pieces[0].outputPath!
+            precondition(FileStore.fileSize(FileStore.url(fromRelativePath: completedPath)) == 16)
+            precondition(controller.work?.pieces[1].inputPath == nil && controller.work?.pieces[1].job == nil)
+            precondition(controller.work?.resultPath == nil && model.api.cancelCalls == 0)
+            precondition(model.assets[listing.id]?.id == original.id && FileStore.fileSize(original.localURL) == 16)
+            precondition(FileStore.fileSize(controller.source.localURL) == 16)
+            results["revokeAfterCompletedJobKeepsOutputAndStopsNextInterval"] = true
+        }
         for status in [400, 402, 429] {
             let (controller, model, listing, original) = try fixture()
             model.api.rejectedSubmission = 2

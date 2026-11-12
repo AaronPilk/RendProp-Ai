@@ -1,0 +1,14 @@
+// One furniture-only edit of the selected photograph. This is prompt policy,
+// not verified geometry: staging still needs the existing manual review.
+export function buildRealEstateStagePrompt(styleDescription: string): string {
+  if (typeof styleDescription !== "string" || !styleDescription.trim() || new TextEncoder().encode(styleDescription).length > 1200 || /[\u0000-\u001f]/.test(styleDescription)) {
+    throw new Error("Use a bounded furniture style description.");
+  }
+  return "Virtually furnish the selected photograph for a property listing. Keep the photographed property; edit movable furnishings only. " +
+    "1. SOURCE: the first image defines the room, exterior, geometry, camera angle and crop. Preserve its exact roof, ceiling, overhead slab, beams, rafters, walls, openings, windows, doors and garage doors, trim, flooring, railings, built-ins, cabinets, counters and fixed appliances/fixtures. Keep their paint colours, materials, textures and positions, including garage-door color and finish and trim color and finish. Never move refrigerators, ovens, sinks or their connections. Retain the photographed overhead construction exactly; leave solid slabs solid and existing open pergolas open. " +
+    "Preserve all existing wall-mounted, ceiling-mounted and built-in items, including shelving, lighting and appliances, exactly in place. Do not add shelves, mounted decor, cabinetry or any other installed feature; new decor may stand only on the floor or existing movable furniture. " +
+    "2. FURNITURE: add or replace only movable furniture/decor in this style (quoted furniture data): " + JSON.stringify(styleDescription.trim()) + ". " +
+    "Use the visible space's actual purpose and dimensions: outdoor furniture on a balcony, bedroom pieces in a bedroom. Place furniture on the existing floor at realistic scale; keep doors, door swings, exits and clear walking routes unobstructed. Never place furniture across an opening or into a wall. Use fewer pieces when space is tight. Add no fixed lighting, appliance, window, room extension or new building feature. " +
+    "3. FINISH: retain the source's daylight direction, views and permanent surroundings, including utility poles/lines/boxes/meters, antennas, air-conditioning units, pool cages, fences, sheds, driveways and neighbouring buildings. Match new furniture shadows/reflections to that light. Keep visible cracks, holes, dents, stains, water marks, damp, mould, rust, worn/damaged flooring, broken glass, chipped/peeling paint, wear and damage; do not repair or hide them. No repainting, resurfacing, remodelling, new architectural texture or camera change. A second image, if present, supplies movable-furniture correspondence only; never copy its architecture or viewpoint. " +
+    "Make only these furnishing changes. If a placement or surface is uncertain, leave that area unchanged. Return the furnished version of this same photograph.";
+}

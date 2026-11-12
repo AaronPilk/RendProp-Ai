@@ -86,7 +86,7 @@ export function absolutize(url: string, shareUrl: string | null | undefined): st
   if (!url || !url.startsWith("/")) return url;
   let origin = "https://rendprop.com";
   try { if (shareUrl) origin = new URL(shareUrl).origin; } catch { /* keep default */ }
-  return origin + url;
+  try { return new URL(url, origin).href; } catch { return ""; }
 }
 
 /** "party_size" -> "Party Size". */

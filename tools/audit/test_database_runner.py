@@ -24,13 +24,19 @@ from unittest.mock import patch
 # run_database_regression.py; +19 for the 0047 lifecycle-notification section,
 # +13 for the 0048 brokerage section, 234 since the 0046 commercial-telemetry
 # section, 213 for the 0044 plan-rework section).
-# Both concurrent branches are now reconciled here: 234 + 13 + 19 = 266.
-COUNT = 266
+# Apple chronology and listing facts registration add four assertions to the
+# prior 266-row inventory; limited-trial video policy adds one more. The
+# signed-SKU and dormant credit catalog repair adds three. Keep the mocked
+# inventory exact and independent.
+COUNT = 274
 REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
-    'no gpt-6-astra row is reachable on the free or trial tier',
-    'plan_entitlements match paid plans and 0032 trial/free for every metered feature',
-    'org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)',
+    'no gpt-6-astra row is reachable on the free, trial or new Pro tier',
+    'plan_entitlements match current paid/trial/free catalog for every metered feature',
+    'org_entitlement on a fitness trial org is the single-location free week (0/5/0/0/0, 1 seat, 500¢)',
+    'signed Apple SKU to sold-tier authority preserves the $49 Max and $99 Ultra products',
+    'all ten dormant monthly credit rows fit credits, operating reserves and media within 25% of conservative Apple net',
+    '100-credit pack is dormant at $39.99 until exact Apple proceeds evidence is recorded',
 ]
 NAMES = REQUIRED + [f'synthetic invariant {n:03d}' for n in range(len(REQUIRED) + 1, COUNT + 1)]
 PAID_MARKER = ('PASS: exact paid-plan predicates registered 6 expected outcomes across baseline '
@@ -73,6 +79,7 @@ class RunnerCase(unittest.TestCase):
         calls = []
         invariant_count = 0
         publication_counts = {}
+        guarded_counts = {}
         prior = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
         disk_paths = []
 
@@ -115,8 +122,39 @@ class RunnerCase(unittest.TestCase):
                     states = ['t'] * COUNT
                     states[2] = 'f'
                     output, rc = table(states=states), 3
+            elif sqlfile in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql'):
+                marker = ('PASS credit paid ceiling funding gate: 6 assertions' if sqlfile == 'credit_paid_ceiling_funding_gate.sql' else
+                          'PASS video erase SQL: 51 assertions' if sqlfile == 'video_erase.sql' else
+                          'PASS direct Bria SQL: 40 assertions' if sqlfile == 'video_erase_direct_bria.sql' else
+                          'PASS: member portfolio SQL assertions; all fixtures rolled back.')
+                output, rc = scenario.get('reflection', {}).get(sqlfile, (marker + '\n', 0))
+            elif sqlfile == 'build58_db_controls.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"suite": "build58_db_controls", "assertions": 52}\n', 0))
+            elif sqlfile == 'property_address_lookup.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"suite": "property_address_lookup", "assertions": 25}\n', 0))
+            elif sqlfile == 'trial_full_window_admission.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 11}\n', 0))
+            elif sqlfile == 'paid_media_budget_cap.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 19}\n', 0))
+            elif sqlfile == 'reviewer_sandbox_shared_credit.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 42}\n', 0))
+            elif sqlfile == 'trial_card_backed_authority.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 25}\n', 0))
+            elif sqlfile == 'trial_hybrid_funded_serving.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 43}\n', 0))
+            elif sqlfile == 'property_address_reservations_assert.sql':
+                output, rc = scenario.get('address_cutover', ('address reservation database checks passed\n', 0))
             elif sqlfile == 'negative_astra_paid_gates.sql':
                 output, rc = scenario.get('paid', (PAID_MARKER + '\n', 0))
+            elif sqlfile in subject.GUARDED_ONE_SHOT_MIGRATIONS:
+                # The address cutover proves the live ledger order in its own
+                # disposable database. It must not consume one of the three
+                # apply/historical/refusal attempts in the main audit fixture.
+                if 'rendprop_address_cutover' not in command:
+                    guarded_counts[sqlfile] = guarded_counts.get(sqlfile, 0) + 1
+                    if guarded_counts[sqlfile] == 3:
+                        output, rc = scenario.get('guarded_refusal',
+                                                  (subject.GUARDED_ONE_SHOT_MIGRATIONS[sqlfile][1], 3))
             elif sqlfile in ('worker_publish_transaction.sql', 'negative_upload_publication.sql'):
                 count = publication_counts.get(sqlfile, 0) + 1
                 publication_counts[sqlfile] = count
@@ -209,6 +247,56 @@ class CoreRegressionTests(RunnerCase):
 
 
 class InventoryTests(RunnerCase):
+    def test_address_cutover_runs_in_live_order_and_requires_completion(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        self.assertTrue(result.receipt['addressCutoverFixture']['passed'])
+        names = [row['name'] for row in result.receipt['commands']]
+        cutover = [
+            'address-cutover-setup',
+            'address-cutover-apply-20261026175227_public_property_address_lookup',
+            'address-cutover-apply-20261027032646_property_address_index_writer_execute',
+            'address-cutover-apply-20261027040000_property_address_reservations',
+            'address-cutover-assert',
+        ]
+        self.assertEqual([names.index(name) for name in cutover], sorted(names.index(name) for name in cutover))
+        self.rejected(address_cutover=('missing fixture marker\n', 0))
+
+    def test_exact_guarded_migrations_apply_on_both_fresh_paths_then_refuse(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        guarded = subject_module().GUARDED_ONE_SHOT_MIGRATIONS
+        reviewer_migration = '20261028010346_reviewer_sandbox_shared_credit_budget.sql'
+        declutter_migration = '20261029210132_trial_declutter_assessment.sql'
+        publication_migrations = {
+            '20261105223709_photo_publication_listing_bound_accepted_20261105.sql',
+            '20261105224531_photo_publication_bound_output_ledger_20261105.sql',
+        }
+        performance_migrations = {
+            '20261106222156_listing_access_transaction_memo_20261106.sql',
+            '20261106224239_library_owner_transaction_memo_20261106.sql',
+            '20261106224718_access_chain_plpgsql_plan_cache_20261106.sql',
+            '20261106230302_workspace_directory_candidate_orgs_20261107.sql',
+            '20261106231733_photo_quality_advisory_judge_20261107.sql',
+        }
+        self.assertEqual(len(guarded) - 4 - len(performance_migrations), 39)
+        self.assertIn(reviewer_migration, guarded)
+        self.assertIn(declutter_migration, guarded)
+        self.assertLessEqual(publication_migrations, set(guarded))
+        self.assertLessEqual(performance_migrations, set(guarded))
+        self.assertEqual(set(result.receipt['guardedOneShotRefusals']), set(guarded))
+        commands = {row['name']: row for row in result.receipt['commands']}
+        for filename in guarded:
+            stem = Path(filename).stem
+            self.assertEqual(commands['apply-' + stem]['exit'], 0)
+            self.assertEqual(commands['historical-' + stem]['exit'], 0)
+            self.assertEqual(commands['reject-' + stem]['exit'], 3)
+            self.assertNotIn('replay-' + stem, commands)
+
+    def test_guarded_migration_wrong_refusal_reason_rejects(self):
+        result = self.rejected(guarded_refusal=('ERROR: unrelated syntax failure', 3))
+        self.assertIn('pinned first refusal', result.receipt['failure'])
+
     def test_studio_creates_run_on_each_fresh_path_without_duplicate_replay(self):
         result = self.invoke()
         self.assertIsNone(result.failure)
@@ -222,6 +310,31 @@ class InventoryTests(RunnerCase):
             self.assertIn('replay-' + stem, commands)
         # The exception is exact, never a wildcard covering future Studio work.
         self.assertTrue(subject_module().replayable_migration('20260923000000_studio_future_change.sql'))
+
+    def test_reflection_fixtures_complete_on_fresh_and_replayed_schemas(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        self.assertEqual(result.receipt['reflectionFixtures'], [
+            {'phase': phase, 'fixture': filename, 'assertions': count,
+             'rolledBack': True, 'database': database}
+            for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
+            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19), ('reviewer_sandbox_shared_credit.sql', 42), ('trial_card_backed_authority.sql', 25)]])
+        commands = {row['name']: row for row in result.receipt['commands']}
+        self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
+        for phase in ('initial', 'replayed'):
+            for stem in ('credit_paid_ceiling_funding_gate', 'video_erase', 'video_erase_direct_bria', 'member_portfolios'):
+                self.assertIn('reflection-' + phase + '-' + stem, commands)
+
+    def test_reflection_missing_completion_marker_rejects(self):
+        for filename in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql', 'trial_full_window_admission.sql', 'trial_hybrid_funded_serving.sql', 'paid_media_budget_cap.sql', 'reviewer_sandbox_shared_credit.sql', 'trial_card_backed_authority.sql'):
+            with self.subTest(fixture=filename):
+                self.rejected(reflection={filename: ('ROLLBACK without acceptance marker\n', 0)})
+
+    def test_reflection_wrong_assertion_count_rejects(self):
+        self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 41 assertions\n', 0)})
+
+    def test_reflection_marker_cannot_override_error_exit(self):
+        self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 40 assertions\n', 3)})
 
     def test_publication_exit_zero_without_required_marker_rejects(self):
         self.rejected(publication_positive=('printed without actually finishing', 0))

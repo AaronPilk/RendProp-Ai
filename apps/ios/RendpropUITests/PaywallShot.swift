@@ -36,12 +36,12 @@
 //
 //  Rules, same as StoreShots: `XCUIScreen.main.screenshot()` for the full
 //  1320 × 2868 including the status bar; identifier first, visible label
-//  second, never coordinates; `continueAfterFailure = true`; one
-//  `XCTContext.runActivity` per step; a step that cannot be reached writes the
-//  reason into the result bundle instead of failing the run. And one rule of
+//  second, never coordinates; one `XCTContext.runActivity` per step. A step
+//  that cannot be reached writes the reason into the result bundle AND fails
+//  the test, so a screenshot of Home cannot pass as paywall evidence. One rule of
 //  its own: NO PURCHASE BUTTON IS EVER TAPPED. "Subscribe" / "Start 7-day free
 //  trial" are photographed, never touched. The only controls this test presses
-//  are the Settings tab, Settings → "Upgrade plan", the Monthly / Yearly
+//  are Account, Account → Settings and plan → View plans, the Monthly / Yearly
 //  picker, the paywall's own "Try again", and "Close".
 //
 //  NEVER PUBLIC. The PNG goes into App Store Connect's per-subscription
@@ -95,7 +95,7 @@ final class PaywallShot: XCTestCase {
         // skipped gates, same deterministic light appearance. Keys verified
         // against source: RendpropApp.swift @AppStorage("hasOnboarded"),
         // RootTabView @AppStorage("space.type"), @AppStorage("appearance"),
-        // AIConsent "ai.thirdPartyProcessing.consent.v2".
+        // AIConsent "ai.thirdPartyProcessing.consent.v3".
         //
         // `-uiTesting` does not touch StoreKit: PurchaseManager.loadProducts()
         // calls `Product.products(for: RendpropProducts.all)` unconditionally,
@@ -105,7 +105,7 @@ final class PaywallShot: XCTestCase {
             "-hasOnboarded", "YES",
             "-space.type", "real_estate",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v2", "YES",
+            "-ai.thirdPartyProcessing.consent.v3", "YES",
         ]
         app.launch()
     }
@@ -123,6 +123,7 @@ final class PaywallShot: XCTestCase {
         step02Yearly(productsLoaded: productsLoaded)
         step03Legal(productsLoaded: productsLoaded)
         closePaywall()
+        XCTAssertTrue(productsLoaded, "No review-safe paywall was captured. See p01-paywall-EMPTY and the step notes.")
     }
 
     // MARK: - StoreKit test environment
@@ -197,27 +198,26 @@ final class PaywallShot: XCTestCase {
             + attempts.joined(separator: " | ")
     }
 
-    // MARK: p01 — Settings → Upgrade plan → the paywall, Monthly
+    // MARK: p01 — Account → Settings and plan → View plans → the paywall
 
     /// The deliverable. Reached the way a customer (and a reviewer) reaches
-    /// it: Settings tab → Plan & usage → "Upgrade plan" (`settings.upgradePlan`,
-    /// SettingsView.PlanActionRows — visible signed-out and under the mock,
+    /// it: Account tab → Settings and plan → Plan & usage → View plans
+    /// (`settings.upgradePlan`, SettingsView.PlanActionRows — visible signed-out and under the mock,
     /// whose `/me` reports no plan). Waits for a real StoreKit price before
     /// capturing; if none renders, says why and captures `p01-paywall-EMPTY`.
     /// - Returns: true when a price was on screen for the shot.
     private func step01Monthly() -> Bool {
         var loaded = false
         activity("p01 — Paywall · Monthly") {
-            guard openSettingsTab() else {
-                note("SKIPPED: no Settings tab — capturing whatever is on screen.")
+            guard openSettings() else {
+                note("SKIPPED: Account → Settings and plan did not open — capturing the current screen.")
                 shot("p01-paywall-EMPTY")
                 return
             }
-            guard let upgrade = scrollTo(ids: ["settings.upgradePlan"], labels: ["Upgrade plan"],
+            guard let upgrade = scrollTo(ids: ["settings.upgradePlan"], labels: ["View plans", "Change plan"],
                                          swipes: 8, perSwipeTimeout: 0.5) else {
-                note("SKIPPED: no `settings.upgradePlan` and no \"Upgrade plan\" row in Settings. "
-                     + "The row is hidden when /me reports a paid plan (RendpropProducts.isUpgradeable) — "
-                     + "under -uiTesting the mock reports none, so this should not happen.")
+                note("SKIPPED: no `settings.upgradePlan` / View plans / Change plan row in Settings. "
+                     + "The row should be visible even without a signed-in account.")
                 shot("p01-paywall-EMPTY")
                 return
             }
@@ -225,7 +225,7 @@ final class PaywallShot: XCTestCase {
             guard waitForAny(ids: ["paywall.root"],
                              labels: ["Turn any phone walkthrough", "Pick a plan"],
                              timeout: screenTimeout) else {
-                note("SKIPPED: tapped \"Upgrade plan\" but no `paywall.root` appeared within "
+                note("SKIPPED: tapped View plans but no `paywall.root` appeared within "
                      + "\(Int(screenTimeout))s — capturing whatever is on screen.")
                 shot("p01-paywall-EMPTY")
                 return
@@ -234,6 +234,22 @@ final class PaywallShot: XCTestCase {
             loaded = waitForProducts()
             settle(1.5)          // let the cards and the buy bar finish animating in
             if loaded {
+                let pro = app.descendants(matching: .any)
+                    .matching(identifier: "paywall.plan.pro").firstMatch
+                guard pro.waitForExistence(timeout: shortTimeout) else {
+                    note("REJECTED: Pro plan could not be selected for the App Review screenshot.")
+                    loaded = false
+                    shot("p01-paywall-EMPTY")
+                    return
+                }
+                tap(pro)
+                guard waitForLabel(containing: "Selected: Pro", timeout: shortTimeout) != nil else {
+                    note("REJECTED: Pro is not the selected plan in the App Review screenshot.")
+                    loaded = false
+                    shot("p01-paywall-EMPTY")
+                    return
+                }
+                settle(0.7)
                 shot("p01-paywall-monthly")
             } else {
                 note("EMPTY: no StoreKit price rendered within \(Int(productTimeout))s, so this is the "
@@ -249,9 +265,9 @@ final class PaywallShot: XCTestCase {
 
     // MARK: p02 — the Yearly tab
 
-    /// Same sheet, picker on Yearly: "$490.00/year" on Starter and Pro, and
-    /// Team's card falling back to its monthly price with a "Monthly only"
-    /// note (Team Yearly is in `RendpropProducts.notSoldAtLaunch`).
+    /// Same sheet, picker on Yearly. Since 2026-10-09 every annual product is
+    /// in `RendpropProducts.notSoldAtLaunch`, the picker is hidden and this
+    /// step records SKIPPED; it returns if annual plans are ever sold again.
     private func step02Yearly(productsLoaded: Bool) {
         activity("p02 — Paywall · Yearly") {
             guard productsLoaded else {
@@ -304,14 +320,13 @@ final class PaywallShot: XCTestCase {
 
     // MARK: - Paywall helpers
 
-    /// True once a real StoreKit price is on screen.
+    /// True only when every launch plan shows the exact local StoreKit price
+    /// and the purchase screen does not say subscriptions are unavailable.
     ///
-    /// "$49.00/month" is `Product.displayPrice` + `BillingPeriod.priceSuffix`
-    /// (PaywallView.priceText); a card whose product did not load prints a
-    /// bare dash with no suffix, and nothing else on the sheet contains
-    /// "/month". The plan cards are `.accessibilityElement(children: .combine)`,
-    /// so the price is usually folded into a button's label rather than a
-    /// separate static text — hence the type-agnostic search.
+    /// A card whose product did not load prints a bare dash. Assert today's
+    /// approved US launch prices; future Ultra and Team price schedules are
+    /// checked separately in App Store Connect.
+    /// The cards combine their children into accessibility labels.
     ///
     /// When the empty state ("Plans aren't available right now") shows up
     /// first, presses the paywall's OWN "Try again" — a plain product reload,
@@ -319,12 +334,31 @@ final class PaywallShot: XCTestCase {
     private func waitForProducts() -> Bool {
         let deadline = Date().addingTimeInterval(productTimeout)
         var retries = 0
+        let expected = [
+            (id: "paywall.plan.pro", price: "$29.99/month"),
+            (id: "paywall.plan.max", price: "$49.00/month"),
+            (id: "paywall.plan.ultra", price: "$99.00/month"),
+            (id: "paywall.plan.team", price: "$249.00/month"),
+        ]
         repeat {
-            if let price = waitForLabel(containing: "/month", timeout: 0.5) {
-                // The whole card label when the price is folded into a card —
-                // trimmed, it is only here to prove a real price was on screen.
-                note("Price rendered: \(String(price.label.prefix(140)))")
+            let labels = expected.map { item -> String in
+                let card = app.descendants(matching: .any)
+                    .matching(identifier: item.id).firstMatch
+                return card.exists ? card.label : "missing"
+            }
+            let pricesMatch = zip(expected, labels).allSatisfy { item, label in
+                label.contains(item.price)
+            }
+            let unavailable = app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "New paid subscriptions are temporarily unavailable")
+            ).firstMatch.exists
+            if pricesMatch && !unavailable {
+                note("Fixture prices rendered: \(labels.joined(separator: "; "))")
                 return true
+            }
+            if unavailable {
+                note("REJECTED: the purchase screen says new paid subscriptions are temporarily unavailable.")
+                break
             }
             if retries < 3, let retry = emptyStateRetryButton() {
                 retries += 1
@@ -334,6 +368,12 @@ final class PaywallShot: XCTestCase {
                 settle(2)
             }
         } while Date() < deadline
+        let observed = expected.map { item -> String in
+            let card = app.descendants(matching: .any)
+                .matching(identifier: item.id).firstMatch
+            return "\(item.id): \(card.exists ? String(card.label.prefix(100)) : "missing")"
+        }
+        note("REJECTED: expected local StoreKit launch prices \(expected.map { $0.price }); observed \(observed.joined(separator: "; "))")
         return false
     }
 
@@ -382,8 +422,11 @@ final class PaywallShot: XCTestCase {
     // MARK: - Navigation helpers (mirroring StoreShots)
 
     @discardableResult
-    private func openSettingsTab() -> Bool {
-        openTab("Settings", ids: [], confirmedBy: ["Plan & usage", "Business type"])
+    private func openSettings() -> Bool {
+        guard openTab("Account", ids: ["account.settings"], confirmedBy: ["Settings and plan"]) else { return false }
+        guard let settings = find(ids: ["account.settings"], labels: ["Settings and plan"], timeout: shortTimeout) else { return false }
+        tap(settings)
+        return waitForAny(ids: [], labels: ["Business type", "Plan & usage"], timeout: screenTimeout)
     }
 
     /// Tap a tab and wait for something only that tab shows. A tab tap while a

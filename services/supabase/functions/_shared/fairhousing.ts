@@ -107,6 +107,16 @@ import { HttpError } from "./http.ts";
  *  govern. Anything else — including nothing at all — is treated as housing. */
 const NON_HOUSING_SPACES = new Set(["venue", "restaurant", "retail", "fitness", "other"]);
 
+/** Screening copy only: preserve the authored display text. Compatibility
+ * characters, accents and invisible separators must not evade existing rules.
+ * This remains a lexical guard, not a semantic or all-language certification. */
+function screeningText(raw: string | null | undefined): string {
+  return String(raw ?? "").normalize("NFKC").normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, "")
+    .replace(/\s+/gu, " ");
+}
+
 /**
  * True unless `spaceType` is one of the five known NON-housing industries.
  * null, undefined, "" and unknown values all answer true: when in doubt the
@@ -226,7 +236,7 @@ function checkDenylist(
   housing: boolean,
   contextual: boolean,
 ): DenylistHit | null {
-  const text = String(raw ?? "");
+  const text = screeningText(raw);
   if (!text.trim()) return null;
 
   for (const r of ALWAYS) {
@@ -487,6 +497,14 @@ const CATEGORY_COPY: Record<ScriptCategory, { why: string; fix: string }> = {
  * specific and most clearly unlawful first.
  */
 const SCRIPT_RULES: ScriptRule[] = [
+  // Explicit common Spanish, Portuguese and French preference/exclusion
+  // phrases. Unlisted languages and indirect steering still need review.
+  { category: "familial_status", housingOnly: true,
+    re: /\b(?:ideal|perfect[oa])\s+para\s+(?:las?\s+)?familias\b|\b(?:solo|apenas)\s+(?:para\s+)?adultos\b|\b(?:no\s+se\s+permiten|sin|proibid[oa]s?)\s+(?:ninos|criancas)\b|\bideal\s+pour\s+les\s+familles\b|\bpas\s+d['’]enfants\b/i },
+  { category: "race",
+    re: /\b(?:sin|no\s+se\s+permiten)\s+extranjeros\b|\b(?:sem|proibid[oa]s?)\s+estrangeiros\b|\bpas\s+d['’]etrangers\b/i },
+  { category: "religion", housingOnly: true,
+    re: /\b(?:solo|apenas)\s+(?:para\s+)?(?:cristianos|cristaos)\b|\b(?:uniquement|reserve)\s+(?:aux\s+)?chretiens\b/i },
   // ── Familial status ────────────────────────────────────────────────────────
   // "great for families", "perfect for young professionals", "made for retirees"
   {
@@ -710,7 +728,7 @@ export function checkMarketingCopy(
   raw: string | null | undefined,
   spaceType?: string | null,
 ): ScriptHit | null {
-  const text = String(raw ?? "");
+  const text = screeningText(raw);
   if (!text.trim()) return null;
   const housing = isHousingSpace(spaceType);
   for (const rule of SCRIPT_RULES) {

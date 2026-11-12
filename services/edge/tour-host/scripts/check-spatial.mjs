@@ -73,13 +73,29 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   tour.chapters[0].spatial_anchor={scene_id:id,room_id:'kitchen'};
   tour.floorplan_url='/synthetic-floorplan.png';
   for(const unbranded of [false,true]) {
+    // The in-app embed intentionally retains the scroll engine. Keep its
+    // existing media detach, decoder destruction and time/scroll return gates.
+    // Embeds omit the editorial floor-plan list, so give the fixture two
+    // explicit room anchors to exercise the same two-entry admission gate.
+    const embedTour={...tour,chapters:tour.chapters.map((chapter,i)=>i===1?{...chapter,spatial_anchor:{scene_id:id,room_id:'kitchen'}}:chapter)};
+    const embedded=renderTourPage(embedTour,'https://example.test','', '', {unbranded,embed:true});
+    check((embedded.match(/data-spatial-scene="/g)||[]).length >= 2, 'embed rail/room list offer entry');
+    check(embedded.includes('video.removeAttribute'), 'embed video source detached before WebGL');
+    check(embedded.includes('if (hlsJs){ hlsJs.destroy()'), 'embed HLS destroyed before WebGL');
+    check(embedded.includes('window.scrollTo(saved.x, saved.y)'), 'embed scroll restored');
+    check(embedded.includes('saved.time'), 'embed video time restored');
+    if(unbranded) check(unbrandedSelfCheck(embedded,embedTour).length === 0, 'embed spatial controls preserve unbranded gate');
+
+    // Public listings use the optional ordinary player. Returning from 3D is
+    // a listing action and must not restart a hidden media source.
     const html=renderTourPage(tour,'https://example.test','', '', {unbranded});
-    check((html.match(/data-spatial-scene="/g)||[]).length >= 2, 'rail/room list offer entry');
-    check(html.includes('video.removeAttribute'), 'video source detached before WebGL');
-    check(html.includes('if (hlsJs){ hlsJs.destroy()'), 'HLS destroyed before WebGL');
-    check(html.includes('window.scrollTo(saved.x, saved.y)'), 'scroll restored');
-    check(html.includes('saved.time'), 'video time restored');
-    if(unbranded) check(unbrandedSelfCheck(html,tour).length === 0, 'spatial controls preserve unbranded gate');
+    check((html.match(/data-spatial-scene="/g)||[]).length >= 2, 'listing modal/floor-plan offer spatial entry');
+    check(html.includes('if (active) closeVideo(true);'), 'listing closes active video before opening WebGL');
+    check(html.includes('hls.destroy()') && html.includes("video.pause(); video.removeAttribute('src'); video.load();"), 'listing destroys HLS and unloads ordinary media');
+    check(html.includes('window.scrollTo(x,y)'), 'listing spatial return restores position');
+    const spatialReturn=html.slice(html.indexOf('var spatialOpen=false'));
+    check(!spatialReturn.includes('setupVideo()') && !spatialReturn.includes('startSource()') && !spatialReturn.includes('attachDirect('), 'listing spatial return never attaches hidden video');
+    if(unbranded) check(unbrandedSelfCheck(html,tour).length === 0, 'listing spatial controls preserve unbranded gate');
   }
   const env={SUPABASE_FUNCTIONS_URL:'https://spatial-upstream.invalid/functions/v1',SUPABASE_ANON_KEY:'synthetic-public-key'};
   const request=(kind,auth)=>new Request('https://rendprop.com/s/'+id+'/'+kind+(kind==='model'?'?revision='+revision:''), {headers:auth?{Authorization:'Bearer synthetic.capability'}:{}});

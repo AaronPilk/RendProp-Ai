@@ -155,7 +155,7 @@ def _caption_for(room: str) -> str | None:
 
 
 def _upload_enhancements(result: EnhanceResult, listing_id: str, render_id: str,
-                         artifacts: "_Artifacts") -> tuple[list[dict], str | None]:
+                         artifacts: "_Artifacts", org_id: str) -> tuple[list[dict], str | None]:
     """Upload enhanced stills (+hero) to R2. Returns (photo_rows, hero_key).
 
     Uploads only — the `photos` rows are written LATER, after the tour is
@@ -168,12 +168,12 @@ def _upload_enhancements(result: EnhanceResult, listing_id: str, render_id: str,
     for i, still in enumerate(result.stills):
         try:
             enh_key = f"renders/{listing_id}/{render_id}-staged-{i}.jpg"
-            r2.upload_file(still.enhanced_path, bucket, enh_key, "image/jpeg")
+            r2.upload_file(still.enhanced_path, bucket, enh_key, "image/jpeg", org_id=org_id)
             artifacts.r2(bucket, enh_key)
             orig_key = None
             if still.source_path and os.path.exists(still.source_path):
                 orig_key = f"renders/{listing_id}/{render_id}-staged-{i}-orig.jpg"
-                r2.upload_file(still.source_path, bucket, orig_key, "image/jpeg")
+                r2.upload_file(still.source_path, bucket, orig_key, "image/jpeg", org_id=org_id)
                 artifacts.r2(bucket, orig_key)
             rows.append({
                 "listing_id": listing_id,
@@ -190,7 +190,7 @@ def _upload_enhancements(result: EnhanceResult, listing_id: str, render_id: str,
     if result.hero_path:
         try:
             hero_key = f"renders/{listing_id}/{render_id}-hero.mp4"
-            r2.upload_file(result.hero_path, bucket, hero_key, "video/mp4")
+            r2.upload_file(result.hero_path, bucket, hero_key, "video/mp4", org_id=org_id)
             artifacts.r2(bucket, hero_key)
             print(f"    ✓ hero clip → r2://{bucket}/{hero_key}")
         except Exception as e:  # noqa: BLE001
@@ -426,16 +426,16 @@ def _process_job_inner(job: dict, job_id: str, listing_id, asset_id, enhancement
         render_id = str(uuid4())
         video_key = f"renders/{listing_id}/{render_id}.mp4"
         poster_key = f"renders/{listing_id}/{render_id}-poster.jpg"
-        r2.upload_file(out_mp4, SETTINGS.r2_bucket_renders, video_key, "video/mp4")
+        r2.upload_file(out_mp4, SETTINGS.r2_bucket_renders, video_key, "video/mp4", org_id=org_id)
         artifacts.r2(SETTINGS.r2_bucket_renders, video_key)
-        r2.upload_file(poster, SETTINGS.r2_bucket_renders, poster_key, "image/jpeg")
+        r2.upload_file(poster, SETTINGS.r2_bucket_renders, poster_key, "image/jpeg", org_id=org_id)
         artifacts.r2(SETTINGS.r2_bucket_renders, poster_key)
         print(f"    ✓ uploaded tour + poster → r2://{SETTINGS.r2_bucket_renders}/{video_key}")
 
         photo_rows: list[dict] = []
         hero_key = None
         if enh.ran:
-            photo_rows, hero_key = _upload_enhancements(enh, listing_id, render_id, artifacts)
+            photo_rows, hero_key = _upload_enhancements(enh, listing_id, render_id, artifacts, org_id)
 
         # 6. Register to Cloudflare Stream (optional).
         step = "stream"

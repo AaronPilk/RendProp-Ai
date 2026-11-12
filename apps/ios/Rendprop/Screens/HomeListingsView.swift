@@ -1,6 +1,183 @@
 import SwiftUI
 import UIKit
 
+/// An offline, interactive guide. Reading a step never starts capture, an AI
+/// job, a purchase, or a write to the user's workspace.
+struct AppGuideView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("What would you like to do?").font(.rpTitle).foregroundStyle(Theme.ink)
+                Text("Pick a feature and tap through its steps. Your listings stay as they are.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+                ForEach(AppGuideTopic.allCases) { topic in
+                    NavigationLink { AppGuideStepsView(topic: topic) } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: topic.icon).font(.title2).foregroundStyle(Theme.accent)
+                                .frame(width: 34)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(topic.title).font(.rpHeadline).foregroundStyle(Theme.ink)
+                                Text(topic.summary).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
+                        }.padding(16).card()
+                    }.buttonStyle(ScalePressStyle())
+                        .accessibilityIdentifier("guide.\(topic.rawValue)")
+                }
+            }.padding()
+        }.background(Theme.bg)
+            .navigationTitle("App walkthrough")
+            .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private enum AppGuideTopic: String, CaseIterable, Identifiable {
+    case listing, capture, photos, editing, reel, aerial, measurements, contact, sharing, leads, team, studio, plan, spatial
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .listing: return "Start a \(SpaceType.current.spaceNoun)"
+        case .capture: return "Film a walkthrough"
+        case .photos: return "Add and choose photos"
+        case .editing: return "Declutter or stage photos"
+        case .reel: return "Make a social reel"
+        case .aerial: return "Aerial opening"
+        case .measurements: return "Measurements and floor plans"
+        case .contact: return "Your card and client details"
+        case .sharing: return "Publish and share"
+        case .leads: return "Follow up on inquiries"
+        case .team: return "Work with a team"
+        case .studio: return "Continue on desktop"
+        case .plan: return "Plans and billing"
+        case .spatial: return "3D features"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .listing: return "plus.rectangle"
+        case .capture: return "video"
+        case .photos: return "photo.stack"
+        case .editing: return "wand.and.stars"
+        case .reel: return "film.stack"
+        case .aerial: return "airplane"
+        case .measurements: return "ruler"
+        case .contact: return "person.text.rectangle"
+        case .sharing: return "square.and.arrow.up"
+        case .leads: return "person.crop.circle.badge.checkmark"
+        case .team: return "person.2"
+        case .studio: return "desktopcomputer"
+        case .plan: return "creditcard"
+        case .spatial: return "rotate.3d"
+        }
+    }
+    var summary: String { steps[0].1 }
+    var steps: [(String, String)] {
+        switch self {
+        case .listing: return [
+            ("Add a listing", "Open your collection and tap Add. Give the location an address or name first."),
+            ("Check the details", "Use address suggestions or current location, then enter a unit number separately if needed. Review the saved details."),
+            ("Keep everything together", "Open this listing whenever you add photos, film, make a reel or edit its contact details. Each listing library keeps its own listings.")]
+        case .capture: return [
+            ("Choose your location", "Open the listing, then record a walkthrough or import a video you already have."),
+            ("Keep the camera steady", "For interiors, use 0.5× on a supported iPhone. Keep the phone level and walk at a steady pace. Avoid quick turns."),
+            ("Preview before sharing", "Review the footage and room tags. Motion smoothing can reduce shake; it cannot guarantee drone-like movement from every recording.")]
+        case .photos: return [
+            ("Open Photos", "Choose a listing and open Photos. Take a photo or import from Photos or Files."),
+            ("Choose your main photo", "Pick a clear exterior or another strong image as the main photo. This is the first image visitors see on the listing."),
+            ("Save the version you want", SpaceType.current == .realEstate ? "Use the photo's download action to export a JPEG for MLS, or open AI Photo Studio for version history. Check your MLS's image requirements." : "Use the photo's download action to export a JPEG, or open AI Photo Studio for version history. Check your advertising platform's image requirements.")]
+        case .editing: return [
+            ("Choose the change", "Open AI Photo Studio. Choose Declutter, a staging style or another edit, then select the photos you want to change. Each accepted edit uses one photo edit from your plan."),
+            ("Keep each version", "Original, decluttered and staged versions stay separate. You can leave the screen while an accepted job processes. Check its status when you return."),
+            ("Review and export", "Check walls, windows, appliances and access to doors. Select the version for your published gallery or download it. Files exports include disclosure captions; when saving to Photos, copy the caption separately. Follow your advertising platform's rules.")]
+        case .reel: return [
+            ("Pick your photos", "Open Make a reel for a listing. Choose the photos and the format for your social post."),
+            ("Choose movement and sound", "Set the clip style and voice options, then review the quote before creating. If processing stops, recover a confirmed saved request or finish a shorter reel from saved clips. Review an unconfirmed request before starting another generation."),
+            ("Watch the whole result", "Review transitions, scene accuracy, captions and audio. Save the finished video before posting it to social media.")]
+        case .aerial: return [
+            ("Start at the front", "Choose an original exterior photo showing the front of this home. Review the frame and processing terms before creating an opening."),
+            ("Opening only", "Watch the result, then use it as the first clip in a new Listing or Social video. To show it on your website, select the finished Listing video. Recorded walkthroughs stay unchanged."),
+            ("Resume an earlier request", "If an aerial was already submitted, open its listing and tap Resume earlier aerial. This checks the existing request; it does not generate a new clip.")]
+        case .measurements: return [
+            ("Coming soon", "Measurements, 3D floor plans and 3D walkthroughs are still being tested. The cards on Home and in each listing's toolbox do not open yet, and no plan includes them."),
+            ("Nothing else waits on them", "Photos, AI Photo Studio, reels and published listings work today without any measurements."),
+            ("When they ship", "You will be able to enter room dimensions, draw measured outlines and upload a plan you already have. App calculations will not be a certified survey or appraisal.")]
+        case .contact: return [
+            ("Set up your card", "Open Profile, edit your name, photo and contact details, then tap Save. Your personal card stays yours when you join a team. Set the listing library's business logo separately. Use Send business card for your contact details alone, or Share my portfolio to choose the listings to include."),
+            ("Represent your client", "For a photographer's listing, open Listing contact and enter the client's name, photo and public contact details."),
+            ("Choose where leads go", "Enter the client's private lead email and choose whether to hide Rendprop branding. You retain a copy of inquiries in Leads.")]
+        case .sharing: return [
+            ("Review your listing", "Check the main photo, gallery versions, property details, contact card and disclosures before publishing."),
+            ("Choose the right link", SpaceType.current == .realEstate ? "Share the branded link with clients or social followers. Use the unbranded link only where your MLS permits virtual-tour links." : "Share the published tour with your customers or social followers. Review its details, contact information and disclosures first."),
+            ("Explore or watch", "The public page opens with the main photo and details. Visitors can play the selected listing video; a recorded walkthrough is optional.")]
+        case .leads: return [
+            ("Open Leads", "Inquiries from published listings appear in Leads. Open an inquiry to see its contact information."),
+            ("Contact the person", "Tap the phone number to call or the email address to compose an email. Check the listing so you follow up with the right client."),
+            ("Check delivery", "If a client misses an inquiry email, use the available resend action and check its delivery status. Saving a lead does not guarantee an email arrived in the inbox.")]
+        case .team: return [
+            ("Keep your own listings", "Joining a Team keeps your listings, tours and leads in your own account. Invited agents see only their own work."),
+            ("Invite or join", "Open Settings → Team to create an invitation or join using a real invitation code. A pending invitation uses a seat until accepted or revoked."),
+            ("Team owner access", "Only the Team owner can switch between authorized agents’ listings. Switching agents does not move purchases or saved work.")]
+        case .studio: return [
+            ("Sign in on desktop", "Open studio.rendprop.com and sign in with the same account you use on your iPhone."),
+            ("Open the same listing", "Your own uploaded listings and synced changes are available there. Team owners can choose an authorized agent’s listings. Local-only files need to upload first."),
+            ("Continue producing", "Use Studio to organize assets, create content and review work with your team. On the phone, use Retry Studio sync if a listing update is still waiting.")]
+        case .plan: return [
+            ("Check your allowance", "Open Settings → Plan & usage to see the account's plan and feature limits."),
+            ("Review before purchasing", "Choose a plan. Every plan bills monthly. Apple's purchase sheet shows the actual price and any eligible free trial. A trial starts only after you confirm the subscription."),
+            ("Manage your subscription", "Use Manage subscription to change or cancel with Apple. Restore purchases after reinstalling or signing back in.")]
+        case .spatial: return [
+            ("Coming soon", "3D walkthroughs and automatic 3D floor-plan capture are still being tested. They are not required to create photos, videos or a published listing."),
+            ("Capture now, 3D later", "Photos and walkthrough video you capture today stay usable; the 3D features will build on the same captures when they ship."),
+            ("Measurements too", "Entering room measurements, drawing measured outlines and uploading an existing floor plan are also marked Coming soon; nothing you publish today depends on them.")]
+        }
+    }
+}
+
+private struct AppGuideStepsView: View {
+    let topic: AppGuideTopic
+    @State private var step = 0
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                Image(systemName: topic.icon).font(.system(size: 44)).foregroundStyle(Theme.accent)
+                Text("Step \(step + 1) of \(topic.steps.count)").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                ProgressView(value: Double(step + 1), total: Double(topic.steps.count)).tint(Theme.accent)
+                Text(topic.steps[step].0).font(.rpTitle).foregroundStyle(Theme.ink)
+                Text(topic.steps[step].1).font(.rpBody).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 12) {
+                    if step + 1 < topic.steps.count {
+                        Button("Next step") { step += 1; Haptics.selection() }
+                            .modifier(RendpropActionAppearance(compact: true))
+                    } else {
+                        Label("You're ready", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                    }
+                }.padding(.top, 8)
+                if step + 1 == topic.steps.count && topic == .listing {
+                    NavigationLink("Add a listing") { NewListingView() }
+                        .modifier(RendpropActionAppearance(compact: true))
+                }
+            }.padding(22)
+        }.background(Theme.bg)
+            .navigationTitle(topic.title).navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(step > 0)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if step > 0 {
+                        Button { step = max(0, step - 1) } label: {
+                            Label("Back", systemImage: "chevron.left")
+                        }
+                        .accessibilityLabel("Previous help step")
+                        .accessibilityIdentifier("guide.previousStep")
+                    }
+                }
+            }
+            .accessibilityIdentifier("guide.steps.\(topic.rawValue)")
+    }
+}
+
 struct HomeListingsView: View {
     @EnvironmentObject var model: AppModel
     // LOAD-BEARING: observing this key is what makes `filtered`/`soldCount`
@@ -9,27 +186,34 @@ struct HomeListingsView: View {
     // stop updating on type switch. (Samples themselves are re-derived by
     // RootTabView on the same change.)
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+    @AppStorage(RealEstateRoleStore.uiRevisionKey) private var realEstateRoleRevision = 0
     @State private var isLoading = true
     @State private var search = ""
     @State private var pendingDelete: Listing?
+    @State private var showSyncPlan = false
+    @ObservedObject private var workspaceStore = WorkspaceStore.shared
+
+    private var needsWorkspaceSelection: Bool {
+        Config.useLiveBackend && !Config.isOfflineAccountFixture && workspaceStore.selected == nil
+    }
 
     /// Only listings for the CURRENT business type (a gym never sees houses),
     /// active (not sold), plus search.
     private var filtered: [Listing] {
-        let active = model.listings.filter { $0.belongsToCurrentType && !$0.isSold }
+        let active = model.listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isInactive && model.isInSelectedWorkspace($0) }
         guard !search.isEmpty else { return active }
         return active.filter { $0.address.localizedCaseInsensitiveContains(search) }
     }
 
     /// True once the user has a listing of their own for this industry.
     private var hasRealListing: Bool {
-        model.listings.contains { !$0.isSample && $0.belongsToCurrentType }
+        model.listings.contains { !$0.isSample && $0.belongsToCurrentType && model.isInSelectedWorkspace($0) }
     }
 
     /// Archived count for THIS industry only — real-estate sold houses don't
     /// show up in the Food or Gym archive.
     private var soldCount: Int {
-        model.listings.filter { $0.belongsToCurrentType && $0.isSold }.count
+        model.listings.filter { !$0.isSample && $0.belongsToCurrentType && $0.isInactive && model.isInSelectedWorkspace($0) }.count
     }
 
     private var noun: String { SpaceType.current.spaceNoun }
@@ -58,13 +242,10 @@ struct HomeListingsView: View {
                         }
                         .font(.body)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Theme.accent)
-                        .foregroundStyle(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
+                        .frame(minHeight: 28)
                     }
-                    .buttonStyle(ScalePressStyle())
+                    .modifier(RendpropActionAppearance())
+                    .disabled(needsWorkspaceSelection)
                     .padding(.horizontal)
                     .accessibilityLabel(Text("Add a \(noun)"))
                 }
@@ -73,6 +254,9 @@ struct HomeListingsView: View {
             .task {
                 await model.load()
                 isLoading = false
+            }
+            .sheet(isPresented: $showSyncPlan, onDismiss: { Task { await model.refreshCloudWorkspace() } }) {
+                PaywallView(reason: .upgrade)
             }
             .confirmationDialog(deleteTitle,
                                 isPresented: Binding(get: { pendingDelete != nil },
@@ -101,6 +285,24 @@ struct HomeListingsView: View {
     /// card keeps its own design.
     private var listBody: some View {
         List {
+            if needsWorkspaceSelection {
+                workspaceSelectionPrompt
+                Text("Choose your own listing library to see your private listings, or a shared library to work with its team. Saved files stay on this iPhone.")
+                    .font(.footnote).foregroundStyle(Theme.inkDim)
+            } else {
+                WorkspaceEntry()
+            }
+            if model.planBlockedCloudListingCount > 0 {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Draft saved on this iPhone", systemImage: "icloud.slash")
+                        .font(.subheadline.weight(.semibold))
+                    Text(AppModel.draftCreationPlanMessage).font(.footnote)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { syncPlanActions }
+                        VStack(alignment: .leading, spacing: 10) { syncPlanActions }
+                    }
+                }.foregroundStyle(Theme.inkDim).listRowBackground(Color.clear)
+            }
             if let error = model.cloudSyncError {
                 Label(error, systemImage: "icloud.slash")
                     .font(.footnote).foregroundStyle(Theme.inkDim)
@@ -108,10 +310,11 @@ struct HomeListingsView: View {
             } else if model.isCloudSyncing {
                 HStack { ProgressView(); Text("Syncing with Studio…").font(.footnote) }
                     .listRowBackground(Color.clear)
-            } else if model.pendingCloudListingCount > 0 {
+            } else if model.pendingCloudListingCount > 0 && model.planBlockedCloudListingCount == 0 {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(model.pendingCloudListingCount) listing update\(model.pendingCloudListingCount == 1 ? " is" : "s are") waiting to sync.").font(.footnote)
-                    Button("Retry Studio sync") { Task { await model.refreshCloudWorkspace() } }.font(.footnote.weight(.semibold))
+                    Button("Retry Studio sync") { Task { await model.retryCloudWorkspace() } }.font(.footnote.weight(.semibold))
+                        .disabled(model.isCloudSyncing)
                 }.foregroundStyle(Theme.inkDim).listRowBackground(Color.clear)
             }
             if !hasRealListing && search.isEmpty {
@@ -174,6 +377,22 @@ struct HomeListingsView: View {
         .refreshable { await model.refreshCloudWorkspace() }
     }
 
+    @ViewBuilder private var syncPlanActions: some View {
+        Button("Choose a plan") { showSyncPlan = true }
+            .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+        Button("Retry Studio sync") { Task { await model.retryCloudWorkspace() } }
+            .buttonStyle(.bordered).buttonBorderShape(.capsule)
+            .disabled(model.isCloudSyncing)
+    }
+
+    private var workspaceSelectionPrompt: some View {
+        Button("Reconnect to your listings") {
+            Task { await workspaceStore.refresh(); await model.refreshCloudWorkspace() }
+        }
+        .disabled(workspaceStore.isLoading)
+        .accessibilityIdentifier("homes.chooseWorkspace")
+    }
+
     private var rowInsets: EdgeInsets {
         EdgeInsets(top: 9, leading: 16, bottom: 9, trailing: 16)
     }
@@ -203,7 +422,7 @@ struct HomeListingsView: View {
                 .frame(width: 68, height: 68)
                 .background(Color.white.opacity(0.16),
                             in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            Text("Your first tour is\n10 minutes away")
+            Text("Your first listing\nstarts here")
                 .font(.system(size: 24, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.white)
                 .multilineTextAlignment(.center)
@@ -212,21 +431,25 @@ struct HomeListingsView: View {
                 .foregroundStyle(Color.white.opacity(0.88))
                 .multilineTextAlignment(.center)
             HStack(spacing: 8) {
-                emptyStep("1", "Film")
+                emptyStep("1", "Photos")
                 stepArrow
-                emptyStep("2", "Enhance")
+                emptyStep("2", "Video")
                 stepArrow
-                emptyStep("3", "Share")
+                emptyStep("3", "Publish")
             }
             .padding(.top, 4)
             Text("Add a \(noun) first. Every photo and video is saved to it.")
                 .font(.rpCaption)
                 .foregroundStyle(Color.white.opacity(0.9))
                 .multilineTextAlignment(.center)
-            Text("The \(noun)s below are samples — scroll one to see the result.")
-                .font(.rpCaption)
-                .foregroundStyle(Color.white.opacity(0.8))
-                .multilineTextAlignment(.center)
+            NavigationLink { AppGuideView() } label: {
+                Label("Show me how", systemImage: "hand.tap")
+                    .font(.rpBody.weight(.semibold))
+                    .padding(12)
+                    .background(Color.white.opacity(0.18), in: Capsule())
+                    .foregroundStyle(Color.white)
+            }
+            .accessibilityIdentifier("listings.appGuide")
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24).padding(.horizontal, 20)
@@ -277,7 +500,7 @@ struct HomeListingsView: View {
                 .font(.title2)
                 .foregroundStyle(Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(SpaceType.current.archiveNoun).font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text(SpaceType.current == .realEstate ? "Sold & archived" : SpaceType.current.archiveNoun).font(.rpHeadline).foregroundStyle(Theme.ink)
                 Text("\(soldCount) \(noun)\(soldCount == 1 ? "" : "s")")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
             }
@@ -298,7 +521,7 @@ struct SoldListingsView: View {
     @State private var pendingDelete: Listing?
 
     private var sold: [Listing] {
-        model.listings.filter { $0.belongsToCurrentType && $0.isSold }
+        model.listings.filter { $0.belongsToCurrentType && $0.isInactive && model.isInSelectedWorkspace($0) }
             .sorted { ($0.soldAt ?? .distantPast) > ($1.soldAt ?? .distantPast) }
     }
 
@@ -332,6 +555,9 @@ struct SoldListingsView: View {
                         }
                         .contextMenu {
                             if !listing.isSample {
+                                Button { model.setSold(false, for: listing.id) } label: {
+                                    Label("Mark as active", systemImage: "arrow.uturn.backward")
+                                }
                                 Button(role: .destructive) { pendingDelete = listing } label: {
                                     Label("Delete \(noun)", systemImage: "trash")
                                 }
@@ -343,7 +569,7 @@ struct SoldListingsView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .navigationTitle(SpaceType.current.archiveNoun)
+        .navigationTitle(SpaceType.current == .realEstate ? "Sold & archived" : SpaceType.current.archiveNoun)
         .navigationBarTitleDisplayMode(.inline)
         .background(Theme.bg)
         .confirmationDialog("Delete \(pendingDelete?.address ?? "this \(noun)")?",
@@ -367,15 +593,105 @@ struct SoldListingsView: View {
 // MARK: - Aesthetic listing card
 
 struct ListingCard: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
     let listing: Listing
-    /// Downsampled hero, decoded once off the main thread (never a full-res
-    /// `UIImage(contentsOfFile:)` inside `body`).
+    /// Keep only the decoded image in memory. In particular, a cloud media
+    /// capability must never enter the saved listing snapshot or disk cache.
     @State private var hero: UIImage?
+    @State private var heroID: String?
+    @State private var unavailableHeroID: String?
+
+    private enum HeroSource {
+        case local(URL), cloud(String), none
+    }
+
+    private var heroSource: HeroSource {
+        if let projection = model.cloudPhotoProjection(for: listing.id) {
+            if let key = projection.snapshot.mainPhotoKey { return .cloud(key) }
+            if listing.cloudMainPhotoKey != nil { return .none }
+        }
+        if listing.serverID != nil, listing.cloudUnavailable != true,
+           let key = listing.cloudMainPhotoKey { return .cloud(key) }
+        return listing.mainPhotoURL.map(HeroSource.local) ?? .none
+    }
+
+    /// Includes the account and library so a reused List row cannot show an
+    /// earlier user's image during an account or workspace transition.
+    private var currentHeroID: String {
+        let scope = "\(auth.userID ?? "")|\(auth.syncSessionRevision)|\(WorkspaceContext.selectedOrgID?.uuidString ?? "")|\(listing.id.uuidString)|\(listing.serverID?.uuidString ?? "")|\(listing.serverOrgID?.uuidString ?? "")"
+        switch heroSource {
+        case .local(let url): return scope + "|local|" + url.path
+        case .cloud(let key): return scope + "|cloud|" + key
+        case .none: return scope + "|none"
+        }
+    }
 
     private var heroImage: UIImage? {
-        if let hero { return hero }
-        if let url = listing.mainPhotoURL { return ImageThumbnails.cached(url) }
+        if heroID == currentHeroID { return hero }
+        if case .local(let url) = heroSource { return ImageThumbnails.cached(url) }
         return nil
+    }
+
+    private var showPlaceholderSymbol: Bool {
+        if case .none = heroSource { return true }
+        return unavailableHeroID == currentHeroID
+    }
+
+    @MainActor private func isCurrentCloudCover(_ context: CloudMediaAccessContext,
+                                                 serverID: UUID, orgID: UUID, key: String, heroID: String) -> Bool {
+        guard !Task.isCancelled, (try? context.check()) != nil, currentHeroID == heroID,
+              let current = model.listings.first(where: { $0.id == listing.id }),
+              current.serverID == serverID, current.serverOrgID == orgID,
+              current.cloudUnavailable != true, model.isInSelectedWorkspace(current) else { return false }
+        if let projection = model.cloudPhotoProjection(for: listing.id) {
+            return projection.snapshot.mainPhotoKey == key
+        }
+        return current.cloudMainPhotoKey == key
+    }
+
+    @MainActor private func loadHero() async {
+        let id = currentHeroID, source = heroSource
+        hero = nil; heroID = nil; unavailableHeroID = nil
+        defer {
+            if !Task.isCancelled, currentHeroID == id, heroID != id { unavailableHeroID = id }
+        }
+        switch source {
+        case .none: return
+        case .local(let url):
+            let decoded: UIImage?
+            if let cached = ImageThumbnails.cached(url) { decoded = cached }
+            else { decoded = await ImageThumbnails.load(url) }
+            if let decoded, !Task.isCancelled, currentHeroID == id { hero = decoded; heroID = id }
+        case .cloud(let key):
+            guard let serverID = listing.serverID, let orgID = listing.serverOrgID,
+                  let api = model.api as? WorkspaceSyncAPI,
+                  let context = try? CloudMediaAccessContext.capture(orgID: orgID),
+                  isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+            do {
+                var offset = 0
+                while true {
+                    guard isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+                    let page = try await api.cloudMedia(listingID: serverID, orgID: orgID, offset: offset)
+                    guard isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+                    if let url = page.coverURL(for: key, actorID: context.actorID) {
+                        let file = try await CloudFileDownload.fetch(url, kind: .photo)
+                        defer {
+                            ImageThumbnails.invalidate(file.url)
+                            try? FileManager.default.removeItem(at: file.url)
+                        }
+                        guard isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+                        let decoded = await ImageThumbnails.load(file.url)
+                        if let decoded, isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) {
+                            hero = decoded; heroID = id
+                        }
+                        return
+                    }
+                    guard let next = page.next_offset, next > offset else { return }
+                    offset = next
+                }
+            } catch { return }
+        }
     }
 
     private var statusText: String {
@@ -396,12 +712,7 @@ struct ListingCard: View {
         .shadow(color: Color.black.opacity(0.07), radius: 16, x: 0, y: 6)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("\(listing.address), \(listing.subtitleLine), \(statusText)"))
-        .task(id: listing.mainPhotoRelPath) {
-            guard let url = listing.mainPhotoURL else { hero = nil; return }
-            if let cached = ImageThumbnails.cached(url) { hero = cached; return }
-            let decoded = await ImageThumbnails.load(url)
-            if !Task.isCancelled { hero = decoded }
-        }
+        .task(id: currentHeroID) { await loadHero() }
     }
 
     // Hero area — shows the main listing photo once one is set, else a branded placeholder.
@@ -422,12 +733,18 @@ struct ListingCard: View {
                              Theme.accentSoft],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
-                Image(systemName: listing.spaceType == .realEstate
-                                  ? "house.and.flag.fill"
-                                  : listing.spaceType.systemImage)
-                    .font(.system(size: 56, weight: .ultraLight))
-                    .foregroundStyle(Theme.accent.opacity(0.30))
-                    .offset(y: 6)
+                if showPlaceholderSymbol {
+                    Image(systemName: listing.spaceType == .realEstate
+                                      ? "house.and.flag.fill"
+                                      : listing.spaceType.systemImage)
+                        .font(.system(size: 56, weight: .ultraLight))
+                        .foregroundStyle(Theme.accent.opacity(0.30))
+                        .offset(y: 6)
+                } else {
+                    ProgressView()
+                        .tint(Theme.accent)
+                        .accessibilityLabel("Loading listing photo")
+                }
             }
 
             if listing.status == .ready {

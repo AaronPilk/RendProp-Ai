@@ -19,6 +19,14 @@ struct AdoptionLocalBindings: Codable, Equatable {
     var entries: [Entry]
     var confirmedOrgID: UUID?
     var appliedToCurrentState = false
+    /// Includes offline-only properties so signing in preserves their production drafts.
+    /// Optional for bindings written before the production companion shipped.
+    var productionLocalIDs: [UUID]? = nil
+    var productionTransferred: Bool? = nil
+    /// Profile text/portrait and paid-request safety markers transfer only once
+    /// after the same verified receipt. Optional for older phone snapshots.
+    var ownedIdentityTransferred: Bool? = nil
+    var personalCardDisposition: String? = nil
 
     enum Failure: Error { case invalid, conflict, tooLarge }
 
@@ -31,7 +39,9 @@ struct AdoptionLocalBindings: Codable, Equatable {
         guard version == 1, sourceUserID != destinationUserID,
               !appliedToCurrentState || confirmedOrgID != nil,
               Set(entries.map(\.localID)).count == entries.count,
-              Set(entries.map(\.serverID)).count == entries.count else { throw Failure.invalid }
+              Set(entries.map(\.serverID)).count == entries.count,
+              personalCardDisposition == nil || ["source_copied", "destination_preserved", "no_source_card"].contains(personalCardDisposition!),
+              productionLocalIDs == nil || Set(productionLocalIDs!).count == productionLocalIDs!.count else { throw Failure.invalid }
         // Metadata only: cap optional sign-in's journal, never truncate a
         // library or block capture. A large library can keep using its source
         // session until a deliberate recovery path is available.
@@ -40,19 +50,34 @@ struct AdoptionLocalBindings: Codable, Equatable {
 
     static func capture(_ pending: AnonymousAdoptionRecovery.Pending,
                         listings: [Listing]) throws -> Self {
-        let value = Self(version: 1, operationID: pending.operationID,
+        // Local custody can include drafts preserved from an earlier login.
+        // A guest's receipt authorizes only this guest's local production IDs.
+        let owned = listings.filter { !$0.isSample && ($0.cloudSyncOwnerID == nil || $0.cloudSyncOwnerID == pending.sourceUserID) }
+        var value = Self(version: 1, operationID: pending.operationID,
                          sourceUserID: pending.sourceUserID, destinationUserID: pending.destinationUserID,
-                         entries: listings.filter { !$0.isSample && $0.serverID != nil }.map {
+                         entries: owned.filter { $0.serverID != nil }.map {
             Entry(localID: $0.id, serverID: $0.serverID!, shareSlug: $0.shareSlug,
                   shareURL: $0.shareURL, unbrandedShareURL: $0.unbrandedShareURL,
                   publishedRenderID: $0.publishedRenderID)
         }, confirmedOrgID: nil)
+        value.productionLocalIDs = owned.map(\.id)
         try value.validate()
         return value
     }
 
+    /// Older receipts may have captured a retained foreign account's draft.
+    /// Keep absent IDs as history, but exclude every present sample/foreign row
+    /// before restoring identities or production caches. Never expand a journal.
+    func scopedToLocalCustody(_ listings: [Listing]) -> Self {
+        let excluded = Set(listings.filter { $0.isSample || ($0.cloudSyncOwnerID != nil && $0.cloudSyncOwnerID != sourceUserID && $0.cloudSyncOwnerID != destinationUserID) }.map(\.id))
+        var value = self
+        value.entries = entries.filter { !excluded.contains($0.localID) }
+        value.productionLocalIDs = productionLocalIDs.map { $0.filter { !excluded.contains($0) } }
+        return value
+    }
+
     func blocks(_ localID: UUID, currentUserID: UUID?) -> Bool {
-        !appliedToCurrentState && currentUserID != sourceUserID && entries.contains { $0.localID == localID }
+        !appliedToCurrentState && currentUserID != sourceUserID && (entries.contains { $0.localID == localID } || productionLocalIDs?.contains(localID) == true)
     }
 
     /// Keychain removal may fail AFTER a successful rebind. If the person then

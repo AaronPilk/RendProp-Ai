@@ -42,7 +42,7 @@
 // nothing provides, everything retired). Callers should surface that as a clear
 // 503 rather than silently doing nothing.
 
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { adminClient } from "./supabase.ts";
 
 // ── The contract types (docs/AI-ROUTER-CONTRACT.md §1) ──────────────────────
@@ -56,7 +56,7 @@ export interface RouteStep {
   unit_cents: number; // researched price, cents per unit
   capabilities: string[]; // e.g. ["i2v","1080p","9:16","6s","mask","timestamps"]
   max_latency_s: number; // circuit opens if p95 exceeds this
-  min_plan: string; // "free" | "trial" | "starter" | "solo" | "pro" | "team"
+  min_plan: string; // "free" | "trial" | legacy plans | "pro" | "max" | "ultra" | "team" | "brokerage"
   same_model_as: string | null; // upstream family key — steps sharing it are NOT availability-independent
   privacy_tier: "no_retention" | "retained_30d" | "trains_by_default";
   enabled: boolean;
@@ -134,6 +134,9 @@ export interface OutcomeReport {
   ok: boolean;
   latency_ms: number;
   error_class?: ErrorClass;
+  /** Upstream HTTP status of a failed attempt (ProviderError.status), so the
+   * breaker and the hourly alert can tell a dead key from an outage. */
+  status?: number;
 }
 
 // ── Health (the circuit breaker), as orderSteps() consumes it ───────────────
@@ -154,7 +157,7 @@ export function healthKey(provider: string, model: string): string {
 
 // ── Plan ordering ───────────────────────────────────────────────────────────
 //
-// The six plans plan_entitlements carries (0010 §1), weakest first. `solo` is
+// The plan_entitlements tiers, weakest first. `solo` is
 // an entitlement-level alias of `starter` in that table but is ranked above it
 // here because the routing contract (§3) gives them DIFFERENT policies —
 // starter routes cheapest, solo routes best.
@@ -168,7 +171,7 @@ export function healthKey(provider: string, model: string): string {
 // restrictive answer) for anything it does not recognise, so a 400-seat
 // brokerage would have been routed to the cheapest model on every request
 // and refused outright by any route gated above free.
-const PLAN_ORDER = ["free", "trial", "starter", "solo", "pro", "team", "brokerage"] as const;
+const PLAN_ORDER = ["free", "trial", "pro", "starter", "solo", "max", "ultra", "legacy_pro", "team", "brokerage"] as const;
 
 function planRank(plan: string | null | undefined): number {
   const i = PLAN_ORDER.indexOf(String(plan ?? "").trim().toLowerCase() as typeof PLAN_ORDER[number]);
@@ -177,7 +180,7 @@ function planRank(plan: string | null | undefined): number {
 
 // ── In-process caches (30 s) ────────────────────────────────────────────────
 //
-// resolveRoute runs on every AI request. The master flag and the six-row policy
+// resolveRoute runs on every AI request. The master flag and the plan policy
 // table are read-mostly, so each is cached for 30 s per isolate — long enough to
 // take the round trip off the hot path, short enough that flipping the flag from
 // the admin console is visible within half a minute without a redeploy.
@@ -426,12 +429,14 @@ export async function reportOutcome(step: RouteStep, r: OutcomeReport): Promise<
   try {
     if (!step?.provider || !step?.model) return;
     const latency = Number.isFinite(r?.latency_ms) ? Math.max(0, Math.round(r.latency_ms)) : 0;
+    const status = Number.isInteger(r?.status) && r!.status! >= 100 && r!.status! <= 599 ? r!.status! : null;
     const { error } = await db().rpc("report_provider_outcome", {
       p_provider: step.provider,
       p_model: step.model,
       p_ok: r?.ok === true,
       p_latency_ms: latency,
       p_error_class: r?.error_class ?? null,
+      p_status: r?.ok === true ? null : status,
     });
     if (error) console.error("router: report_provider_outcome failed:", error.message);
   } catch (e) {

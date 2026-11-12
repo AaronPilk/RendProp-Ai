@@ -1,0 +1,669 @@
+import Foundation
+
+func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(uuidString: "00000000-0000-4000-8000-000000000099")!,
+              enabled: Bool = true, photos: Int = 5, days: Int = 7, photoOnly: Bool = false) -> TrialPurchaseReservation {
+    .init(reservationId: reservation, actorId: actor, appAccountToken: actor, orgId: org, productId: product,
+          heldAt: "2026-10-06T00:00:00Z", trialOffer: .init(enabled: enabled,
+            walkthroughs: photoOnly ? 0 : 1, photoEdits: photos,
+            publishedListings: photoOnly ? 0 : 1, maxDays: days,
+            maxVideoSeconds: photoOnly ? 0 : 90, uploadBudgetBytes: 1_073_741_824))
+}
+
+@main struct TrialPurchaseHoldTests {
+    @MainActor static func main() async throws {
+        let actor = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+        let org = UUID(uuidString: "00000000-0000-4000-8000-000000000002")!
+        let other = UUID(uuidString: "00000000-0000-4000-8000-000000000003")!
+        let sku = "com.rendprop.app.pro.monthly"
+        var checks = 0
+        func check(_ value: Bool, _ message: String) {
+            guard value else { fatalError(message) }; checks += 1
+        }
+        func snapshot() -> TrialPurchaseSnapshot {
+            .init(actor: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        }
+        func fixture(ready: Bool = false) -> (PurchaseFixture, HeldAPI, Product) {
+            Config.useLiveBackend = true; Config.isUITesting = false
+            AuthStore.shared.userID = actor.uuidString; AuthStore.shared.syncSessionRevision = 1
+            AuthStore.shared.isSignedIn = true; AuthStore.shared.isIdentified = true
+            AuthStore.shared.refreshes = 0; AuthStore.token = "fixture." + (try! JSONSerialization.data(withJSONObject: ["sub": actor.uuidString])).base64EncodedString().replacingOccurrences(of: "=", with: "") + ".fixture"
+            WorkspaceContext.selectedOrgID = org
+            UserDefaults.standard.values = [:]
+            Storefront.values = ["USA"]; Storefront.reads = 0; Storefront.onRead = nil
+            AppTransaction.value = .production; AppTransaction.verified = true
+            AppTransaction.reads = 0; AppTransaction.onRead = nil
+            AppTransaction.currentBundleID = Bundle.main.bundleIdentifier
+            AppTransaction.currentID = "synthetic-app-transaction"
+            Product.sheetCalls = 0; Product.receivedOptions = []; Product.result = .userCancelled; Product.error = nil
+            URLSession.requests = []; URLSession.status = 200; URLSession.onResponse = nil
+            let api = HeldAPI(org: org, actor: actor, product: sku)
+            let value = PurchaseFixture(api)
+            if ready {
+                api.held = makeHold(actor: actor, org: org, product: sku)
+                value.preparedTrialReservation = api.held; value.preparedTrialSnapshot = snapshot()
+                value.introOfferEligible[sku] = true
+            }
+            return (value, api, Product(id: sku))
+        }
+        let hold = makeHold(actor: actor, org: org, product: sku)
+        let bound = TrialPurchaseSnapshot(actor: actor.uuidString, revision: 1, org: org)
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, verifiedHeldTrial: false,
+              captured: bound, current: bound), "Existing authority authorized a new paid charge")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, verifiedHeldTrial: true,
+              captured: bound, current: bound), "Verified held trial dispatch refused")
+        for changed in [TrialPurchaseSnapshot(actor: other.uuidString, revision: bound.revision, org: org),
+                        TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision + 1, org: org),
+                        TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision, org: other)] {
+            check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, verifiedHeldTrial: true,
+                  captured: bound, current: changed), "Stale dispatch snapshot accepted")
+        }
+        check(PurchaseDispatchAdmission.allows(liveBackend: false, uiTesting: false, verifiedHeldTrial: false,
+              captured: bound, current: bound), "Offline purchase test purpose blocked")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: true, verifiedHeldTrial: false,
+              captured: bound, current: bound), "UI-test purchase test purpose blocked")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: false, verifiedHeldTrial: false, captured: bound, current: bound),
+              "Known paid ceiling purchase remains available")
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, verifiedHeldTrial: false, captured: bound, current: bound),
+              "Eligible Apple intro cannot bypass its funded hold in ceiling mode")
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: nil, verifiedHeldTrial: false, captured: bound, current: bound),
+              "Unknown Apple eligibility cannot become an unfunded purchase")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, verifiedHeldTrial: true, captured: bound, current: bound),
+              "Exact held intro can reach Apple in ceiling mode")
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, verifiedHeldTrial: false, standardPrice: true,
+              verifiedStandardPrice: false, captured: bound, current: bound),
+              "Unsigned standard-price intent reached Apple")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, verifiedHeldTrial: false, standardPrice: true,
+              verifiedStandardPrice: true, captured: bound, current: bound),
+              "Signed exact standard-price intent was refused")
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              eligibleIntro: true, continuingHeldTrial: true, verifiedHeldTrial: true,
+              standardPrice: true, verifiedStandardPrice: true, captured: bound, current: bound),
+              "Combined trial and standard-price intent reached Apple")
+        for changed in [TrialPurchaseSnapshot(actor: other.uuidString, revision: bound.revision, org: org),
+                        TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision + 1, org: org),
+                        TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision, org: other)] {
+            check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+                  verifiedHeldTrial: false, captured: bound, current: changed), "Stale ceiling dispatch snapshot accepted")
+        }
+        // Ceiling mode may admit known paid purchases, but an eligible Apple
+        // introductory week needs its exact, still-current funded hold.
+        for eligible in [true, false] {
+            let (manager, api, product) = fixture()
+            var context = try await api.billingContext(); context.servingMode = "ceiling"
+            api.overrideContext = context; manager.billingContext = context
+            manager.introOfferEligible[sku] = eligible
+            product.subscription?.values = [eligible]
+            check(manager.canStartNewPurchase(for: product) == !eligible,
+                  "Ceiling mode offered an unheld free intro or blocked a known paid purchase")
+            check(manager.canCheckTrialAvailability(for: product) == eligible,
+                  "Eligible ceiling intro must check funded trial availability")
+            check(!manager.showsIntroOffer(for: product), "Unheld Apple intro was advertised as funded")
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == (eligible ? 0 : 1) && api.prepareCalls == 0,
+                  "Unheld free week reached Apple or known paid purchase failed")
+            if !eligible { check(Product.receivedOptions == [.appAccountToken(actor)], "Ceiling paid purchase did not bind named account") }
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku) == nil,
+                  "Cancelled ordinary ceiling purchase retained unpurchased binding")
+        }
+        do {
+            let (manager, api, product) = fixture()
+            api.held = makeHold(actor: actor, org: org, product: sku, photoOnly: true)
+            var context = try await api.billingContext(); context.servingMode = "ceiling"
+            api.overrideContext = context; manager.billingContext = context
+            manager.introOfferEligible[sku] = true
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 1 && Product.sheetCalls == 0,
+                  "Explicit ceiling trial check opened Apple before a hold")
+            check(manager.heldTrialOffer(for: product)?.walkthroughs == 0
+                  && manager.heldTrialOffer(for: product)?.publishedListings == 0
+                  && manager.heldTrialOffer(for: product)?.maxVideoSeconds == 0,
+                  "Current zero-cap held terms were not shown")
+            check(manager.canStartNewPurchase(for: product) && manager.showsIntroOffer(for: product),
+                  "Exact funded ceiling hold could not continue")
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(api.prepareCalls == 2 && Product.sheetCalls == 1,
+                  "Funded ceiling intro did not recheck the same hold before Apple")
+        }
+        for reason in ["guest", "denied", "foreign-org", "actor", "revision", "workspace"] {
+            let (manager, api, product) = fixture()
+            var context = SubscriptionBillingContext(orgID: reason == "foreign-org" ? other : org,
+                orgName: "Synthetic workspace", role: "owner", canManageSubscription: reason != "denied", source: nil)
+            context.servingMode = "ceiling"; api.overrideContext = context; manager.billingContext = context
+            if reason == "guest" { AuthStore.shared.isIdentified = false }
+            if ["guest", "denied", "foreign-org"].contains(reason) {
+                check(!manager.canStartNewPurchase(for: product), "Unauthorized ceiling UI enabled purchase")
+            }
+            api.onBilling = {
+                if reason == "actor" { AuthStore.shared.userID = other.uuidString }
+                if reason == "revision" { AuthStore.shared.syncSessionRevision += 1 }
+                if reason == "workspace" { WorkspaceContext.selectedOrgID = other }
+            }
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Unauthorized or stale ceiling purchase opened Apple sheet")
+        }
+        check(hold.checked(actor: actor, org: org, product: sku) == hold, "Exact held identity refused")
+        let photoOnlyHold = makeHold(actor: actor, org: org, product: sku, photoOnly: true)
+        check(photoOnlyHold.checked(actor: actor, org: org, product: sku) == photoOnlyHold,
+              "Current zero-cap, five-photo reservation was rejected")
+        check(makeHold(actor: actor, org: org, product: sku, photos: 6, photoOnly: true)
+              .checked(actor: actor, org: org, product: sku) == nil,
+              "Current held trial silently expanded beyond five photo edits")
+        for cap in [5, 6, 20] {
+            let recorded = makeHold(actor: actor, org: org, product: sku, photos: cap)
+            check(recorded.checked(actor: actor, org: org, product: sku) == recorded,
+                  "Exact historical and twenty-photo held allowance refused")
+            let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+            let decoded = try TrialPurchaseReservation.decode(encoder.encode(recorded), actor: actor, org: org, product: sku)
+            check(decoded == recorded && decoded.trialOffer.photoEdits == cap, "Held photo cap was replaced during exact wire decoding")
+        }
+        check(makeHold(actor: actor, org: org, product: sku, photos: 21).checked(actor: actor, org: org, product: sku) == nil, "Oversized held allowance accepted")
+        check(hold.checked(actor: other, org: org, product: sku) == nil, "Wrong held actor accepted")
+        let wrongActor = TrialPurchaseReservation(reservationId: hold.reservationId, actorId: other,
+            appAccountToken: actor, orgId: org, productId: sku, heldAt: hold.heldAt, trialOffer: hold.trialOffer)
+        check(wrongActor.checked(actor: actor, org: org, product: sku) == nil, "Wrong held actor accepted")
+        check(hold.checked(actor: actor, org: other, product: sku) == nil, "Wrong held workspace accepted")
+        check(hold.checked(actor: actor, org: org, product: "com.rendprop.app.starter.monthly") == nil, "Wrong held product accepted")
+        check(makeHold(actor: actor, org: org, product: sku, photos: 4).checked(actor: actor, org: org, product: sku) == nil, "Wrong held allowance accepted")
+        check(makeHold(actor: actor, org: org, product: sku, enabled: false).checked(actor: actor, org: org, product: sku) == nil, "Disabled held offer accepted")
+        check(makeHold(actor: actor, org: org, product: sku, days: 6).checked(actor: actor, org: org, product: sku) == nil, "Non-seven-day held schedule accepted")
+        let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+        let wire = try encoder.encode(hold)
+        check(try TrialPurchaseReservation.decode(wire, actor: actor, org: org, product: sku) == hold, "Wire receipt round trip failed")
+        var malformed = try JSONSerialization.jsonObject(with: wire) as! [String: Any]
+        malformed["app_account_token"] = other.uuidString
+        do { _ = try TrialPurchaseReservation.decode(JSONSerialization.data(withJSONObject: malformed), actor: actor, org: org, product: sku); fatalError("Wrong echoed appAccountToken accepted") }
+        catch { checks += 1 }
+        malformed.removeValue(forKey: "app_account_token")
+        do { _ = try TrialPurchaseReservation.decode(JSONSerialization.data(withJSONObject: malformed), actor: actor, org: org, product: sku); fatalError("Missing echoed appAccountToken accepted") }
+        catch { checks += 1 }
+        malformed["app_account_token"] = actor.uuidString
+        malformed["held_at"] = "not-a-date"
+        do { _ = try TrialPurchaseReservation.decode(JSONSerialization.data(withJSONObject: malformed), actor: actor, org: org, product: sku); fatalError("Invalid hold timestamp accepted") }
+        catch { checks += 1 }
+
+        // Explicit check reserves terms only, without an Apple sheet.
+        do {
+            let (manager, api, product) = fixture()
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 1 && Product.sheetCalls == 0, "Checking availability opened Apple sheet")
+            check(api.seenEnvironments == [.production], "Production trial preflight did not use verified Apple environment")
+            check(manager.preparedTrialReservation == api.held && manager.heldTrialOffer(for: product)?.photoEdits == 5,
+                  "Prepared terms not displayed from exact hold")
+            check(manager.canStartNewPurchase(for: product), "Held terms could not continue")
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 1 && Product.receivedOptions == [.appAccountToken(actor)], "Held purchase did not bind captured actor")
+            check(api.prepareCalls == 2 && manager.preparedTrialReservation?.reservationId == api.held?.reservationId,
+                  "Continue replaced the original reservation")
+            check(api.seenEnvironments == [.production, .production], "Production trial replay lost the verified environment")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org,
+                  "Cancellation discarded trial workspace binding")
+        }
+        do {
+            let (manager, api, product) = fixture(); AppTransaction.value = .sandbox
+            api.rejectSandbox = true
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.seenEnvironments == [.sandbox] && Product.sheetCalls == 0,
+                  "Sandbox trial capacity refusal opened Apple or lost its environment")
+            check(manager.lastError == TrialPurchaseAdmission.capacityUnavailableMessage,
+                  "Sandbox preflight refusal lacked retained-transaction recovery guidance")
+            check(manager.preparedTrialReservation == nil,
+                  "Refused Sandbox preflight was presented as a funded hold")
+        }
+        do {
+            let (manager, api, product) = fixture(ready: true); AppTransaction.value = .sandbox
+            api.rejectSandbox = true
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(api.seenEnvironments == [.sandbox] && Product.sheetCalls == 0,
+                  "Stale Sandbox hold reached Apple despite capacity refusal")
+            check(manager.lastError == TrialPurchaseAdmission.capacityUnavailableMessage,
+                  "Sandbox replay refusal hid the support and Restore path")
+            check(manager.preparedTrialReservation == nil && !manager.canStartNewPurchase(for: product),
+                  "Refused Sandbox hold remained visible as a funded Continue action")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org,
+                  "Sandbox capacity refusal discarded the original workspace binding")
+        }
+        for verified in [true, false] {
+            let (manager, api, product) = fixture(ready: true)
+            AppTransaction.value = verified ? .other : .sandbox
+            AppTransaction.verified = verified
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0,
+                  "Unknown or unverified Apple environment reached trial preflight or sheet")
+            check(manager.lastError == TrialPurchaseAdmission.unknownEnvironmentMessage,
+                  "Unknown Apple environment lacked actionable guidance")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org,
+                  "Unknown environment discarded a retained hold")
+        }
+        do {
+            let (manager, api, product) = fixture(); AppTransaction.verified = false
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0 && manager.preparedTrialReservation == nil,
+                  "Unverified app transaction created a trial reservation")
+            check(manager.lastError == TrialPurchaseAdmission.unknownEnvironmentMessage,
+                  "Unverified app environment lacked a clear preflight message")
+        }
+        for country in ["CAN", "GBR", nil] as [String?] {
+            let (manager, api, product) = fixture(); Storefront.values = [country]
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0, "Foreign country created a hold")
+            check(manager.lastError?.contains("United States") == true, "Unsupported region lacked explanation")
+        }
+        do {
+            let (manager, api, original) = fixture(); var product = original; product.priceFormatStyle.currencyCode = "CAD"
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0, "Non-USD currency created a hold")
+        }
+        do {
+            let (manager, api, product) = fixture()
+            Storefront.onRead = { AuthStore.shared.syncSessionRevision += 1 }
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0, "Late storefront identity accepted")
+        }
+        do {
+            let (manager, _, product) = fixture(); let captured = snapshot()
+            Storefront.onRead = { WorkspaceContext.selectedOrgID = other }
+            check(!(await manager.trialRegionSupported(for: product, captured: captured)), "Late storefront identity accepted")
+        }
+        do {
+            let (manager, api, product) = fixture(ready: true); Storefront.values = ["USA", "CAN"]
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(api.prepareCalls == 1 && Product.sheetCalls == 0, "Changed final region opened Apple sheet")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org, "Changed region discarded held binding")
+        }
+        do {
+            let (manager, api, product) = fixture(ready: true); Storefront.values = [nil]
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0, "Unknown held region replayed reservation")
+        }
+        do {
+            let (manager, api, product) = fixture(ready: true)
+            var fresh = try await api.billingContext(); fresh.trialReservation = nil
+            api.overrideContext = fresh
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 0, "Converted hold opened Apple sheet")
+        }
+        do {
+            let (manager, api, product) = fixture(ready: true)
+            var fresh = try await api.billingContext(); fresh.trialOffer = nil
+            api.overrideContext = fresh
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 0, "Changed fresh terms opened Apple sheet")
+        }
+        for change in [0, 1] {
+            let (manager, api, product) = fixture(ready: true)
+            Storefront.onRead = {
+                guard Storefront.reads == 2 else { return }
+                if change == 0 {
+                    var value = SubscriptionBillingContext(orgID: org, orgName: "Synthetic workspace", role: "member", canManageSubscription: false, source: nil)
+                    value.trialReservation = api.held; value.trialOffer = api.held?.trialOffer
+                    api.overrideContext = value
+                } else { api.converted = true }
+            }
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 1, "Late server authority during Apple await opened sheet")
+        }
+        for eligibility in [false, nil] as [Bool?] {
+            let (manager, api, product) = fixture(ready: true); product.subscription?.values = [eligibility]
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Changed held eligibility opened Apple sheet")
+        }
+        for eligibility in [false, nil] as [Bool?] {
+            let (manager, api, product) = fixture(ready: true); product.subscription?.values = [true, eligibility]
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 1, "Late eligibility change opened Apple sheet")
+        }
+        do {
+            let (manager, api, product) = fixture(); product.subscription?.values = [false]
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Unfunded direct paid purchase reached Apple")
+            check(manager.lastError == PurchaseDispatchAdmission.paidUnavailableMessage, "Paid refusal lacked clear explanation")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku) == nil, "Unpurchased paid intent was retained")
+        }
+        do {
+            let (manager, api, product) = fixture(); product.subscription?.values = [false]
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0, "Ineligible availability check created hold or purchase")
+            check(manager.trialEligibility(for: product) == false && manager.lastError?.contains("Paid subscriptions are temporarily unavailable") == true,
+                  "Fresh ineligible result reused stale trial authority")
+            check(!manager.canStartNewPurchase(for: product), "Ineligible paywall enabled a new paid purchase")
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Unfunded paid tap after check reached Apple")
+        }
+        do {
+            let (manager, api, product) = fixture(ready: true)
+            manager.introOfferEligible[sku] = false
+            manager.billingContext = try await api.billingContext()
+            check(!manager.canStartNewPurchase(for: product), "Ineligible paywall enabled a new paid purchase")
+        }
+        for mode in ["no-intro", "non-free-intro", "manual", "private-sponsorship", "verified-retail", "same-retail-sku", "retail-upgrade"] {
+            let (manager, api, original) = fixture(); var product = original
+            product.subscription?.values = [false]
+            var context = SubscriptionBillingContext(orgID: org, orgName: "Synthetic workspace", role: "owner",
+                                                    canManageSubscription: true, source: mode.contains("retail") ? "apple" : "manual")
+            if mode == "no-intro" { product.subscription = nil }
+            if mode == "non-free-intro" { product.subscription?.introductoryOffer?.paymentMode = .paid }
+            if mode == "private-sponsorship" {
+                context.servingActivation = .init(orgId: org, available: true, funded: false, authority: .privateSponsorship)
+            }
+            if mode.contains("retail") {
+                context.servingActivation = .init(orgId: org, available: true, funded: true, authority: .verifiedRetail)
+                context.originalTransactionIDs = ["synthetic-chain"]
+            }
+            if mode == "same-retail-sku" || mode == "retail-upgrade" {
+                manager.activeProductID = mode == "same-retail-sku" ? sku : "com.rendprop.app.starter.monthly"
+                manager.activeOriginalTransactionID = "synthetic-chain"
+                manager.activeBillingOwner = actor
+            }
+            api.overrideContext = context; manager.billingContext = context
+            check(!manager.canStartNewPurchase(for: product), "Current workspace authority enabled paid UI")
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Existing workspace authority funded a new paid charge")
+            check(manager.lastError == PurchaseDispatchAdmission.paidUnavailableMessage, "Current subscription disguised paid unavailability")
+        }
+        for change in ["actor", "revision", "workspace"] {
+            let (manager, api, product) = fixture(); product.subscription?.values = [false]
+            api.onBilling = {
+                if change == "actor" { AuthStore.shared.userID = other.uuidString }
+                if change == "revision" { AuthStore.shared.syncSessionRevision += 1 }
+                if change == "workspace" { WorkspaceContext.selectedOrgID = other }
+            }
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Stale paid workspace or actor reached Apple")
+        }
+        for mode in ["offline", "UI-testing"] {
+            let (manager, api, original) = fixture(); var product = original; product.subscription = nil
+            if mode == "offline" { Config.useLiveBackend = false } else { Config.isUITesting = true }
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 1 && api.prepareCalls == 0, "Closed offline/UI-test purchase behavior changed")
+        }
+        do {
+            let (manager, api, product) = fixture(); manager.introOfferEligible[sku] = true
+            product.subscription?.values = [nil]
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 0 && Product.sheetCalls == 0 && manager.trialEligibility(for: product) == nil,
+                  "Unknown eligibility reused stale trial authority")
+        }
+        do {
+            let (manager, api, product) = fixture()
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Missing held intent authorized sheet")
+        }
+        do {
+            let (manager, api, product) = fixture(); api.failPrepare = true
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 1 && Product.sheetCalls == 0 && api.held != nil, "Uncertain hold was retried or cleared")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org, "Uncertain hold discarded original workspace")
+            api.failPrepare = false
+            await manager.checkTrialAvailability(product, expectedOrgID: org)
+            check(api.prepareCalls == 2 && manager.preparedTrialReservation?.reservationId == api.held?.reservationId,
+                  "Explicit recovery did not reuse same reservation")
+        }
+        for result in [Product.PurchaseResult.userCancelled, .pending] {
+            let (manager, api, product) = fixture(ready: true); Product.result = result
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 1 && api.prepareCalls == 1, "Held sheet repeated dispatch")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org, "Cancellation discarded trial workspace binding")
+        }
+        for error in [SheetError.cancelled, .timeout] {
+            let (manager, api, product) = fixture(ready: true); Product.error = error
+            await manager.purchase(product, expectedOrgID: org, continuingHeldTrial: true)
+            check(Product.sheetCalls == 1 && api.prepareCalls == 1, "Thrown sheet error repeated dispatch")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku)?.orgID == org, "Thrown sheet error discarded binding")
+        }
+        do {
+            let (manager, api, _) = fixture()
+            let captured = snapshot(); AuthStore.shared.syncSessionRevision += 1
+            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: captured, expectedReservationID: nil, environment: .production) }
+            catch {}
+            check(api.prepareCalls == 0, "Changed pre-prepare snapshot dispatched")
+        }
+        for change in [0, 1, 2] {
+            let (manager, api, _) = fixture(); let captured = snapshot()
+            api.onPrepare = {
+                if change == 0 { AuthStore.shared.userID = other.uuidString }
+                if change == 1 { AuthStore.shared.syncSessionRevision += 1 }
+                if change == 2 { WorkspaceContext.selectedOrgID = other }
+            }
+            var accepted = false
+            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: captured, expectedReservationID: nil, environment: .production); accepted = true }
+            catch {}
+            check(!accepted && api.prepareCalls == 1, "Late hold response accepted")
+        }
+        do {
+            let (manager, api, _) = fixture()
+            api.overrideHold = makeHold(actor: actor, org: org, product: sku, reservation: other)
+            var accepted = false
+            do { _ = try await manager.validateHeldTrialPurchase(productID: sku, captured: snapshot(), expectedReservationID: hold.reservationId, environment: .production); accepted = true }
+            catch {}
+            check(!accepted, "Replacement reservation accepted")
+        }
+
+        // Compile the real API method and request plumbing against a recorded
+        // closed URLSession. No actual credentials or transport are used.
+        do {
+            _ = fixture(); URLSession.reply = wire
+            let value = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox)
+            check(value == hold && URLSession.requests.count == 1, "Exact API receipt refused")
+            let request = URLSession.requests[0]
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            check(Set(body.keys) == Set(["org_id", "actor_id", "app_account_token", "product_id", "purchase_environment"]), "Reservation payload has unexpected keys")
+            check(body["actor_id"] == actor.uuidString.lowercased() && body["app_account_token"] == body["actor_id"] && body["org_id"] == org.uuidString.lowercased() && body["product_id"] == sku,
+                  "Exact actor token workspace product payload missing")
+            check(body["purchase_environment"] == "Sandbox", "Sandbox purchase environment was not forwarded")
+            check(request.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased() && request.httpMethod == "POST" && request.timeoutInterval == 20,
+                  "Reservation request scope or timeout differs")
+        }
+        do {
+            _ = fixture(); URLSession.reply = wire
+            _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku,
+                appAccountToken: actor, environment: .production)
+            let request = URLSession.requests[0]
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            check(body["purchase_environment"] == "Production", "Production hold replay lost its verified environment")
+        }
+        do {
+            _ = fixture(); URLSession.reply = wire
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: other, environment: .sandbox) }
+            catch {}
+            check(URLSession.requests.isEmpty, "Foreign appAccountToken dispatched")
+        }
+        do {
+            _ = fixture(); URLSession.reply = wire
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: other, productID: sku, appAccountToken: actor, environment: .sandbox) }
+            catch {}
+            check(URLSession.requests.isEmpty, "Foreign API workspace dispatched")
+        }
+        do {
+            _ = fixture(); URLSession.status = 401; URLSession.reply = Data()
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox) }
+            catch {}
+            check(URLSession.requests.count == 1 && AuthStore.shared.refreshes == 0, "Reservation retried after 401")
+        }
+        do {
+            _ = fixture(); URLSession.reply = wire; URLSession.onResponse = { AuthStore.shared.syncSessionRevision += 1 }
+            var accepted = false
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox); accepted = true }
+            catch {}
+            check(!accepted && URLSession.requests.count == 1, "Late API response accepted")
+        }
+        do {
+            _ = fixture(); AuthStore.token = nil; URLSession.reply = wire
+            do { _ = try await LiveAPIClient().prepareTrialPurchase(orgID: org, productID: sku, appAccountToken: actor, environment: .sandbox) }
+            catch {}
+            check(URLSession.requests.isEmpty, "Unauthenticated reservation dispatched")
+        }
+        let paidSKU = "com.rendprop.app.pro29.monthly"
+        let compactJWS = String(repeating: "a", count: 40) + "." + String(repeating: "b", count: 40) + "." + String(repeating: "c", count: 40)
+        func paidFixture(environment: PurchaseEnvironment = .production,
+                         ready: Bool = true) -> (PurchaseFixture, HeldAPI, Product) {
+            _ = fixture()
+            let api = HeldAPI(org: org, actor: actor, product: paidSKU)
+            var context = SubscriptionBillingContext(orgID: org, orgName: "Synthetic workspace", role: "owner", canManageSubscription: true, source: nil)
+            context.servingMode = "ceiling"
+            context.standardPriceCheckoutReady = environment == .production && ready
+            context.standardPriceSandboxTestReady = environment == .sandbox && ready
+            api.overrideContext = context
+            let manager = PurchaseFixture(api); manager.billingContext = context
+            manager.verifiedStandardPriceEnvironment = environment
+            AppTransaction.value = environment == .sandbox ? .sandbox : .production
+            manager.introOfferEligible[paidSKU] = true
+            return (manager, api, Product(id: paidSKU))
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            check(manager.canOfferStandardPrice(for: product), "Verified paid option was hidden")
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
+            check(Product.sheetCalls == 1 && api.standardPrepareCalls == 1 && api.prepareCalls == 0,
+                  "Signed standard-price path did not reach exactly one Apple sheet")
+            check(Product.receivedOptions == [.appAccountToken(actor), .introductoryOfferEligibility(compactJWS: compactJWS)],
+                  "Paid Apple sheet omitted token or signed intro suppression")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: paidSKU) == nil,
+                  "Cancelled paid Apple sheet retained newly created binding")
+        }
+        do {
+            let (manager, api, product) = paidFixture(environment: .sandbox)
+            check(manager.standardPriceCheckoutEnvironment(for: product) == .sandbox,
+                  "Current funded Sandbox test option was hidden")
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .sandbox)
+            check(Product.sheetCalls == 1 && api.standardPrepareCalls == 1 && api.prepareCalls == 0,
+                  "Signed Sandbox test did not reach exactly one Apple test sheet")
+            check(Product.receivedOptions == [.appAccountToken(actor), .introductoryOfferEligibility(compactJWS: compactJWS)],
+                  "Sandbox test omitted token or signed intro suppression")
+        }
+        do {
+            let (manager, api, product) = paidFixture(environment: .sandbox, ready: false)
+            check(manager.standardPriceCheckoutEnvironment(for: product) == nil,
+                  "Expired Sandbox review authority exposed test checkout")
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .sandbox)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 0,
+                  "Expired Sandbox review authority reached Apple or server preparation")
+        }
+        do {
+            let (manager, api, product) = paidFixture(); AppTransaction.value = .sandbox
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 0,
+                  "Sandbox AppTransaction reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture(environment: .sandbox)
+            api.standardOverride = .init(actorID: actor, orgID: org, productID: paidSKU,
+                appTransactionID: AppTransaction.currentID, compactJWS: compactJWS,
+                issuedAt: Int64(Date().timeIntervalSince1970), purchaseEnvironment: .production)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .sandbox)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Production response echo authorized a Sandbox test sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            api.standardOverride = .init(actorID: other, orgID: org, productID: paidSKU,
+                appTransactionID: AppTransaction.currentID, compactJWS: compactJWS,
+                issuedAt: Int64(Date().timeIntervalSince1970), purchaseEnvironment: .production)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Foreign actor signed option reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            api.standardOverride = .init(actorID: actor, orgID: org, productID: paidSKU,
+                appTransactionID: AppTransaction.currentID, compactJWS: compactJWS,
+                issuedAt: Int64(Date().timeIntervalSince1970) - 301, purchaseEnvironment: .production)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Stale signed option reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            AppTransaction.onRead = { if AppTransaction.reads == 2 { AppTransaction.currentID = "changed-app-transaction" } }
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Changed Apple app transaction reached the paid Apple sheet")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            _ = try PurchaseWorkspaceBindingStore.prepare(owner: actor, productID: paidSKU, orgID: other)
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
+            let retainedBinding = try PurchaseWorkspaceBindingStore.load(owner: actor, productID: paidSKU)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 0 &&
+                  retainedBinding?.orgID == other,
+                  "Foreign legacy binding was overwritten or reached Apple")
+        }
+        do {
+            let (manager, api, product) = paidFixture()
+            api.standardOnPrepare = { AuthStore.shared.syncSessionRevision += 1 }
+            await manager.purchase(product, expectedOrgID: org, standardPrice: true,
+                                   standardPriceEnvironment: .production)
+            check(Product.sheetCalls == 0 && api.standardPrepareCalls == 1,
+                  "Changed session after signed prepare reached Apple")
+        }
+        do {
+            _ = paidFixture()
+            URLSession.reply = try JSONSerialization.data(withJSONObject: [
+                "actor_id": actor.uuidString.lowercased(), "org_id": org.uuidString.lowercased(),
+                "product_id": paidSKU, "app_transaction_id": AppTransaction.currentID,
+                "compact_jws": compactJWS, "issued_at": Int64(Date().timeIntervalSince1970),
+                "purchase_environment": "Production"
+            ])
+            let signedAppTransaction = "synthetic.apple.app.transaction"
+            let prepared = try await LiveAPIClient().prepareStandardPricePurchase(
+                orgID: org, productID: paidSKU, signedAppTransaction: signedAppTransaction,
+                environment: .production)
+            check(prepared.checked(actor: actor, org: org, product: paidSKU,
+                                   appTransaction: AppTransaction.currentID, environment: .production) != nil,
+                  "Standard-price response lost actor, workspace, product, or app transaction")
+            check(URLSession.requests.count == 1, "Standard-price prepare was retried")
+            let request = URLSession.requests[0]
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            check(Set(body.keys) == Set(["org_id", "product_id", "signed_app_transaction"])
+                  && body["org_id"] == org.uuidString.lowercased()
+                  && body["product_id"] == paidSKU
+                  && body["signed_app_transaction"] == signedAppTransaction,
+                  "Standard-price POST body did not preserve signed Apple transaction and exact scope")
+            check(request.url?.path.hasSuffix("/me/subscription/standard-price/prepare") == true
+                  && request.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(),
+                  "Standard-price POST route or library header differed")
+        }
+        do {
+            _ = paidFixture(environment: .sandbox)
+            URLSession.reply = try JSONSerialization.data(withJSONObject: [
+                "actor_id": actor.uuidString.lowercased(), "org_id": org.uuidString.lowercased(),
+                "product_id": paidSKU, "app_transaction_id": AppTransaction.currentID,
+                "compact_jws": compactJWS, "issued_at": Int64(Date().timeIntervalSince1970),
+                "purchase_environment": "Sandbox"
+            ])
+            let prepared = try await LiveAPIClient().prepareStandardPricePurchase(
+                orgID: org, productID: paidSKU, signedAppTransaction: "synthetic.apple.app.transaction",
+                environment: .sandbox)
+            check(prepared.checked(actor: actor, org: org, product: paidSKU,
+                                   appTransaction: AppTransaction.currentID, environment: .sandbox) != nil,
+                  "Sandbox test response lost its verified environment")
+            check(URLSession.requests.count == 1
+                  && URLSession.requests[0].url?.path.hasSuffix("/me/subscription/standard-price/sandbox-prepare") == true,
+                  "Sandbox test used the Production endpoint or retried")
+        }
+        do {
+            _ = paidFixture(); URLSession.status = 401; URLSession.reply = Data()
+            do { _ = try await LiveAPIClient().prepareStandardPricePurchase(
+                orgID: org, productID: paidSKU, signedAppTransaction: "synthetic.apple.app.transaction",
+                environment: .production) }
+            catch {}
+            check(URLSession.requests.count == 1 && AuthStore.shared.refreshes == 0,
+                  "Standard-price prepare retried after 401")
+        }
+        print("Native trial hold: \(checks) checks passed")
+    }
+}

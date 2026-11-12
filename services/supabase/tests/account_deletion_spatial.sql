@@ -26,6 +26,9 @@ do $$ declare s uuid;o uuid;l uuid;j uuid;a uuid;lease uuid;rev uuid; begin
     rev:=('b0395000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     insert into auth.users(id,email,raw_user_meta_data) values(s,'spatial-deletion-'||n||'@fixture.invalid','{}');
     select org_id into strict o from public.memberships where user_id=s;
+    -- The cleanup fixture owns existing rendered media; it is not a new
+    -- subscription trial. Explicit manual authority admits that synthetic media.
+    update public.orgs set plan='pro',plan_source='manual',plan_expires_at=null where id=o;
     insert into public.listings(id,org_id,agent_id) values(l,o,s);
     insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes,transport_version,content_type)
       values(a,l,'photo','uploads','uploads/'||o||'/'||l||'/'||a||'.jpg',true,1,2,'image/jpeg');

@@ -16,14 +16,16 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fixture, sogFiles, storedZip } from './check-spatial.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const CACHE = join(ROOT, 'node_modules', '.cache', 'spatial-bundle-check');
+// Resolve shared dependency symlinks before writing Wrangler probe configs.
+// Otherwise Wrangler resolves their absolute entry/output paths against two roots.
+const CACHE = join(realpathSync(join(ROOT, 'node_modules')), '.cache', 'spatial-bundle-check');
 // Must match SPATIAL_MODULE_SHIM in src/spatial.ts; the served text is checked for it.
 const SHIM = 'const __name = (fn) => fn;';
 const wrangler = join(dirname(createRequire(import.meta.url).resolve('wrangler/package.json')), 'bin', 'wrangler.js');

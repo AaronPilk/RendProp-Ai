@@ -44,6 +44,12 @@
       shouldUseLaunchSchemeArgsEnv = "YES"
       onlyGenerateCoverageForSpecifiedTargets = "NO"
       systemAttachmentLifetime = "keepNever">
+      <TestPlans>
+         <TestPlanReference
+            default = "YES"
+            reference = "container:RendpropStoreKit.xctestplan">
+         </TestPlanReference>
+      </TestPlans>
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"

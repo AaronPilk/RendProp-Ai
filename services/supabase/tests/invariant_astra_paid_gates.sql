@@ -9,14 +9,14 @@ select 'all three explicit Astra writing seats keep their 0030/0034 paid-plan ga
    and count(*) filter (where task = 'copy.reel_script' and position = 1 and provider = 'openai'
                         and min_plan = 'starter') = 1
    and count(*) filter (where task = 'copy.agent_reel' and position = 1 and provider = 'openai'
-                        and min_plan = 'pro') = 1,
+                        and min_plan = 'ultra') = 1,
        coalesce(string_agg(format('%s/%s min_plan=%s', task, position, min_plan), ', '), 'no Astra rows')
 from public.ai_routes
 where model = 'gpt-6-astra';
 
 insert into _inv(name, pass, note)
-select 'no gpt-6-astra row is reachable on the free or trial tier',
+select 'no gpt-6-astra row is reachable on the free, trial or new Pro tier',
        count(*) = 0,
        coalesce(string_agg(format('%s/%s min_plan=%s', task, position, min_plan), ', '), 'no free/trial Astra rows')
 from public.ai_routes
-where model = 'gpt-6-astra' and min_plan in ('free', 'trial');
+where model = 'gpt-6-astra' and min_plan in ('free', 'trial', 'pro');

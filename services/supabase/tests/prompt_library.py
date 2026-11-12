@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual prompt document RLS/constraints in an owned Unix-socket cluster only."""
 import hashlib,json,os,pathlib,shutil,subprocess,sys,tempfile
+from fresh_schema_migrations import partition_fresh_migrations
 ROOT=pathlib.Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 PG=pathlib.Path(os.environ.get('RENDPROP_TEST_PG_BIN','/opt/homebrew/opt/postgresql@17/bin'))
 if not (PG/'initdb').is_file():
@@ -8,7 +9,7 @@ if not (PG/'initdb').is_file():
  if not config:raise RuntimeError('Install PostgreSQL or set RENDPROP_TEST_PG_BIN')
  PG=pathlib.Path(subprocess.check_output([config,'--bindir'],text=True).strip())
 ENV={'PATH':'/usr/bin:/bin','LC_ALL':'C'};(ROOT/'build').mkdir(exist_ok=True)
-OUT=pathlib.Path(tempfile.mkdtemp(prefix='prm-',dir=ROOT/'build'));SOCK=OUT/'s';SOCK.mkdir()
+OUT=pathlib.Path(tempfile.mkdtemp(prefix='prm-',dir=ROOT/'build'));SOCK=pathlib.Path(tempfile.mkdtemp(prefix='rp-prm-s-',dir='/tmp'))
 if len(str(SOCK).encode())>85:raise RuntimeError('Use a shorter checkout path for the owned Unix socket')
 PSQL=[str(PG/'psql'),'-X','--no-password','-h',str(SOCK),'-p','55474','-U','postgres','-d','postgres','-v','ON_ERROR_STOP=1','-Atq']
 def run(args,sql=None):
@@ -16,6 +17,18 @@ def run(args,sql=None):
  if p.returncode:raise AssertionError(p.stderr[-6000:])
  return p.stdout.strip()
 def query(sql):return run(PSQL,sql)
+def deletion_inventory(actor):
+ # Complete rows in this isolated fixture, including custody and cleanup intent.
+ tables=['orgs','memberships','listings','capture_assets','render_jobs','renders','media_provenance',
+         'studio_documents','studio_creative_results','studio_presenter_profiles','studio_presenter_drafts',
+         'studio_presenter_jobs','studio_presenter_quotes','studio_property_music_copies','video_erase_jobs',
+         'upload_operations','privacy_cleanup_jobs','deletion_requests',
+              'studio_production_reviews','studio_production_versions','studio_project_media','studio_property_music',
+              'studio_presenter_media_sources','studio_presenter_closed_submissions','voice_storage_reservations',
+              'upload_reservations','video_erase_batches','video_erase_stages','cost_ledger']
+ pairs=[f"'{table}',(select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb) from public.{table} r)" for table in tables]
+ pairs += [f"'actor',(select to_jsonb(u) from auth.users u where id='{actor}')",f"'profile',(select to_jsonb(p) from public.profiles p where id='{actor}')"]
+ return json.loads(query('select jsonb_build_object('+','.join(pairs)+');'))
 def error(sql,match):
  try:query(sql)
  except AssertionError as e:assert match in str(e),str(e)
@@ -31,9 +44,9 @@ try:
  run([PG/'initdb','-D',OUT/'data','-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
  run([PG/'pg_ctl','-D',OUT/'data','-l',OUT/'server.log','-w','-o',f"-k '{SOCK}' -p 55474 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  query((SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):query(p.read_text())
+ for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:query(p.read_text())
  query((SQL/'migrations/20260924184052_studio_prompt_library.sql').read_text());ok('all migrations apply and prompt schema replays')
- query(f"insert into auth.users(id,email) values('{A}','prompts-a@fixture.invalid'),('{B}','prompts-b@fixture.invalid');insert into orgs(id,name) values('{ORG}','Prompt fixture'),('{OTHER}','Other workspace');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','agent'),('{A}','{OTHER}','agent');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}');")
+ query(f"insert into auth.users(id,email) values('{A}','prompts-a@fixture.invalid'),('{B}','prompts-b@fixture.invalid');insert into orgs(id,name,plan,plan_source) values('{ORG}','Prompt fixture','pro','manual'),('{OTHER}','Other workspace','pro','manual');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','agent'),('{A}','{OTHER}','agent');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}');")
  payload={'schema':1,'entries':[{'title':'My private notes'}]}
  query(f"set role service_role;insert into studio_documents(user_id,org_id,key,kind,payload) values('{A}','{ORG}','prompts','prompts',{lit(payload)}),('{B}','{ORG}','prompts','prompts',{lit({'schema':1,'entries':[]})});")
  def read(actor):return query(f"set role authenticated;set request.jwt.claim.sub='{actor}';select user_id||':'||org_id from studio_documents where key='prompts';")
@@ -52,11 +65,22 @@ try:
  ok('two device revision predicates cannot both overwrite the same revision',updated=='1' and stale=='0')
  query(f"delete from memberships where user_id='{A}' and org_id='{OTHER}';")
  ok('removed workspace membership loses library access',read(A)==A+':'+ORG)
- query(f"set role service_role;select prepare_account_deletion('{B}','fixture-uploads','fixture-renders');reset role;delete from auth.users where id='{B}';")
- ok('account deletion removes personal prompt content',query(f"select count(*) from studio_documents where user_id='{B}';")=='0')
+ before=deletion_inventory(B)
+ assert any(m['user_id']==B and m['org_id']==ORG for m in before['memberships']) and len({m['user_id'] for m in before['memberships'] if m['org_id']==ORG})>1
+ error(f"set role service_role;select prepare_account_deletion('{B}','fixture-uploads','fixture-renders');",'RP409: This account has retained work or likeness records in a shared or former workspace.')
+ after=deletion_inventory(B)
+ ok('normal account deletion refuses retained shared prompt work without changing complete records or scheduling cleanup',after==before and not any(r['user_id']==B for r in after['deletion_requests']))
+ # Synthetic operator Auth invalidation is a separate low-level FK control,
+ # not successful admission through the app account-deletion workflow.
+ query(f"delete from auth.users where id='{B}';")
+ ok('synthetic operator Auth invalidation removes personal prompt content',query(f"select count(*) from studio_documents where user_id='{B}';")=='0')
  complete=True
 finally:
  failure=str(sys.exc_info()[1]) if sys.exc_info()[1] else None
- if started:run([PG/'pg_ctl','-D',OUT/'data','-m','fast','-w','stop'])
+ try:
+  if started:run([PG/'pg_ctl','-D',OUT/'data','-m','fast','-w','stop'])
+ finally:
+  if not (OUT/'data'/'postmaster.pid').exists():
+   shutil.rmtree(SOCK,ignore_errors=True)
  receipt={'ok':complete,'checks':checks,'passed':len(checks),'sourceSHA256':hashes,'productionCalls':0,'socketOnly':True,'clusterStopped':started,'output':str(OUT),'error':failure}
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt,indent=2))

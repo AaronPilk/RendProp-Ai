@@ -95,6 +95,24 @@ Deno.test("sanitizeCoachOutput: a listing action with a valid id is kept", () =>
   assertEquals(out.actions[0].listing_id, "listing-2");
 });
 
+Deno.test("sanitizeCoachOutput: the retired open_floor_plan chip is dropped even with a valid id (Measurements is Coming soon)", () => {
+  const out = sanitizeCoachOutput({
+    reply: "Measurements is Coming soon.",
+    actions: [
+      { type: "open_floor_plan", label: "Open Measurements", listing_id: "listing-1" },
+      { type: "open_home", label: "Go to Home" },
+    ],
+  }, IDS);
+  assertEquals(out.reply, "Measurements is Coming soon.");
+  assertEquals(out.actions, [{ type: "open_home", label: "Go to Home" }]);
+  // Retired stays retired through the end-to-end parse as well.
+  const parsed = parseCoachOutput(
+    JSON.stringify({ reply: "Try the floor plan.", actions: [{ type: "open_floor_plan", listing_id: "listing-1" }] }),
+    IDS,
+  );
+  assertEquals(parsed.actions, []);
+});
+
 Deno.test("sanitizeCoachOutput: non-listing actions never require or keep a listing_id", () => {
   const out = sanitizeCoachOutput({
     reply: "Here's where to manage your plan.",
@@ -237,4 +255,22 @@ Deno.test("extractJsonObject: an object with no reply key still wins if nothing 
 Deno.test("extractJsonObject: still null when there is no object at all", () => {
   assertEquals(extractJsonObject("no braces here at all"), null);
   assertEquals(extractJsonObject("an unclosed { brace"), null);
+});
+
+Deno.test("Aerial Coming-soon action is dropped online while saved-tour actions remain usable",()=>{
+  const out=parseCoachOutput(JSON.stringify({reply:"Aerial intro is Coming soon.",actions:[{type:"open_aerial",listing_id:"listing-1"},{type:"open_tour",listing_id:"listing-1"}]}),IDS);
+  assertEquals(out.reply,"Aerial intro is Coming soon.");
+  assertEquals(out.actions,[{type:"open_tour",label:"Open the tour",listing_id:"listing-1"}]);
+});
+
+Deno.test("compiled removed Aerial retirement is caught by the real output sanitizer",async()=>{
+  const source=await Deno.readTextFile(new URL("./actions.ts",import.meta.url));
+  const anchor='new Set(["open_floor_plan", "open_aerial"])';
+  assert(source.includes(anchor));
+  const encoded=btoa(String.fromCharCode(...new TextEncoder().encode(source.replace(anchor,'new Set(["open_floor_plan"])'))));
+  const mutant=await import(`data:application/typescript;base64,${encoded}`);
+  const out=mutant.parseCoachOutput(JSON.stringify({reply:"Aerial intro is Coming soon.",actions:[{type:"open_aerial",listing_id:"listing-1"}]}),IDS);
+  assertEquals(out.actions[0].type,"open_aerial","Removal must expose the prohibited action, not fail compilation");
+  let caught=false;try{assertEquals(out.actions,[]);}catch{caught=true;}
+  assert(caught,"The ordinary Coming-soon sanitizer oracle must reject the removed guard");
 });

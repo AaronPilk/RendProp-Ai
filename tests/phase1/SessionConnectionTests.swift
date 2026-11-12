@@ -7,6 +7,16 @@ struct SessionConnectionTests {
         if !value { throw Failure.assertion(message) }
     }
     @MainActor
+    static func waitUntil(_ condition: () -> Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while !condition() {
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        return true
+    }
+    @MainActor
     static func main() async throws {
         // A broken continuation must fail this verification, not hang forever.
         DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
@@ -27,7 +37,9 @@ struct SessionConnectionTests {
             return ready
         }, stateChanged: { states.append($0) })
         let callers = (0..<4).map { _ in Task { await connection.connect() } }
-        try await Task.sleep(nanoseconds: 30_000_000)
+        // Scheduling delay is not connection behavior. Keep ready=false until
+        // the actual retry occurs, with a bound so a broken loop still fails.
+        _ = await waitUntil { states.contains(.retrying) && attempts > 1 }
         try check(states.contains(.retrying), "failure must expose retry state")
         try check(attempts > 1, "failed original attempts must automatically retry")
         ready = true
@@ -39,7 +51,8 @@ struct SessionConnectionTests {
         ready = false
         let cancelled = Task { await connection.connect() }
         let survivor = Task { await connection.connect() }
-        try await Task.sleep(nanoseconds: 5_000_000)
+        let cancellationReady = await waitUntil { states.last == .retrying }
+        try check(cancellationReady, "cancellation must exercise an active failed attempt")
         cancelled.cancel()
         try check(await cancelled.value == false, "cancelled waiter must return false")
         ready = true
@@ -55,12 +68,14 @@ struct SessionConnectionTests {
         print("PASS actual source: cancellation and subsequent generation")
 
         var tries = 0
+        var retryState = SessionConnection.State.idle
         let manualRetry = SessionConnection(retryDelay: 30_000_000_000, attempt: {
             tries += 1
             return tries > 1
-        }, stateChanged: { _ in })
+        }, stateChanged: { retryState = $0 })
         let retryCaller = Task { await manualRetry.connect() }
-        try await Task.sleep(nanoseconds: 5_000_000)
+        let manualReady = await waitUntil { retryState == .retrying }
+        try check(manualReady, "manual Retry must wake an existing backoff")
         manualRetry.retryNow()
         try check(await retryCaller.value, "Retry must wake the same long-delay attempt")
         try check(tries == 2, "Retry must not duplicate action")

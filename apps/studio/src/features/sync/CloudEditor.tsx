@@ -1,3 +1,4 @@
+import { belongsToLibrary } from "../../data/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import VideoEditor from "../../editor/VideoEditor";
 import type { VideoEditorProps, EditorSettings } from "../../editor/VideoEditor";
@@ -14,7 +15,7 @@ import {decodeNativeReel, nativeReelShots, nativeCaptionStyle, type NativeReel} 
 import { mapShotMotion, reviewShotPlan } from "./shot-plan";
 import ReelMediaPicker from "./ReelMediaPicker";
 import "./reel.css";
-import { earlierReels, propertyReelKey, reelPayload, type EarlierReel, type ReelPayload } from "./property-reels";
+import { earlierReels, isPristineReelDraft, propertyReelKey, reelPayload, type EarlierReel, type ReelPayload } from "./property-reels";
 import {downloadNarration} from "./narration";
 import CapturePlan from "../production/CapturePlan";
 import ReviewPanel from "../production/ReviewPanel";
@@ -88,6 +89,8 @@ export default function CloudEditor(props: CloudEditorProps) {
   const [narrationChoices, setNarrationChoices] = useState<NonNullable<VideoEditorProps["narrationChoices"]>>([]);
   const [recovery, setRecovery] = useState(false), [outputBusy, setOutputBusy] = useState(false);
   const session = useRef<DocumentSync | null>(null), controller = useRef(new AbortController());
+  const activeRef = useRef(props.active !== false), wasActive = useRef(props.active !== false);
+  activeRef.current = props.active !== false;
   const currentDraft = useRef<EditDraft | undefined>(undefined), sources = useRef<Source[]>([]), files = useRef<{ file: File; sha256: string }[]>([]);
   const selected = useRef(listingId); selected.current = listingId;
   const uploadFlight = useRef(false), restoring = useRef(false), outputFlight = useRef(false);
@@ -97,6 +100,10 @@ export default function CloudEditor(props: CloudEditorProps) {
   const localKey = `${scopeKey(workspace.user.id, workspace.org.id)}:${documentKey}`;
   const queue = useCallback(() => {
     if (!currentDraft.current) return;
+    // Merely opening a property must not create a cloud edit. A first actual
+    // change or conversation message starts saving; saved empty edits still sync.
+    if (session.current?.confirmedRevision === 0 && !sources.current.length &&
+      isPristineReelDraft(currentDraft.current, conversation.current)) return;
     const payload = { draft: currentDraft.current, listingId: selected.current || null, sources: activeSourceRefs(currentDraft.current, sources.current, selected.current),...(conversation.current?.draftId===currentDraft.current.id?{conversation:conversation.current}:{}) };
     try { localStorage.setItem(`${localKey}:cloud-backup`, JSON.stringify(payload)); }
     catch { setMessage("Browser backup is unavailable. Keep this tab open until cloud saving finishes."); }
@@ -129,7 +136,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     const unload = (event: BeforeUnloadEvent) => {
       if (sync.hasUnsavedWork || musicFlight.current || musicNeedsSave() || uploadFlight.current || outputFlight.current || pendingFiles(selected.current).length) { event.preventDefault(); event.returnValue = ""; }
     };
-    const focus = () => { if (document.visibilityState === "visible") void sync.checkRemote(); };
+    const focus = () => { if (activeRef.current && document.visibilityState === "visible") void sync.checkRemote(); };
     window.addEventListener("beforeunload", unload); window.addEventListener("focus", focus); document.addEventListener("visibilitychange", focus);
     void sync.open().then(async doc => {
       if (abort.signal.aborted) return;
@@ -206,6 +213,11 @@ export default function CloudEditor(props: CloudEditorProps) {
     return () => { abort.abort(); recoveryChoice.current?.(null); sync.dispose(); window.removeEventListener("beforeunload", unload); window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", focus); };
   }, [services, workspace.user.id, workspace.org.id, localKey, legacyKey, documentKey, pendingFiles]);
   useEffect(() => {
+    const active = props.active !== false;
+    if (active && !wasActive.current) void session.current?.checkRemote();
+    wasActive.current = active;
+  }, [props.active]);
+  useEffect(() => {
     if (!listingId || props.active === false) return;
     const abort = new AbortController();
     const refresh = async () => {
@@ -214,7 +226,7 @@ export default function CloudEditor(props: CloudEditorProps) {
         do {
           const raw = await services.api(`/functions/v1/studio/creative-results?listing_id=${listingId}&offset=${offset}`, {orgId: workspace.org.id, signal: abort.signal}) as {results: unknown[]; next_offset: number | null};
           if (!Array.isArray(raw.results)) throw new Error("Saved narration is unavailable. Refresh AI tools and return here.");
-          for (const value of raw.results) { const result = decodeResult(value); if (result.kind === "voice" && result.state === "completed") choices.push({id: result.id, label: result.label || result.voiceName || "Saved narration", words: result.words.filter(word => word.start <= 180).slice(0, 600)}); }
+          for (const value of raw.results) { const result = decodeResult(value,{actor:workspace.user.id,org:workspace.org.id,listing:listingId}); if (result.kind === "voice" && result.state === "completed") choices.push({id: result.id, label: result.label || result.voiceName || "Saved narration", words: result.words.filter(word => word.start <= 180).slice(0, 600)}); }
           if (raw.next_offset !== null && raw.next_offset !== offset + 100 || choices.length > 1000) throw new Error("Saved narration history is too large to load.");
           offset = raw.next_offset;
         } while (offset !== null);
@@ -226,8 +238,8 @@ export default function CloudEditor(props: CloudEditorProps) {
   }, [services, workspace.org.id, listingId, props.active]);
   const resolveNarration = useCallback(async (id: string, signal: AbortSignal): Promise<Blob> => {
     const raw = await services.api("/functions/v1/studio/sign-media", {method: "POST", orgId: workspace.org.id, body: {result_id: id}, signal}) as {result: unknown};
-    return downloadNarration(raw.result,id,signal);
-  }, [services, workspace.org.id]);
+    return downloadNarration(raw.result,id,signal,{actor:workspace.user.id,org:workspace.org.id,listing:listingId});
+  }, [services, workspace.org.id, workspace.user.id, listingId]);
   const resolveMusic = useCallback(async (source: AudioSourceRef, signal: AbortSignal): Promise<Blob> => {
     const file = await restorePropertyMusic(services, workspace.org.id, listingId, source, signal);
     if (!signal.aborted) { savedMusic.current = source.sha256; setMusicPending(musicNeedsSave()); }
@@ -333,7 +345,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     const request = props.entryRequest;
     if (!ready || props.active === false || sourceBusy || outputBusy || !request || consumedEntries.current.has(request.id)) return;
     consumedEntries.current.add(request.id);
-    if (request.listingId !== listingId || !listings.some(listing => listing.id === request.listingId && listing.orgId === workspace.org.id)) { setMessage("Open that property's reel before choosing its files."); return; }
+    if (request.listingId !== listingId || !listings.some(listing => listing.id === request.listingId && belongsToLibrary(listing, workspace))) { setMessage("Open that property's reel before choosing its files."); return; }
     // Opening a native-style feature card only opens this picker. It must not
     // reassign, reset or queue the currently saved workspace edit.
     setPickerListingId(request.listingId);
@@ -368,7 +380,7 @@ export default function CloudEditor(props: CloudEditorProps) {
       const {recipe} = saved;
       let narration: EditDraft["narration"];
       if (recipe.voiceMode !== "off" && recipe.voiceResultId) {
-        const result = decodeResult((await services.api("/functions/v1/studio/sign-media", {method: "POST", orgId: workspace.org.id, body: {result_id: recipe.voiceResultId}, signal: controller.current.signal}) as {result: unknown}).result);
+        const result = decodeResult((await services.api("/functions/v1/studio/sign-media", {method: "POST", orgId: workspace.org.id, body: {result_id: recipe.voiceResultId}, signal: controller.current.signal}) as {result: unknown}).result,{actor:workspace.user.id,org:workspace.org.id,listing:listingId});
         if (result.id !== recipe.voiceResultId || result.kind !== "voice" || result.state !== "completed") throw new Error("The phone setup’s saved narration is unavailable. Choose a completed voice result first.");
         await resolveNarration(result.id, controller.current.signal);
         narration = {resultId: result.id, label: result.label || result.voiceName || "Phone narration", offset: 0, volume: 1, wordCaptions: recipe.wordCaptions && result.words.length > 0, words: result.words.filter(word => word.start <= 180).slice(0, 600)};
@@ -408,7 +420,7 @@ export default function CloudEditor(props: CloudEditorProps) {
       }
       let narration: EditDraft["narration"];
       if (request.narrationResultId) {
-        const result = decodeResult((await services.api("/functions/v1/studio/sign-media", {method: "POST", orgId: workspace.org.id, body: {result_id: request.narrationResultId}, signal: controller.current.signal}) as {result: unknown}).result);
+        const result = decodeResult((await services.api("/functions/v1/studio/sign-media", {method: "POST", orgId: workspace.org.id, body: {result_id: request.narrationResultId}, signal: controller.current.signal}) as {result: unknown}).result,{actor:workspace.user.id,org:workspace.org.id,listing:listingId});
         if (result.id !== request.narrationResultId || result.kind !== "voice" || result.state !== "completed") throw new Error("The saved narration is unavailable. Choose another voice result in AI tools.");
         narration = {resultId: result.id, label: result.label || result.voiceName || "Saved narration", offset: 0, volume: 1, wordCaptions: result.words.length > 0, words: result.words.filter(word => word.start <= 180).slice(0, 600)};
         await resolveNarration(result.id, controller.current.signal);
@@ -491,7 +503,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     } finally { outputFlight.current = false; if (!signal.aborted) setOutputBusy(false); }
   }
   const editProperty = listings.find(listing => listing.id === listingId);
-  const pickerProperty = listings.find(listing => listing.id === pickerListingId && listing.orgId === workspace.org.id);
+  const pickerProperty = listings.find(listing => listing.id === pickerListingId && belongsToLibrary(listing, workspace));
   async function requestEditPlan(message:string,draft:EditDraft,history:ConversationState["messages"],signal:AbortSignal){
     if(!ready||sourceBusy||outputBusy||state==="conflict")throw new Error("Finish syncing this edit before asking for an AI editing plan.");
     return assistant.requestEditPlan(message,draft,history,signal);

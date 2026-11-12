@@ -1,0 +1,17 @@
+Rendprop Studio — Third-party notices
+
+Local MP4 export uses Mediabunny 1.65.2.
+Copyright (c) 2026-present, Vanilagy and contributors.
+Mediabunny is distributed under the Mozilla Public License, version 2.0.
+Its source is unmodified.
+
+The complete package, including the preferred source files and existing
+copyright and license notices, is available without charge at:
+/licenses/mediabunny-1.65.2-source.tar.gz
+
+The license is available at /licenses/MPL-2.0.txt and
+https://www.mozilla.org/MPL/2.0/.
+Upstream: https://github.com/Vanilagy/mediabunny
+
+Recipients retain their rights to this source under the MPL 2.0.
+Rendprop's terms do not restrict those rights.

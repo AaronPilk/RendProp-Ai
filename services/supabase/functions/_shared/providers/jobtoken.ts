@@ -27,27 +27,25 @@
 //                §2 and DEPLOYMENT.md). A tampered payload or a forged
 //                signature fails verification and decodes to `null`.
 //   • OWNED    — every token carries the org id (`o`) AND user id (`usr`) that
-//                created the job. GET /ai-video/status re-derives the caller's
-//                own org/user from THEIR JWT (never from the token) and
-//                verifyJobToken() refuses to hand back a token whose owner
-//                does not match — a leaked token can be replayed by nobody but
-//                the org+user it was minted for.
+//                created the job. GET /ai-video/status checks the actor against
+//                the authenticated caller, then freshly resolves authorized
+//                listing/library scope and requires its org to match. A leaked
+//                token cannot confer the original actor's permissions.
 //   • EXPIRING — every token carries a short-lived `exp` (unix seconds).
 //
-// verifyJobToken() is the ONE gate: signature, shape, expiry and ownership are
-// all checked there, BEFORE the caller ever polls the vendor with our
-// credentials — so a forged or leaked/mismatched-owner token never reaches
-// adapter.poll().
+// verifyJobToken() remains the strict transport gate. Paid recovery uses
+// verifyJobTokenForRecovery(): the same signature/shape/ownership checks, plus
+// an exact durable paid receipt or signed accepted admission when expired.
+// The route then rechecks current library permissions before any saved-result
+// access or vendor poll.
 //
-// NO GRACE PATH for the pre-fix unsigned format. Nothing in this repository is
-// a live deployment with async jobs already in flight, so there is nothing an
-// old token needs to keep working for, and a grace path is itself a bounded
-// re-opening of the exact hole this closes. A real rollout that DOES have
-// in-flight jobs at deploy time would need one — time-boxed to the longest
-// supported job (see TOKEN_TTL_SECONDS below) — see docs/handoff/audit-fixes.md.
+// Old signed tokens require the same signature and owner; expiry may be waived
+// only for an exact durably paid job under the recovery rules above.
+// Legacy unsigned FAL URLs are authorized separately by an exact owned job
+// receipt in ai-video; possession of a provider URL supplies no authority.
 //
 // WHAT A TOKEN MAY CONTAIN: provider, model, vendor job id, vendor poll URL,
-// submit time, task, the org id + user id that created it, and an expiry.
+// submit time, task, owner ids, optional original admission key, and an expiry.
 // Still NO vendor credential and NO signed URL. Every OTHER authorization
 // decision (role, membership, plan) still runs off the caller's own JWT
 // exactly as before — the token only ever narrows what a caller may do, never
@@ -64,6 +62,8 @@ export interface RouterJobToken {
   k: string; // task
   o: string; // org id that created the job
   usr: string; // user id that created the job
+  l?: string; // optional admitted listing UUID; never a status-request field
+  a?: string; // original admitted idempotency key; signed only after acceptance
   exp: number; // unix-seconds expiry
 }
 
@@ -71,6 +71,8 @@ export interface RouterJobToken {
 export interface JobTokenOwner {
   orgId: string;
   userId: string;
+  listingId?: string | null;
+  admissionKey?: string;
 }
 
 // How long a minted token stays valid. Generous relative to the longest job
@@ -122,6 +124,11 @@ async function hmacKey(): Promise<CryptoKey> {
   return key;
 }
 
+/** Verify the receipt signer before a submission can incur provider cost. */
+export async function assertJobTokenSigningReady(): Promise<void> {
+  await crypto.subtle.sign("HMAC",await hmacKey(),new TextEncoder().encode("job-receipt-readiness"));
+}
+
 function toB64Url(bytes: Uint8Array): string {
   let bin = "";
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
@@ -162,6 +169,8 @@ export async function encodeJobToken(
     k: job.k,
     o: owner.orgId,
     usr: owner.userId,
+    ...(owner.listingId ? { l: owner.listingId } : {}),
+    ...(owner.admissionKey ? { a: owner.admissionKey } : {}),
     exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
   };
   const payloadB64 = toB64Url(new TextEncoder().encode(JSON.stringify(full)));
@@ -227,6 +236,8 @@ export async function decodeJobToken(raw: string): Promise<RouterJobToken | null
       return null;
     }
     if (parsed.u !== undefined && typeof parsed.u !== "string") return null;
+    if (parsed.l !== undefined && (typeof parsed.l !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.l))) return null;
+    if (parsed.a !== undefined && (typeof parsed.a !== "string" || !/^[\x21-\x7e]{8,128}$/.test(parsed.a))) return null;
     return {
       p: parsed.p,
       m: parsed.m,
@@ -236,6 +247,8 @@ export async function decodeJobToken(raw: string): Promise<RouterJobToken | null
       k: String(parsed.k ?? ""),
       o: parsed.o,
       usr: parsed.usr,
+      ...(parsed.l ? { l: parsed.l } : {}),
+      ...(parsed.a ? { a: parsed.a } : {}),
       exp: parsed.exp,
     };
   } catch {
@@ -270,18 +283,55 @@ export async function verifyJobToken(
   return job;
 }
 
-/** OUR status URL for a routed job, built from the request's own origin. */
+/** Recovery of an already accepted paid job is independent of a short-lived
+ * transport link. Expiry alone may be waived only after the caller supplies
+ * durable proof for this exact authenticated receipt. Current library/media
+ * permission must still be checked by the status route before any result or
+ * provider read. The ordinary verifier above remains strict. */
+export async function verifyJobTokenForRecovery(
+  raw: string,
+  owner: JobTokenOwner,
+  paidReceiptMatches: (job: RouterJobToken) => Promise<boolean>,
+  now: Date = new Date(),
+): Promise<RouterJobToken | null> {
+  const job = await decodeJobToken(raw);
+  if (!job || job.o !== owner.orgId || job.usr !== owner.userId) return null;
+  if (isExpired(job, now) && !await paidReceiptMatches(job)) return null;
+  return job;
+}
+
+/** Validate only the server-owned Supabase project origin, never a forwarded
+ * request header. Also used before paid dispatch so bad config fails early. */
+export function assertPublicSupabaseOrigin(value: string | undefined): string {
+  if (!value || !/^https:\/\/[a-z0-9]{20}\.supabase\.co\/?$/.test(value)) {
+    throw new Error("The public function origin is not configured safely.");
+  }
+  return new URL(value).origin;
+}
+
+/** OUR status URL for a routed job. Hosted callers supply their server-owned
+ * Supabase origin: Edge's internal request may be HTTP with /functions/v1
+ * stripped. Forwarded headers and client URLs never choose that public base. */
 export async function routerStatusUrl(
   req: Request,
   functionName: string,
   task: string,
   ref: JobRef,
   owner: JobTokenOwner,
+  publicSupabaseOrigin?: string,
 ): Promise<string> {
-  const u = new URL(req.url);
+  let u = new URL(req.url);
   const parts = u.pathname.split("/").filter(Boolean);
   const idx = parts.lastIndexOf(functionName);
-  const base = idx >= 0 ? `/${parts.slice(0, idx + 1).join("/")}` : `/${functionName}`;
+  let base = idx >= 0 ? `/${parts.slice(0, idx + 1).join("/")}` : `/${functionName}`;
+  if (publicSupabaseOrigin !== undefined) {
+    const configured = new URL(assertPublicSupabaseOrigin(publicSupabaseOrigin));
+    if (!/^[a-z][a-z0-9-]*$/.test(functionName)) {
+      throw new Error("The public function origin is not configured safely.");
+    }
+    u = configured;
+    base = `/functions/v1/${functionName}`;
+  }
   const token = await encodeJobToken(
     {
       p: ref.provider,

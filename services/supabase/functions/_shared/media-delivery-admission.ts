@@ -1,0 +1,40 @@
+import { assert, HttpError } from "./http.ts";
+
+/** A publishable anon key is not a private gateway identity. Reject before DB
+ * lookup, including malformed or missing configured secrets. */
+export async function requireMediaGateway(req: Request): Promise<void> {
+  const expected = Deno.env.get("MEDIA_GATEWAY_SECRET") || "";
+  const offered = req.headers.get("X-Rendprop-Media-Gateway") || "";
+  assert(/^[a-f0-9]{64}$/.test(expected), 503, "Media service activation pending.");
+  assert(/^[a-f0-9]{64}$/.test(offered), 403, "Media gateway verification required.");
+  const encode = new TextEncoder();
+  const [a, b] = await Promise.all([expected, offered].map(value => crypto.subtle.digest("SHA-256", encode.encode(value))));
+  let difference = 0;
+  const left = new Uint8Array(a), right = new Uint8Array(b);
+  for (let i = 0; i < left.length; i++) difference |= left[i] ^ right[i];
+  assert(difference === 0, 403, "Media gateway verification required.");
+}
+
+export function deliveryBytes(req: Request, maximum=256*1024*1024): number {
+  const value = new URL(req.url).searchParams.get("bytes");
+  if (value === null) return 0;
+  assert(/^(0|[1-9][0-9]{0,9})$/.test(value), 400, "Invalid media byte admission.");
+  const bytes = Number(value);
+  assert(Number.isSafeInteger(bytes) && bytes <= maximum, 400, "Invalid media byte admission.");
+  return bytes;
+}
+
+/** Counts authority reads, HEAD and conditional reads and admitted bytes.
+ * Already-authorized media does not require a fabricated financial reserve.
+ * Publication/hosting/library/ownership checks remain in the media authority;
+ * this receipt is honest unpriced usage, never a paid AI-generation grant. */
+// deno-lint-ignore no-explicit-any
+export async function admitMediaRead(admin: any, org: string, bytes: number, required = true, actor?: string): Promise<void> {
+  const {data, error} = await admin.rpc(actor ? "library_media_delivery_admit" : "media_delivery_admit", {...(actor ? {p_actor:actor} : {}),p_org:org,p_bytes:bytes,p_required:required});
+  if (error) {
+    const prefix = /^RP(401|403|404|429):/.exec(error.message || "");
+    throw new HttpError(prefix ? Number(prefix[1]) : 503, prefix?.[1] === "429" ? "Media serving allowance exhausted." : "Media service is unavailable.");
+  }
+  assert(data?.admitted === true && typeof data.legacy_unbudgeted === "boolean" && (!required || data.legacy_unbudgeted === false), 503, "Media admission could not be verified.");
+  if(data.basis === "product_media_serving") assert(data.financial_budget_bypassed === true && data.infrastructure_cost === "unpriced" && data.request_counted === true && data.bytes_counted === bytes,503,"Media usage could not be verified.");
+}

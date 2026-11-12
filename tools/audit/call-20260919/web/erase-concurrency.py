@@ -56,7 +56,9 @@ assert sql(f"select count from rate_limits where key='reelmo:{O}'")[1]=='3'
 sql("update plan_entitlements set cogs_ceiling_cents=100 where plan='pro'")
 for attempt in range(8):
     co,cl,ca,cb,ci,cj=[uid() for _ in range(6)]
-    sql(f"insert into orgs(id,name,plan) values('{co}','Cross-feature race','pro'); insert into memberships(user_id,org_id,role) values('{U}','{co}','owner'); insert into listings(id,org_id,agent_id,address) values('{cl}','{co}','{U}','Synthetic'); insert into capture_assets(id,listing_id,kind,storage_key,bucket,uploaded,duration_s) values('{ca}','{cl}','video','synthetic/{ca}.mp4','renders',true,4.8); insert into render_jobs(id,listing_id) values('{cj}','{cl}');")
+    # Explicit manual authority lets this non-trial fixture exercise the
+    # cross-feature spend race, rather than stop at unfunded render admission.
+    sql(f"insert into orgs(id,name,plan,plan_source) values('{co}','Cross-feature race','pro','manual'); insert into memberships(user_id,org_id,role) values('{U}','{co}','owner'); insert into listings(id,org_id,agent_id,address) values('{cl}','{co}','{U}','Synthetic'); insert into capture_assets(id,listing_id,kind,storage_key,bucket,uploaded,duration_s) values('{ca}','{cl}','video','synthetic/{ca}.mp4','renders',true,4.8); insert into render_jobs(id,listing_id) values('{cj}','{cl}');")
     er=f"select video_erase_reserve('{co}','{U}','{cl}','{cb}','{ca}','{ci}',repeat('c',64))"
     other=f"select log_job_cost('{cj}','{co}','hero','fal','synthetic',1,50,'{{}}'::jsonb,2500)"
     raced=parallel([er,other]);assert sum(r[0]==0 for r in raced)==1,raced

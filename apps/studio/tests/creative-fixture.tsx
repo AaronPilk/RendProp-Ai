@@ -1,20 +1,34 @@
 import {useState} from "react";
+import {StudioError} from "../src/data/config";
 import {createRoot} from "react-dom/client";
 import CreativeWorkspace from "../src/features/creative/CreativeWorkspace";
 import type {StudioServices} from "../src/data/services";
 import type {Workspace,Listing,StudioPhoto} from "../src/data/contracts";
 import {EMPTY_DRAFT,type ShotPlanHandoff,type AgentPlanHandoff,type CreativeEntryRequest,type CreativeTool} from "../src/features/creative/model";
 import "../src/styles.css";
+import "../src/design/studio.css";
+import "../src/features/creative/creative.css";
 const user="11111111-1111-4111-8111-111111111111",org="22222222-2222-4222-8222-222222222222",listing="33333333-3333-4333-8333-333333333333",other="33333333-3333-4333-8333-333333333334",source="44444444-4444-4444-8444-444444444444",render="55555555-5555-4555-8555-555555555555",job="66666666-6666-4666-8666-666666666666",provenance="77777777-7777-4777-8777-777777777777";
 const calls:{path:string;method:string;body:any}[]=[],docs=new Map<string,any>(),tickets=new Map<string,any>(),results:any[]=[];
 const shotHandoffs:ShotPlanHandoff[]=[],agentHandoffs:AgentPlanHandoff[]=[],editorHandoffs:string[]=[];
 const png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=";
 const url=(name:string)=>`https://012345678901234567890123456789ab.r2.cloudflarestorage.com/rendprop-renders/renders/${org}/${listing}/${name}?X-Amz-Signature=fixture`;
-let counter=0;
+let counter=0, identityVersion=1, holdNextVideoStatus=false, abortedVideoStatus=0;
+const photoResponses:{image_b64:string;disclosure:string}[]=[], uploadedFiles:{url:string;sha256:string;size:number}[]=[];
 const workspace:Workspace={user:{id:user,email:"agent@example.invalid",name:"Agent",avatarUrl:null},org:{id:org,name:"Fixture office",handle:"office",spaceType:"real_estate"},memberships:[{orgId:org,orgName:"Fixture office",role:"owner",spaceType:"real_estate"}],plan:"team",planRaw:"team",planDegraded:false,planExpiresAt:null,trialEndsAt:null,usage:{listings:2,leads:0,leadsNew:0,renders:1}};
 const listings:Listing[]=[listing,other].map((id,i)=>({id,orgId:org,spaceType:"real_estate",address:i?"22 Pine Street":"10 Oak Street",tagline:"Bright rooms and a patio",details:{access_code:"private-must-not-send"},status:"ready",createdAt:"2026-09-14T12:00:00Z",mainPhotoKey:null,beds:3,baths:2,sqft:2000,priceCents:null}));
 const photos:StudioPhoto[]=[{id:source,listingId:listing,url:url("source.png"),originalUrl:url("source.png"),isAltered:false,expiresAt:"2099-01-01T00:00:00Z",caption:"Kitchen",isStaged:false,sort:0}];
-const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identityVersion:1,identity:{userId:user,isAnonymous:false,email:"agent@example.invalid"}}),upload:async()=>({etag:'"fixture-receipt"'}),listMedia:async(_org:string,selected:string)=>({orgId:org,listingId:selected,photos:selected===listing?[...photos]:[],videos:[],nextOffset:null,unavailableCount:0}),api:async(path:string,options:any)=>{
+// Opt-in server-shaped paging (50 gallery rows per page): 55 originals, then a saved Staged version on page two.
+// The server also lists video-only derived capture assets (a prepared ≤2048px JPEG and a video poster frame).
+const derivedURL=(key:string)=>`https://012345678901234567890123456789ab.r2.cloudflarestorage.com/rendprop-${key.split("/")[0]}/${key}?X-Amz-Signature=fixture`;
+const pagedPhotos:StudioPhoto[]=[...Array.from({length:55},(_,i):StudioPhoto=>({id:`44444444-4444-4444-8444-${String(1000+i).padStart(12,"0")}`,listingId:listing,url:url(`room-${i+1}.png`),originalUrl:url(`room-${i+1}.png`),isAltered:false,expiresAt:"2099-01-01T00:00:00Z",caption:`Room ${i+1}`,isStaged:false,sort:i})),
+ {id:"44444444-4444-4444-8444-000000002000",listingId:listing,url:url("staged-bedroom.png"),originalUrl:url("room-55.png"),isAltered:true,isStaged:true,editKind:"stage",originalVerified:true,expiresAt:"2099-01-01T00:00:00Z",caption:"Staged primary bedroom",sort:55},
+ {id:"44444444-4444-4444-8444-000000003000",listingId:listing,url:derivedURL(`uploads/${org}/${listing}/prepared-video/${render}/${job}.jpg`),originalUrl:derivedURL(`uploads/${org}/${listing}/prepared-video/${render}/${job}.jpg`),isAltered:false,isStaged:false,expiresAt:"2099-01-01T00:00:00Z",caption:null,sort:0},
+ {id:"44444444-4444-4444-8444-000000003001",listingId:listing,url:derivedURL(`renders/${org}/${listing}/background/${job}/${render}/first-clip.jpg`),originalUrl:null,isAltered:true,isStaged:false,editKind:null,expiresAt:"2099-01-01T00:00:00Z",caption:null,sort:0}];
+const mediaCalls:{listing:string;offset:number}[]=[];
+const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identityVersion,identity:{userId:user,isAnonymous:false,email:"agent@example.invalid"}}),upload:async(url:string,body:Blob)=>{const digest=await crypto.subtle.digest("SHA-256",await body.arrayBuffer());uploadedFiles.push({url,sha256:[...new Uint8Array(digest)].map(n=>n.toString(16).padStart(2,"0")).join(""),size:body.size});return {etag:'"fixture-receipt"'};},listMedia:async(_org:string,selected:string,_signal?:AbortSignal,offset=0)=>{mediaCalls.push({listing:selected,offset});
+ if(localStorage.getItem("fixture-photo-pages")==="true"){const rows=selected===listing?pagedPhotos:[];return {orgId:org,listingId:selected,photos:rows.slice(offset,offset+50).map(photo=>({...photo})),videos:[],nextOffset:offset+50<rows.length?offset+50:null,unavailableCount:0};}
+ return {orgId:org,listingId:selected,photos:selected===listing?[...photos]:[],videos:[],nextOffset:null,unavailableCount:0};},api:async(path:string,options:any)=>{
  if(options.orgId!==org)throw new Error("Wrong organization");const body=options.body,method=options.method??"GET";calls.push({path,body,method});if(calls.length>160)throw new Error("Request loop");
  if(path==="/functions/v1/me"&&method==="GET")return {user:{id:user},org:{id:org,name:"Fixture office",handle:"office",space_type:"real_estate",brand_kit:{}},usage:{by_feature:{renders:1,photo_edits:0,reels:0,aerials:0,drone:0},caps:{renders:50,photo_edits:50,reels:50,aerials:50,drone:50},windows:{renders:null,photo_edits:null,reels:null,aerials:null,drone:null}},notifications:{lead_received:true,render_ready:true,upload_stuck:false,free_week_ending:true,allowance_low:true,first_tour_nudge:false,muted_until:null},entitlement:{degraded:false},portfolio_url:null,plan_source:"apple"};
  if(path.includes("studio/documents?")&&method==="GET"){const key=new URL(path,"https://fixture.invalid").searchParams.get("key")!;return {document:structuredClone(docs.get(key)??null)};}
@@ -25,7 +39,10 @@ const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identi
  if(path.endsWith("ai-copy/shotlist"))return {script:"Welcome inside. The bright kitchen opens onto a patio.",shots:body.photos.map((p:any,i:number)=>({photo_id:p.id,order:i+1,room:p.room,motion:"push_in",seconds:5,on_screen_text:"Bright kitchen",voice_line:"The kitchen opens onto the patio."}))};
  if(path.endsWith("ai-copy/agent-reel"))return {cutaways:[{photo_id:source,start:4,end:6,on_screen_text:"Kitchen and patio",motion:"push_in"}]};
  if(path.endsWith("ai-copy/edit-prompt"))return {prompt:"Remove the movable boxes while preserving the room and permanent features."};
- if(path.endsWith("ai-photo")){if(body.edit==="suggest")return {suggestions:[{edit:"declutter",reason:"Clear the movable boxes to show the room."}]};return {image_b64:png,mime:"image/png",disclosure:"This photo was digitally altered with AI.",provenance:{id:provenance,recorded:true}};}
+ if(path.endsWith("ai-photo-v2")&&localStorage.getItem("fixture-photo-http")==="true"){
+  const response=await fetch("/fixture/photo",{method:"POST",headers:{"content-type":"application/json","idempotency-key":options.idempotencyKey,"x-org-id":options.orgId,"x-rendprop-photo-quality-protocol":options.photoQualityProtocol},body:JSON.stringify(body),signal:options.signal});const value=await response.json();if(!response.ok)throw new StudioError(value.code,value.error,response.status,value);return value;
+ }
+ if(path.endsWith("ai-photo")||path.endsWith("ai-photo-v2")){if(body.edit==="suggest")return {suggestions:[{edit:"declutter",reason:"Clear the movable boxes to show the room."}]};return {...(photoResponses.shift()??{image_b64:png,disclosure:"This photo was digitally altered with AI."}),mime:"image/png",provenance:{id:provenance,recorded:true}};}
  if(path==="/functions/v1/uploads"&&method==="POST"){const id=`88888888-8888-4888-8888-${String(++counter).padStart(12,"0")}`;const ticket={asset_id:id,storage_key:`renders/${org}/${body.listing_id}/${body.role}-${id}.png`,uploaded:false,mode:"single",put_url:`https://uploads.rendprop.com/v2/${id}?signature=fixture`};tickets.set(id,ticket);return ticket;}
  if(/\/uploads\/[^/]+\/complete$/.test(path)){const id=path.split("/").at(-2)!;const ticket=tickets.get(id);return {...ticket,id,listing_id:listing,uploaded:true};}
  if(path.includes("me/compliance/")&&method==="PATCH")return {ok:true};
@@ -33,7 +50,13 @@ const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identi
  if(path.endsWith("ai-voice/voices"))return {voices:[{voice_id:"voice_fixture",name:"Sam",labels:"warm · conversational"}]};
  if(path.endsWith("studio/voice")){const result={id:"99999999-9999-4999-8999-999999999999",kind:"voice",state:"completed",url:url("voice.mp3"),voice_name:"Sam",words:[{text:"Bright",start:0,end:.5}],disclosure:"AI generated narration.",duration_s:10};results.unshift(result);return {result};}
  if(path.endsWith("studio/video")){const result={id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",kind:"video",state:"processing",video_kind:body.kind,label:body.label,disclosure:"This clip was generated with AI.",request_id:"fixture-video-request",provenance_id:provenance,source_asset_id:body.asset_id};results.unshift(result);return {result};}
- if(path.endsWith("studio/video-status")){const result=results.find(r=>r.id===body.result_id);Object.assign(result,{state:"completed",url:url("generated.mp4"),source_url:url("source.png"),asset_id:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",qc_required:true,qc_publishable:false,qc_message:"Review property accuracy before publishing."});return {result:structuredClone(result)};}
+ if(path.endsWith("studio/video-status")){
+  if(holdNextVideoStatus){holdNextVideoStatus=false;await new Promise<void>((_resolve,reject)=>{
+   const aborted=()=>{abortedVideoStatus++;reject(new DOMException("Polling stopped when Creative closed.","AbortError"));};
+   if(options.signal?.aborted)aborted();else options.signal?.addEventListener("abort",aborted,{once:true});
+  });}
+  const result=results.find(r=>r.id===body.result_id);Object.assign(result,{state:"completed",url:url("generated.mp4"),source_url:url("source.png"),asset_id:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",qc_required:true,qc_publishable:false,qc_message:"Review property accuracy before publishing."});return {result:structuredClone(result)};
+ }
  if(path.endsWith("studio/sign-media"))return {result:structuredClone(results.find(r=>r.id===body.result_id))};
  if(path.endsWith("ai-video/drift")){const result=results.find(r=>r.request_id===body.request_id);Object.assign(result,{qc_publishable:true,qc_message:"Property accuracy review passed."});return {drift:{status:"pass",publishable:true,message:"Property accuracy review passed."}};}
  if(path.endsWith("ai-chapters"))return {chapters:[{label:"Entry",start_s:0},{label:"Kitchen",start_s:5}],summary:"Two rooms identified."};
@@ -44,10 +67,19 @@ const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identi
 function Controls(){return <div style={{padding:16,background:"#14161d"}}><button onClick={()=>{const key=`creative:${listing}`,previous=docs.get(key);docs.set(key,{key,kind:"creative",listing_id:listing,revision:(previous?.revision??0)+1,payload:{...EMPTY_DRAFT,script:"Newer phone script"},updated_at:new Date().toISOString()});}}>Simulate phone edit</button><button onClick={()=>{const node=document.querySelector("#fixture-calls")!;node.textContent=JSON.stringify({calls,docs:[...docs.values()],results,shotHandoffs,agentHandoffs,editorHandoffs});}}>Show fixture receipts</button><pre id="fixture-calls" style={{display:"none"}}/></div>}
 function Fixture(){
  const [entryRequest,setEntryRequest]=useState<CreativeEntryRequest>();
+ const [active,setActive]=useState(true);
  Object.assign(window,{creativeFixture:{
   entry:(tool:CreativeTool,options:{id?:string;listingId?:string;preset?:CreativeEntryRequest["preset"]}={})=>setEntryRequest({id:options.id??crypto.randomUUID(),listingId:options.listingId??listing,tool,preset:options.preset}),
   calls:()=>structuredClone(calls),
+  photoResponses:(responses:{image_b64:string;disclosure:string}[])=>photoResponses.push(...responses),
+  uploadedFiles:()=>structuredClone(uploadedFiles),
+  photos:(next:StudioPhoto[])=>photos.splice(0,photos.length,...next),
+  changeIdentity:()=>{identityVersion++;},
+  mediaCalls:()=>structuredClone(mediaCalls),
+  setActive:(value:boolean)=>setActive(value),
+  holdNextVideoStatus:()=>{holdNextVideoStatus=true;},
+  abortedVideoStatus:()=>abortedVideoStatus,
  }});
- return <><Controls/><main style={{padding:32}}><CreativeWorkspace services={services} workspace={workspace} listings={listings} entryRequest={entryRequest} onChanged={()=>{}} onOpenEditor={id=>editorHandoffs.push(id)} onUseShotPlan={plan=>shotHandoffs.push(plan)} onUseAgentPlan={plan=>agentHandoffs.push(plan)}/></main></>;
+ return <><Controls/><main hidden={!active} style={{padding:32}}><CreativeWorkspace active={active} services={services} workspace={workspace} listings={listings} entryRequest={entryRequest} onChanged={()=>{}} onOpenEditor={id=>editorHandoffs.push(id)} onUseShotPlan={plan=>shotHandoffs.push(plan)} onUseAgentPlan={plan=>agentHandoffs.push(plan)}/></main></>;
 }
-createRoot(document.getElementById("root")!).render(<Fixture/>);
+createRoot(document.getElementById("root")!).render(<div className="studio-shell" style={{display:"block"}}><Fixture/></div>);

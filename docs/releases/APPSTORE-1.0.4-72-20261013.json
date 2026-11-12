@@ -1,0 +1,71 @@
+{
+  "recorded_utc": "2026-10-14T00:01:29.133034+00:00",
+  "version": "1.0.4",
+  "build": 72,
+  "archive_commit": "a37f6dd42916bf11c5baa257f539890188ae951d",
+  "test_only_checkpoint": "0ae48acb91ec3b36a3bfa75936b6b130a1fc1d58",
+  "native_source_still_matches_archive": true,
+  "apple": {
+    "build_id": "6520462f-530e-4cc8-95f0-876df751f3a8",
+    "state": "WAITING_FOR_REVIEW",
+    "release_type": "AFTER_APPROVAL",
+    "exact_one_version_item_no_products": true,
+    "old_build57_released": false,
+    "old_build57_withdrawn_once": true,
+    "build72_attached_once": true,
+    "original_attempt_confirmed_writes": 2,
+    "continuation_confirmed_writes": 6,
+    "continuation_reason": "Apple moved the newly attached version to PREPARE_FOR_SUBMISSION; initial guard expected DEVELOPER_REJECTED. Fresh readback bound72 before continuation, without repeating withdrawal/attachment."
+  },
+  "testflight": {
+    "valid": true,
+    "internal_state": "IN_BETA_TESTING",
+    "existing_internal_group_membership_verified": true,
+    "installed_on_owner_iphone": true,
+    "home_opened": true
+  },
+  "aerial": {
+    "new_creation": "COMING_SOON",
+    "public_plan_benefit": false,
+    "native_home_and_toolbox": "COMING_SOON",
+    "studio_new_creation": false,
+    "server_ordinary_new_post_refused_before_money": true,
+    "saved_clips_and_accepted_recovery_preserved": true,
+    "existing_trusted_sponsorship_remains_private_beta_only": true
+  },
+  "introduction": {
+    "seconds": 38.74,
+    "video_sha256": "ddbd01cd9f74c7e9fb3b06989d8403f3fe6ccc915658531808e56c6eb8a57b6e",
+    "audio": "Existing Willow take at pitch-preserving1.2x",
+    "aerial_phrase_and_chapter_removed": true,
+    "archive_and_export_asset_bytes_verified": true,
+    "settings_replay_does_not_reset_account_or_ongoing_work": true,
+    "phone_playback_of72_movie_certified": false
+  },
+  "live": {
+    "ai_video": 74,
+    "coach": 39,
+    "source_readback_verified": true,
+    "website_worker": "12fc8258-f5f9-445d-8c32-4cc58b9cfdcc",
+    "studio_worker": "a9395ec4-ab9b-42ce-9544-8bca8f085a25",
+    "nearby_real_osm_places": 9
+  },
+  "acceptance": {
+    "owner_phone70_71_core": "Actual staging, declutter, retained versions, AskAI, MLS ZIP, AI voice,2shot1080x1920 reel, foreground navigation/recovery and71 voice UI observed. Consumed core product bodies bound unchanged in72.",
+    "ordinary_retail_physical_purchase_acceptance": false,
+    "provider_costs": "Estimated ledger values; supplier invoice not certified.",
+    "old_published_edits": "Legacy roughly1MP masters are not automatically upgraded; new normal AI photo result verified at2K/4.28MP.",
+    "website_latency": "Deferred image payload improved; initial tour metadata still measured roughly4\u20136seconds in earlier readback, no complete TTFB fix claimed."
+  },
+  "ci": {
+    "original_run": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38484390739",
+    "original_result": "11PASS/4FAIL",
+    "portable_history_dependency": "Repaired in test-only0ae48ac; both gates passed with Git access disabled. Native archive unchanged.",
+    "simulator": "Startup timeout before current UIKit export assertions; earlier exact-source photo export proof693+33 retained, no new simulator success claimed.",
+    "studio_export": "A positive silent-source browser export was refused after measured consecutive audio clock losses68.83/88.03ms. Refusal preserved; clock interruption cause unresolved. Native AVFoundation exporter does not use this browser path.",
+    "corrected_run": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38487078778",
+    "corrected_status": "IN_PROGRESS",
+    "retry_until_green": false
+  },
+  "future_beta": "Separate experimental TestFlight work after MVP submission;3D walkthrough first, measurements last. Blender/Unreal and paid add-on design are still to discuss; no engine implementation or experimental beta build claimed here."
+}

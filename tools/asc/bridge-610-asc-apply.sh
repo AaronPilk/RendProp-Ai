@@ -81,7 +81,8 @@ fi
 # 1. The app record must exist first; everything else hangs off it.
 run_step "Find the app record" app
 
-# 2. Subscriptions: group, six products, localizations, prices, availability,
+# 2. Subscriptions: group, seven configured products (four monthly sold),
+#    localizations, prices, availability,
 #    free trials, and the App Store Server Notification URLs.
 #    com.rendprop.app.team.annual is not sold at launch (see step 6), so it is
 #    skipped here and in the App Review step, as tools/asc/README.md requires.

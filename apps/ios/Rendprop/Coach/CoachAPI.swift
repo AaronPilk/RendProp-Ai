@@ -31,19 +31,73 @@ struct CoachRequest: Sendable {
         var photos: Int
         var edits: Int
         var reels: Int
+        var attention: String? = nil
+        var serverID: String? = nil
+        var localDraft: Bool = false
+    }
+
+    struct ReelState: Sendable, Equatable {
+        enum Phase: String, Sendable { case generating, stitching, paused, ready, savedRequest = "saved_request", needsReview = "needs_review" }
+        enum Execution: String, Sendable { case legacyLocal = "legacy_local", awaitingAcceptance = "awaiting_acceptance", serverAccepted = "server_accepted" }
+        var phase: Phase
+        var completed: Int
+        var total: Int
+        var stillPhotoShots: Int
+        var execution: Execution = .legacyLocal
+        var serverPhase: String? = nil
+        var resumeAvailable: Bool = false
+    }
+
+    struct PhotoState: Sendable, Equatable {
+        enum Tab: String, Sendable { case original, decluttered, staged, latest }
+        var tab: Tab
+        var selectedCount: Int
     }
 
     struct Context: Sendable {
         var listings: [ListingContext]
         var plan: String
-        /// A hint only, never load-bearing — e.g. "home" | "settings".
+        /// A closed screen hint; matches AskAIScreen and the server's vocabulary.
         var screen: String?
+        var selectedListingID: String? = nil
+        var reelState: ReelState? = nil
+        var photoState: PhotoState? = nil
     }
 
     /// Oldest first; the LAST entry must be the user's newest message.
     var messages: [Message]
     var spaceType: String
     var context: Context
+    /// Captured workspace routing metadata. This becomes X-Org-Id, never a
+    /// prompt/body field, and must not be reread after an asynchronous hop.
+    var orgID: UUID? = nil
+
+    /// The real transport uses this closed, inspectable body. Routing metadata,
+    /// account ids, raw progress text/errors, coordinates and media are omitted.
+    var wireBody: [String: Any] {
+        var contextBody: [String: Any] = [
+            "listings": context.listings.map { l -> [String: Any] in
+                ["id": l.id, "title": l.title, "has_video": l.hasVideo,
+                 "room_tags": l.roomTags, "has_tour": l.hasTour, "published": l.published,
+                 "photos": l.photos, "edits": l.edits, "reels": l.reels,
+                 "attention": l.attention ?? "", "server_id": l.serverID.map { $0 as Any } ?? NSNull(),
+                 "local_draft": l.localDraft]
+            }, "plan": context.plan,
+        ]
+        if let screen = context.screen { contextBody["screen"] = screen }
+        if let selected = context.selectedListingID { contextBody["selected_listing_id"] = selected }
+        if context.screen == "reel_studio", context.selectedListingID != nil, let state = context.reelState {
+            contextBody["reel_state"] = ["phase": state.phase.rawValue, "completed": state.completed,
+                                         "total": state.total, "still_photo_shots": state.stillPhotoShots,
+                                         "execution": state.execution.rawValue, "server_phase": state.serverPhase.map { $0 as Any } ?? NSNull(),
+                                         "resume_available": state.resumeAvailable]
+        }
+        if ["photos", "photo_studio"].contains(context.screen ?? ""), context.selectedListingID != nil, let state = context.photoState {
+            contextBody["photo_state"] = ["tab": state.tab.rawValue, "selected_count": max(0, min(1000, state.selectedCount))]
+        }
+        return ["messages": messages.map { ["role": $0.role, "content": $0.content] },
+                "space_type": spaceType, "context": contextBody]
+    }
 }
 
 /// The closed action enum — MUST stay in lockstep with `ACTION_TYPES` in
@@ -67,11 +121,11 @@ enum CoachActionType: String, Sendable {
         switch self {
         case .startProject:  return "Start my first project"
         case .openTour:      return "Open the tour"
-        case .openPhotos:    return "Open Photo Studio"
-        case .openReel:      return "Make a reel"
-        case .openFloorPlan: return "Open floor plan"
+        case .openPhotos:    return "Open Photos"
+        case .openReel:      return "Make a video"
+        case .openFloorPlan: return "Open Measurements"
         case .openAerial:    return "Make an aerial shot"
-        case .shareTour:     return "Share the tour"
+        case .shareTour:     return "Open listing & share"
         case .openPlanUsage: return "Open Plan & usage"
         case .openSupport:   return "Contact support"
         case .openHome:      return "Go to Home"

@@ -1,0 +1,17 @@
+# Build 66 reel quality repair — 2026-10-12
+
+Build 65's eight-photo reel finished and exported, but the owner rejected its excessive zoom and unusable motion. This is a failed visual acceptance test. A 1080×1920 encoded file and a geometry-QC pass did not make it a usable marketing video.
+
+Two exact owned source/provider pairs establish the crop: 672×1195 portrait photo inputs produced 1920×1088 Kie Seedance clips, losing pictured ceiling/floor before composition. The app's earlier portrait preparation and subsequent portrait cover framing compounded that loss. Source-aspect preservation for that Kie model was an incorrect assumption.
+
+The new `preserve_photo` request keeps the photographic source's full composition at up to 2048 pixels, quality 0.95, without upscaling. The server selects only models with a documented source-aspect contract. The temporary owner-only comparison uses Kie Kling 3 Pro, silent, quoted at $0.45 per five-second attempt. Public Kie routing stays disabled; public prices, budgets and processor consent are unchanged. Installed clients and saved receipts without the new marker retain their original request semantics.
+
+Raw provider frames pass existing property QC before delivery framing. A mismatched delivery aspect fits the complete delivered scene over a blurred copy of the same frame. Same-aspect clips avoid an extra encode. This preserves delivered pixels, cannot restore supplier-discarded detail, and does not invent architectural content to fill a vertical canvas. Fly-through requests a shallow physical diagonal glide with depth parallax and fixed field of view, rather than digital zoom or travel into unseen rooms. It does not prove a continuous path between unrelated photos.
+
+Reel execution now belongs to an app-level queue. Closing Reel Studio releases playback while the saved batch continues across tabs, with a global progress/review banner. Account, workspace, consent and listing identity still fence work and completion notices. iOS gives finite execution time after leaving the app: expiration pauses the same saved requests and resumes them on foreground. Full cloud completion after suspension or process termination is not implemented or claimed.
+
+The actual encoded framing gate passed 63 assertions and six negative controls, including source edges, rotated tracks, a blurred nonblack backdrop, captions, dissolve, real PCM voice, and final-frame timing at 12/24/30fps. The lifecycle gate passed 83 assertions and 21 controls. Paid recovery reuses the identical tested extraction with 270 assertions, 14 transport cases and 51 controls; this is a source-digest rebind, not a newly reported test run. The old build-65 hosted fixture failure remains recorded. Its closed doubles are updated for the new declarations, with ordering and failure controls preserved.
+
+ai-video 72 is live from `9778657`, JWT enabled, with 50/50 runtime files source-verified. The handler comparison passed 19 tests and 25 negative controls. The temporary owner grant keeps its original exact scope and expiry. No new funding allocation, credential, schema migration or public provider rollout was performed.
+
+Pending at this checkpoint: final integrated app compile, signed archive/upload, hosted CI, and a short real-phone two-photo test that leaves Reel Studio while rendering. Inspect the actual exported result and its raw provider framing before declaring quality accepted. Do not repeat the eight-photo batch until that comparison is usable. App Store build 57 remains untouched in manual review.

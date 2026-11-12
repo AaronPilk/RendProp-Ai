@@ -15,7 +15,7 @@ export async function restorePropertyMusic(services: StudioServices, orgId: stri
   const raw = await services.api(`/functions/v1/studio/property-music?listing_id=${listingId}&sha256=${source.sha256}`, { orgId, signal });
   const media = decodeSavedMedia(raw, source.sha256);
   if (!media || media.bytes !== source.size) throw new Error("Saved music does not match this edit. Reselect the original and save it again.");
-  return downloadSavedMedia(media, signal);
+  return downloadSavedMedia(media, signal,{actor:services.getSnapshot().identity?.userId??"",org:orgId,listing:listingId});
 }
 
 export async function requestSourceAnalysis(services: StudioServices, orgId: string, clip: EditClip, source: { assetId: string; listingId: string } | undefined, signal: AbortSignal): Promise<unknown> {

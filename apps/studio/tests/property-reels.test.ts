@@ -26,6 +26,19 @@ test("unassigned and damaged legacy copies remain explicit without destroying a 
   const result=earlierReels(storage,"scope:edit",a,null);
   assert.equal(result.unreadable,true);assert.equal(result.copies.length,1);assert.equal(result.copies[0].payload.listingId,a);
 });
+test("a fresh empty Create draft never interrupts opening a property's first reel, while intentional work remains recoverable",()=>{
+  const draft=newDraft(),values=new Map([["scope:edit",JSON.stringify(draft)]]),before=[...values];
+  assert.deepEqual(earlierReels({getItem:key=>values.get(key)??null},"scope:edit",a,null),{copies:[],unreadable:false});
+  assert.deepEqual([...values],before);
+  for(const change of [{title:"My next reel"},{revision:1},{ratio:"1:1"},{audio:"muted"}]){
+    const result=earlierReels({getItem:key=>key==="scope:edit"?JSON.stringify({...draft,...change}):null},"scope:edit",a,null);
+    assert.equal(result.copies.length,1,JSON.stringify(change));
+  }
+  const message={id:crypto.randomUUID(),role:"user",text:"Make my next listing video",revision:null};
+  const cloud={key:"edit",kind:"edit",listing_id:null,revision:1,updated_at:new Date().toISOString(),payload:{draft,listingId:null,sources:[],conversation:{schema:1,draftId:draft.id,messages:[message]}}};
+  assert.equal(earlierReels({getItem:()=>null},"scope:edit",a,cloud).copies.length,1);
+  assert.equal(earlierReels({getItem:()=>null},"scope:edit",a,{...cloud,payload:{draft,listingId:a,sources:[]}}).copies.length,1);
+});
 test("per-property DocumentSync writes exact listing binding and independent CAS revisions",async()=>{
   const docs=new Map<string,object>(),writes:Record<string,unknown>[]=[];
   const services={api:async(path:string,options:{body?:Record<string,unknown>})=>{

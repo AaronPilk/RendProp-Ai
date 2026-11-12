@@ -1,12 +1,12 @@
 import { assert, HttpError, json, readJsonLimited } from "../_shared/http.ts";
-import { presignGet } from "../_shared/providers/common.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 import { R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
 import type { StudioContext } from "./context.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** A submitted reel grants access only to its selected, completed narration.
  * It never grants access to the author's creative-history inventory. */
-export async function handleReviewNarration(req: Request, context: StudioContext, sign = presignGet) {
+export async function handleReviewNarration(req: Request, context: StudioContext, sign?: (bucket:string,key:string,seconds:number)=>Promise<string>) {
   assert(req.method === "POST", 405, "Request the narration selected in this review.");
   const input = await readJsonLimited(req, 4096);
   assert(typeof input.key === "string" && input.key.startsWith("edit:") && UUID.test(input.key.slice(5)), 400, "Choose a saved property reel.");
@@ -31,7 +31,7 @@ export async function handleReviewNarration(req: Request, context: StudioContext
   const metadata = row?.metadata;
   assert(row && metadata && metadata.state === "completed" && row.bucket === "uploads" &&
     typeof row.storage_key === "string" && new RegExp(`^ai-voice/${context.orgId}/${UUID.source.slice(1,-1)}\\.mp3$`).test(row.storage_key), 404, "The selected narration is not available for playback.");
-  const url = await sign(R2_BUCKET_UPLOADS, row.storage_key, 600);
+  const url = await (sign?sign(R2_BUCKET_UPLOADS,row.storage_key,600):privateMediaUrl({actor:context.userId,org:context.orgId,listing,bucket:"uploads",key:row.storage_key,review:{owner,result:input.result_id,revision:Number(input.expected_document_revision)}},600));
   await readReview(); // Do not return a newly minted capability for an invalidated revision.
   return json({result: {
     id: row.id, kind: "voice", listing_id: listing, created_at: row.created_at, state: "completed",

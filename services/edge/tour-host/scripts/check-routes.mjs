@@ -96,8 +96,11 @@ async function checkRevocation(worker, realTour) {
       calls++;
       expect(url === ENV.SUPABASE_FUNCTIONS_URL + fixture.upstreamPath,
         `[revocation ${fixture.path}] current upstream path`);
-      expect(init.cf.cacheTtl === 0 && init.cf.cacheEverything === false,
-        `[revocation ${fixture.path}] upstream caching remains disabled`);
+      // `cache: "no-store"` is the only cache policy allowed on this request.
+      // The runtime throws when it is paired with cf.cacheTtl/cacheEverything
+      // (every tour 503'd on 2026-10-11), so the cf cache keys must stay absent.
+      expect(init.cache === "no-store" && init.cf?.cacheTtl === undefined && init.cf?.cacheEverything === undefined,
+        `[revocation ${fixture.path}] upstream caching is disabled with cache:"no-store" alone`);
       return new Response(upstreamStatus === 200 ? JSON.stringify(upstreamData) : "not published", {
         status: upstreamStatus, headers: { "Content-Type": "application/json" },
       });
@@ -464,6 +467,44 @@ async function main() {
     "[/ fallback] Studio stays discoverable if the static homepage is unavailable");
   ok("Studio is discoverable from the homepage, public navigation and apex redirect");
 
+  // Static Assets serve the public homepage; the Worker renders a fallback if
+  // those assets are unavailable. Keep both public claims aligned with the
+  // scoped paid opening, without reopening the older free-form generator.
+  const homepage = readFileSync(join(ROOT, "public", "index.html"), "utf8");
+  const fallback = await get(worker, "/");
+  expect(fallback.status === 200, "[/ fallback] landing remains available");
+  for (const [label, html] of [["homepage", homepage], ["Worker fallback", fallback.body]]) {
+    expect(/optional paid AI Aerial opening/i.test(html), `[${label}] names the optional paid opening`);
+    expect(/reviewed original front exterior photo/i.test(html), `[${label}] requires the reviewed original exterior`);
+    expect(/eligible Aerial allowance/i.test(html), `[${label}] states the allowance gate`);
+    expect(/available (?:processing )?capacity/i.test(html), `[${label}] states the capacity gate`);
+    expect(/separate (?:permission|processor permission)/i.test(html), `[${label}] states separate processor permission`);
+    expect(/older free-form Aerial generator remains closed/i.test(html), `[${label}] leaves the legacy generator closed`);
+    expect(/Results vary; review/i.test(html), `[${label}] requires review without a quality promise`);
+    expect(!/Aerial[^<.]{0,100}Coming soon/i.test(html), `[${label}] has no obsolete Coming soon claim`);
+  }
+  const aerialCard = homepage.match(/<a class="ind reveal"[^>]*href="\/features#aerials"[\s\S]*?<\/a>/)?.[0] || "";
+  expect(/AI Aerial opening/i.test(aerialCard) && /eligible Aerial allowance/i.test(aerialCard)
+    && /available capacity/i.test(aerialCard) && /separate processor permission/i.test(aerialCard)
+    && /Results vary; review before use/i.test(aerialCard),
+    "[homepage card] visible opening claim includes admission and review limits");
+  const meta = (kind, name) => homepage.match(new RegExp(`<meta ${kind}="${name}" content="([^"]*)">`))?.[1] || "";
+  for (const description of [meta("name", "description"), meta("property", "og:description"), meta("name", "twitter:description")]) {
+    expect(/paid.*Aerial opening/i.test(description) && /front exterior photo/i.test(description)
+      && /allowance/i.test(description) && /capacity/i.test(description) && /processor permission/i.test(description),
+      "[homepage SEO] social and search descriptions qualify the paid front-exterior opening");
+  }
+  const graph = assertValidJsonLd("homepage", homepage, ["SoftwareApplication", "FAQPage"]);
+  const app = graph?.["@graph"]?.find((node) => node["@type"] === "SoftwareApplication");
+  const faq = graph?.["@graph"]?.find((node) => node["@type"] === "FAQPage");
+  expect(app?.featureList?.some((feature) => /paid AI Aerial opening.*eligible allowance.*available capacity.*separate processor permission/i.test(feature)),
+    "[homepage JSON-LD] application feature has the same opening gates");
+  expect(faq?.mainEntity?.some((question) => /older free-form Aerial generator remains closed/i.test(question.acceptedAnswer?.text || "")),
+    "[homepage JSON-LD] FAQ keeps the legacy generator closed");
+  expect(faq?.mainEntity?.some((question) => /Results vary and quality is not guaranteed/i.test(question.acceptedAnswer?.text || "")),
+    "[homepage JSON-LD] FAQ promises no result quality");
+  ok("static homepage, SEO and Worker fallback describe the scoped paid Aerial opening");
+
   // ---- canonical origin: https + apex ---------------------------------------
   // Live on 2026-09-05, http://rendprop.com/terms answered 200 over plain HTTP
   // and https://www.rendprop.com/ was a Cloudflare 525. The Worker's own paths
@@ -511,13 +552,13 @@ async function main() {
     expect(p.status === 200, `[/a/meridian] want 200, got ${p.status}`);
     expect(p.body.includes('<link rel="canonical" href="https://rendprop.com/a/meridian">'),
       "[/a/meridian] want a canonical built from the requested handle and origin");
-    expect(!p.h("x-robots-tag"), `[/a/meridian] a portfolio is indexable by default, got ${p.h("x-robots-tag")}`);
-    expect(!p.body.includes('name="robots"'), "[/a/meridian] no robots meta on a portfolio");
+    expect(p.h("x-robots-tag") === "noindex, nofollow", "[/a/meridian] portfolio discovery must require a deliberate opt-in");
+    expect(p.body.includes('name="robots" content="noindex, nofollow"'), "[/a/meridian] noindex meta accompanies the header");
     expect(p.body.includes('id="getapp"') && p.body.includes("apps.apple.com/us/app/id6808982413?ct=portfolio&amp;mt=8"),
       "[/a/meridian] want the shared app CTA, tagged as the portfolio surface");
     expect(p.body.includes('href="https://rendprop.com/?ref=portfolio"'),
       "[/a/meridian] want the outbound attribution on the Made-with link");
-    assertValidJsonLd("/a/meridian", p.body, ["ProfilePage", "ItemList"]);
+    expect(!p.body.includes("application/ld+json"), "[/a/meridian] no listing discovery graph before portfolio consent");
     // A payload the renderer cannot place (no handle, no origin) must emit no
     // canonical and no graph rather than guessing an origin.
     const { renderPortfolioPage } = await load("portfolio");
@@ -526,7 +567,7 @@ async function main() {
     expect(!bare.includes('rel="canonical"') && !bare.includes("application/ld+json"),
       "[portfolio, no origin] must emit no canonical and no JSON-LD rather than a guessed origin");
   }
-  ok("/a/<handle> carries a canonical, ProfilePage + ItemList structured data and the app CTA");
+  ok("/a/<handle> keeps its canonical and app CTA while preventing implicit indexing");
 
   // ---- /sitemap.xml ---------------------------------------------------------
   // Served by the WORKER now (public/sitemap.xml is deleted — an exact file
@@ -534,7 +575,7 @@ async function main() {
   // so the file would have shadowed the route). Two rules are non-negotiable:
   // never an unbranded URL, and never a tour that is not opted into indexing.
   {
-    const sm = await get(worker, "/sitemap.xml");
+    const sm = await get(worker, "/sitemap-site.xml");
     expect(sm.status === 200, `[/sitemap.xml] want 200, got ${sm.status}`);
     expect((sm.h("content-type") || "").includes("application/xml"),
       `[/sitemap.xml] want application/xml, got ${sm.h("content-type")}`);
@@ -613,13 +654,16 @@ async function main() {
   }
   ok("/sitemap.xml is Worker-served, lists no /u/ URL and no non-indexable tour");
 
-  // ---- the legal pages match the launch line-up ------------------------------
+  // ---- the legal pages keep purchase terms truthful while launch pricing is open
   const terms = await get(worker, "/terms");
-  expect(/Starter and Pro, billed monthly\s+or yearly, and Team, billed monthly/.test(terms.body),
-    "[/terms] §6 must say Starter and Pro bill monthly or yearly and Team bills monthly (LAUNCH-CONTRACT: Team yearly is not sold)");
-  expect(!/each\s+billed monthly or yearly/.test(terms.body), "[/terms] must not claim every plan bills yearly");
-  expect(terms.body.includes("Effective September 5, 2026"), "[/terms] effective date");
-  ok("terms reflect the launch plan line-up");
+  expect(/source of\s+truth<\/b> for current plan features and included\s+usage/.test(terms.body),
+    "[/terms] §6 must identify Rendprop as the plan-feature and included-usage authority");
+  expect(terms.body.includes("Apple shows the price, billing period"),
+    "[/terms] §6 must identify Apple as the purchase-term authority");
+  expect(!/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
+    "[/terms] must not promise the superseded monthly-only launch line-up");
+  expect(terms.body.includes("Effective October 27, 2026"), "[/terms] proposed notice revision date");
+  ok("terms separate Rendprop usage details from Apple purchase terms");
 
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────
   // Browsers strip C0 control characters from a URL BEFORE resolving its

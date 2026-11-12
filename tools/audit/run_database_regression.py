@@ -17,22 +17,12 @@ import subprocess
 import sys
 import tempfile
 
-# Assertions the owner has decided to keep red on purpose. Each entry is the
-# exact `name` string tests/invariants.sql prints for that row, and the
-# assertion's own comment there is the authority on why it stays visible
-# instead of being weakened. A run whose ONLY failing assertions are in this
-# set is accepted (exit 0) and announced loudly; any other failing assertion
-# still exits 1. An entry that starts passing is a stale exception and also
-# exits 1, so the list has to be trimmed in the same change that fixes it.
-KEPT_RED = {
-    # tests/invariants.sql, "each astra ceiling clears its route's visible
-    # answer": the 0034 agent-reel seed sets max_output_tokens to 700, equal
-    # to the visible MAX_AGENT_REEL_TOKENS answer, and that comment says to
-    # keep the failure visible rather than enlarge the provider budget or
-    # weaken > to >=. Owner decision: neither the invariant nor the ceiling
-    # changes.
-    "each astra ceiling clears its route's visible answer and stays under the code clamp",
-}
+# No invariant failure is currently accepted. The historical agent-reel
+# headroom exception was removed only after all270 passed on fresh and replayed
+# schemas with the compact <=500-byte answer and unchanged700 combined cap.
+# Keep classification generic so any future explicit exception must still be
+# named, visible and rejected if it becomes stale.
+KEPT_RED: set[str] = set()
 
 # Exact size of the tests/invariants.sql inventory. A suite that prints fewer
 # rows is rejected even when its footer agrees with itself, so this number has
@@ -45,11 +35,30 @@ KEPT_RED = {
 # activation stamp, org_is_real, cancelled_at, admin_cohorts/admin_churn; 213 for
 # the 0044 plan-rework / industry-trial section; 198 before that).
 #
-# CONCURRENT BRANCHES, now reconciled: 234 + 13 (0048) + 19 (0047) = 266. The
-# 0047 assertions are appended AFTER the 0048 block, so every assertion that
-# existed before either branch — #155, the kept-red astra ceiling below
-# included — keeps the number it had.
-INVARIANT_COUNT = 266
+# The 0047/0048 branches totalled 266. Apple chronology and listing facts
+# registration added four assertions; the limited-trial video policy added one.
+# The pricing repair adds three checks for the SKU map and dormant, bounded
+# monthly/top-up catalog, bringing the inventory to 274.
+# The kept-red exception is identified by its exact name, not its row number.
+INVARIANT_COUNT = 274
+
+# These tests are transactional and rolled back. Require their exact completion
+# markers on both freshly migrated and historically replayed schemas; merely
+# hashing/registering an SQL file does not prove its receipts or cost fences.
+REFLECTION_FIXTURES = (
+    ("credit_paid_ceiling_funding_gate.sql", "PASS credit paid ceiling funding gate: 6 assertions", 6),
+    ("video_erase.sql", "PASS video erase SQL: 51 assertions", 51),
+    ("video_erase_direct_bria.sql", "PASS direct Bria SQL: 40 assertions", 40),
+    ("member_portfolios.sql", "PASS: member portfolio SQL assertions; all fixtures rolled back.", 23),
+    # Build 58: Recently deleted (30-day restore window) and republish in place.
+    ("build58_db_controls.sql", '{"suite": "build58_db_controls", "assertions": 52}', 52),
+    ("property_address_lookup.sql", '"assertions": 25', 25),
+    ("trial_full_window_admission.sql", '"assertions": 11', 11),
+    ("trial_hybrid_funded_serving.sql", '"assertions": 43', 43),
+    ("paid_media_budget_cap.sql", '"assertions": 19', 19),
+    ("reviewer_sandbox_shared_credit.sql", '"assertions": 42', 42),
+    ("trial_card_backed_authority.sql", '"assertions": 25', 25),
+)
 
 # These already-shipped transactional Studio migrations intentionally create
 # their tables/policies once. Apply every listed file on BOTH fresh database paths, but
@@ -67,11 +76,233 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20260924232058_studio_named_projects.sql",
     "20260924232510_studio_project_media.sql",
     "20260924232803_studio_property_music.sql",
+    # Launch ceiling mode (2026-10-08): exact-anchor rewrites of live function
+    # bodies (pg_temp.rp_patch) refuse a second application by design.
+    "20261008201736_launch_ceiling_mode.sql",
+    "20261008220411_launch_blockers.sql",
+    "20261008235218_launch_round2.sql",
+    "20261009005727_launch_settlement_identity.sql",
+    # Superseded function overlay: focused drivers preserve its historical
+    # replay proof and verify it refuses the later reviewed device functions.
+    "20261010030225_reaudit_library_session_settlement.sql",
+    # The accepted-photo publication migration replaces a guarded presenter
+    # dependency and adds photo_publication once; its exact second application
+    # must refuse, while each fresh database still applies it once.
+    "20261020212328_accepted_photo_publication_host_compatible.sql",
+    # These subsequent source/Photo Motion/aerial changes either create an
+    # object once or compare-and-swap an exact predecessor body. Each succeeds
+    # on both fresh database paths and refuses its own second application.
+    "20261020212445_private_video_source_prepare.sql",
+    "20261021161119_property_video_source_read_recovery.sql",
+    "20261021165424_property_video_terminal_temporal_resume_guard.sql",
+    "20261021173551_property_video_prompt_revision_registry.sql",
+    "20261021212436_property_video_immutable_temporal_hold_resume.sql",
+    "20261021222704_property_video_explicit_photo_motion.sql",
+    "20261022003118_property_video_photo_motion_v2_twelve_percent.sql",
+    "20261022223052_aerial_opening_durable_generation_20261022.sql",
+    "20261022223138_aerial_opening_photo_motion_composition_20261022.sql",
+    "20261022223141_photo_motion_prospective_modeled_server_cost_20261022.sql",
+    "20261022223142_photo_motion_preserve_exact_producer_history_20261022.sql",
+    "20261023013450_aerial_opening_pro_1080_prospective.sql",
+    "20261023170504_aerial_raw_source_duration_precision_20261023.sql",
+    "20261023173659_aerial_measured_output_terminal_failure_20261023.sql",
+    "20261023173725_aerial_omni_reference_profile_functions_20261023.sql",
+    "20261023191327_studio_internal_aerial_media_purpose_20261023.sql",
+    "20261023200943_photo_motion_registered_publication_profile_20261023.sql",
+    "20261023202520_photo_publication_internal_scope_validation_20261023.sql",
+    "20261024000646_aerial_original_legacy_byte_verification_20261024.sql",
+    # Intro policy has compare-and-swap guards for its live function/catalog
+    # anchors; the focused policy driver proves a second application refuses.
+    "20261026165813_limit_intro_trial_creative_spend.sql",
+    "20261026175227_public_property_address_lookup.sql",
+    "20261027040000_property_address_reservations.sql",
+    # The new credit tables/columns and the Team seat table are intentionally
+    # installed once. Their exact bytes and second-application refusals are
+    # pinned below, while every other credit migration must replay.
+    "20261027161201_verified_monthly_credit_period.sql",
+    "20261027161203_declutter_assessment_budget.sql",
+    "20261027171200_credit_intent_immutable_amount.sql",
+    "20261027173000_dormant_combined_credit_budget.sql",
+    "20261027180000_team_paid_seat_variants.sql",
+    # The dormant aerial tariff and fair-charge journal add immutable columns
+    # and tables and replace exact predecessor functions only once.
+    "20261027183000_credit_aerial_opening.sql",
+    "20261027184000_aerial_fair_charge.sql",
+    "20261027190441_pricing_margin_repair.sql",
+    # The Photo Motion credit path installs its activation trigger, quote/job
+    # tables and terminal failure ledger once. Each exact second application
+    # must refuse before later migrations can replace its functions.
+    "20261027202224_photo_motion_credit_quote_gate.sql",
+    "20261027202537_photo_motion_credit_admission.sql",
+    "20261027203921_photo_motion_credit_terminal.sql",
+    "20261027210541_photo_motion_credit_route_bound_quote.sql",
+    "20261027211803_photo_motion_plan_review_capacity.sql",
+    # The trial purchase RPC is an exact-predecessor rewrite. Its first
+    # application binds all three seven-day windows; later replay refuses.
+    "20261027225416_subscription_trial_full_window_admission.sql",
+    "20261027232500_subscription_trial_hybrid_funded_serving.sql",
+    "20261027234000_trial_shared_launch_budget_guard.sql",
+    "20261027234243_paid_media_budget_cap.sql",
+    # Exact paid/reviewer predecessor guards and new private functions apply
+    # once; a second application must refuse before changing money authority.
+    "20261028010346_reviewer_sandbox_shared_credit_budget.sql",
+    # New card authority tables and CAS function rewrites are installed once;
+    # cash-backed historical paths remain covered by reflection fixtures.
+    "20261028213014_trial_card_backed_authority.sql",
+    # Exact-anchor, md5-pinned rewrite of subscription_trial_cost_guard (admitted
+    # Declutter assessments during a funded trial); a second application refuses.
+    "20261029210132_trial_declutter_assessment.sql",
+    # These exact accepted-photo publication rewrites replace pinned function
+    # predecessors once. Both fresh databases apply them; their historical
+    # second application must refuse before any replacement is attempted.
+    "20261105223709_photo_publication_listing_bound_accepted_20261105.sql",
+    "20261105224531_photo_publication_bound_output_ledger_20261105.sql",
+    # Applied live under Supabase-assigned versions, these pinned function
+    # rewrites/renames are one-shot at their historical schema point.
+    "20261106222156_listing_access_transaction_memo_20261106.sql",
+    "20261106224239_library_owner_transaction_memo_20261106.sql",
+    "20261106224718_access_chain_plpgsql_plan_cache_20261106.sql",
+    "20261106230302_workspace_directory_candidate_orgs_20261107.sql",
+    "20261106231733_photo_quality_advisory_judge_20261107.sql",
 })
+
+# These six applied files are compare-and-swap adoptions of an exact live job,
+# producer configuration, or reviewed function metadata. Their guards must
+# reject an empty database. A fresh-schema replay includes their source hashes
+# but cannot honestly manufacture the historical live rows they required.
+# Pin names AND bytes: any edit or newly missing file requires an explicit
+# review of this classification before the disposable/CI replay can proceed.
+LIVE_STATE_ONLY_MIGRATIONS = {
+    "20261023044520_photo_motion_bfb1_fixed_recovery_controller.sql": "127ff57bfac508e47d32bda54719bbb69e261136d6d8f96a85c83da020622b25",
+    "20261023141755_photo_motion_c74_terminal_reconciliation_controller.sql": "aa95bcc947c7aa60367f0e15bf7b883c2b101676d415808529237b944c132ef4",
+    "20261023144319_photo_motion_a1bb_empty_queue_terminal_cleanup_controller.sql": "a58465b97a5f36f82ff951591f1af4563be40008c5d39a396fa861e2a2458bd0",
+    "20261023173823_aerial_omni_reference_prospective_route_20261023.sql": "9f63c1faeae5cbf8bc81a19dfcba7336132e634f9afd99fcfa889db8bf5c1fef",
+    "20261023185845_photo_motion_cf7_concurrent_scheduler_history_20261023.sql": "13456ba634895717892380a556f51b734e394df1381d43cbd51c0dd065494c9a",
+    "20261023215829_studio_current_reviewed_photo_motion_kit_20261023.sql": "f93481224aa3a93331a20e028097507e263650064c514380a414a65d7801d0e0",
+}
+
+# Each of these source migrations has been applied successfully once in a
+# disposable PG17 database in production order. A second application at its
+# historical schema point deliberately refuses: a guarded predecessor has
+# changed, or a one-time object already exists. Pin the exact source bytes and
+# first refusal so an edited migration cannot silently inherit this exception.
+# These remain schema migrations on BOTH fresh databases, unlike the separate
+# six live-state adoptions above. Unknown migrations still replay twice.
+GUARDED_ONE_SHOT_MIGRATIONS = {
+    "20261020212328_accepted_photo_publication_host_compatible.sql": ("c49716cb9efe6f07f6e31c2f77e4ba2bc10fba246ae568352932e58c3810e442", "Review changed photo publication dependency: public.studio_presenter_media_access_inner(uuid)"),
+    "20261020212445_private_video_source_prepare.sql": ("96739271ae3034a252f7fc6649fc29bc68977f831dfda3e87aa540ccb0eac523", "Review private video-source schema/dependency installation"),
+    "20261021161119_property_video_source_read_recovery.sql": ("110d525ee26a2c6576d0f487d4fc9dc97ba2e561cadd16df559031ea90bd6cc8", "relation \"property_video_source_read_retired_keys\" already exists"),
+    "20261021165424_property_video_terminal_temporal_resume_guard.sql": ("61e4a3c3f70df3e4ed398e996664b60dfd76b2e473b70a01e69342509d634d6a", "Review existing terminal-temporal resume guard objects"),
+    "20261021173551_property_video_prompt_revision_registry.sql": ("fc8175e46460ac620887cbc22bcb2b7a671abe0949f149ef7676c8d4a101c60a", "Review changed predecessor: property_video_quality_freeze()"),
+    "20261021212436_property_video_immutable_temporal_hold_resume.sql": ("d9c4ee8d5797447947bf73fdd0fc886680b089aebc6b0b203e156e0f419ccd3e", "Review changed immutable temporal hold authority"),
+    "20261021222704_property_video_explicit_photo_motion.sql": ("689eae838d5d3dc3e2ba60ce44c9d9faf13cc8335e34f41e3f7fbb8facc146f0", "Review changed Photo Motion predecessor: property_video_quality_freeze()"),
+    "20261022003118_property_video_photo_motion_v2_twelve_percent.sql": ("ebae035f84cf0cee07ed544689f5f84ae4924cc025496e5acbca522f5db3d8da", "Photo motion V2 predecessor changed: property_video_job_admit_photo_motion(uuid,jsonb)"),
+    "20261022223052_aerial_opening_durable_generation_20261022.sql": ("84450cef2d7b47dbed0d24784e2608f006c686dc44fcc2b2d879c558f7b77875", "relation \"property_video_aerial_openings\" already exists"),
+    "20261022223138_aerial_opening_photo_motion_composition_20261022.sql": ("1fb1e1b76b575490fdbcd0cdb60eb27944342503a1e4fb63e97a582e34fd9531", "Aerial composition predecessor changed: public.property_video_photo_motion_profile(jsonb)"),
+    "20261022223141_photo_motion_prospective_modeled_server_cost_20261022.sql": ("a9a8de7b1dcf725c4f53f4200445c4d0edaf6eb4dfa92c030307956ce3bb34b9", "Review changed Photo Motion cost predecessor: public.property_video_job_finish_photo_motion(uuid,uuid,jsonb)"),
+    "20261022223142_photo_motion_preserve_exact_producer_history_20261022.sql": ("33b6bb190e42daa889cb03da069d1e79786281cebe2da7277be31e41fa02017f", "Producer history predecessor changed: public.property_video_photo_motion_saved_identity_before_opening_20261022(text,jsonb)"),
+    "20261023013450_aerial_opening_pro_1080_prospective.sql": ("2717dd842aba0fecf4785fb02762a3126945961b2aee728fe459e1db60b12533", "RP409: Aerial Pro predecessor changed: public.property_video_aerial_policy()"),
+    "20261023170504_aerial_raw_source_duration_precision_20261023.sql": ("e43f8eb9ae32841dbca1230fa6f0932309bc73da3951b9c003d883af6fa9cc0f", "Aerial precision predecessor changed; no replacement applied"),
+    "20261023173659_aerial_measured_output_terminal_failure_20261023.sql": ("7ca377fd1e82ba53fbd3f9b39362aa814f5e86ae6813263b1bfbcf076d4b0fa8", "Aerial terminal-output predecessor changed"),
+    "20261023173725_aerial_omni_reference_profile_functions_20261023.sql": ("64381f7fa417fc2c3f8707cb4dace0bb38b6d8553672b7be5bd6be76c28ef781", "RP409: Aerial reference predecessor changed: public.property_video_aerial_policy()"),
+    "20261023191327_studio_internal_aerial_media_purpose_20261023.sql": ("5653255c71cfc69474e4b6b8e56c8820802ada536fccc1b2361cc127660ef185", "Review changed public.assert_recorded_render_source(uuid,uuid) before applying aerial media purpose"),
+    "20261023200943_photo_motion_registered_publication_profile_20261023.sql": ("704b78181199d9c59f4ca29ef8dfd98de993978f836e74ef2be94e82fa0ac453", "Review changed registered background-video delivery authority"),
+    "20261023202520_photo_publication_internal_scope_validation_20261023.sql": ("696d0e233ca1a4e2398f6c5d1c408b3f2c1161b754feeef773a9648546a6498b", "Review changed photo publication internal authority: photo_publication_source"),
+    "20261024000646_aerial_original_legacy_byte_verification_20261024.sql": ("86b4afcee317adbc088498a85f5297c9be25acc41afe44df4f1a1ed9cdf106a6", "Original verification predecessor changed: property_video_aerial_original"),
+    "20261026175227_public_property_address_lookup.sql": ("aa1eedd3dbfc5452f7a461eea7f4c56292d34ab796caa1bc79069bb2fe3aa0da", "function \"property_address_descriptor\" already exists with same argument types"),
+    "20261027040000_property_address_reservations.sql": ("4c2d1c76272d821831c2a2e61d1ef3948a7e636b51c542e1930ed72565eda3f6", "relation \"property_address_reservations\" already exists"),
+    "20261027161201_verified_monthly_credit_period.sql": ("49e7a2fc222969143aa5c38a1752dfd1499bd0fcf832b594c2638796e87bd822", "relation \"credit_monthly_events\" already exists"),
+    "20261027161203_declutter_assessment_budget.sql": ("38bc1202b111f6ea7b4fd7368ebd476b835abb5c67a6cf18c3ada64522589f5e", "relation \"photo_declutter_assessment_admissions\" already exists"),
+    "20261027171200_credit_intent_immutable_amount.sql": ("b8d0ad6a132af98d45e3b9d90034c41ae5b70608b2e2a05e06a1bd197bd47a8e", "column \"credits\" of relation \"credit_purchase_intents\" already exists"),
+    "20261027173000_dormant_combined_credit_budget.sql": ("b9846c5a5544344915709fda8cf541dd08531dbf8a0633d00500daa55e34d843", "column \"price_milliunits\" of relation \"credit_monthly_events\" already exists"),
+    "20261027180000_team_paid_seat_variants.sql": ("9a54cb1f857e81064e513d517c2e75d9a136e346d0b849cda58e7c25f7f27550", "relation \"team_paid_seat_variants\" already exists"),
+    "20261027183000_credit_aerial_opening.sql": ("dbb0adb83dd45bf937fd194399e00f595f39b3778eaf48abddc96a557a8e4110", "column \"credit_hold_id\" of relation \"app_video_cost_reservations\" already exists"),
+    "20261027184000_aerial_fair_charge.sql": ("f2499878ec4609dccc526128e6814d3909d041e0d8024d190909e665be9be273", "relation \"credit_aerial_failure_budget\" already exists"),
+    "20261027190441_pricing_margin_repair.sql": ("90ef6a6612f4190814d2dcaed50839b2122a79e09719f39ca806af8c6c082350", "already exists with same argument types"),
+    "20261027202224_photo_motion_credit_quote_gate.sql": ("085d4bc56de19ae64f09dd0df5fd211b782e4b05a78727ac1cdf4b76038a5cfd", "trigger \"credit_photo_motion_activation_guard\" for relation \"app_config\" already exists"),
+    "20261027202537_photo_motion_credit_admission.sql": ("fc2a37ab0789c778017827a174876427196cc96f0295f886fe0fe5cc0b771e1d", "relation \"credit_photo_motion_quotes\" already exists"),
+    "20261027203921_photo_motion_credit_terminal.sql": ("6530b0ee7aec2c53f02ae4b72a7f288ef8d15cdb3a431ea9b01f999ca69955bb", "relation \"credit_photo_motion_failure_budget\" already exists"),
+    "20261027210541_photo_motion_credit_route_bound_quote.sql": ("5fec99768b869f4dd6fa967b3da4eaf56d12e28f6e968370b14dd23669f98dd1", "Review changed Photo Motion credit quote identity"),
+    "20261027211803_photo_motion_plan_review_capacity.sql": ("543ca0e330c2b09374b6d9f6200233c33c291b0227fc9af1d981a118a84e22f1", "Review changed Photo Motion plan quote predecessor"),
+    "20261027225416_subscription_trial_full_window_admission.sql": ("23cd11f0b899cc0a5d6bae71d24f7abb7b5efc6722047dbcbc26c5917a730866", "Review changed seven-day trial admission predecessor"),
+    "20261027232500_subscription_trial_hybrid_funded_serving.sql": ("6cd0c5bc46406c41bc2db21c5074bb5c843a532e2fe65b13496d78ed790fdb05", 'relation "subscription_trial_media_template" already exists'),
+    "20261027234000_trial_shared_launch_budget_guard.sql": ("3497a2fd566e35d27ce0fe2061971425d675ce6b07e127481193a1c450a0c7f6", 'Review shared launch budget guard already installed'),
+    "20261027234243_paid_media_budget_cap.sql": ("c6b2f52621a30231aaa716dda46733e7ec1d48d085fbd723122bd56be3e96c38", 'Review paid media budget cap already installed'),
+    "20261028010346_reviewer_sandbox_shared_credit_budget.sql": ("e48f600fa411ca5e6a1bd676a1c90554c7e42619a53f65bbbc362feaa336601c", "Review changed paid primary credit authority"),
+    "20261029210132_trial_declutter_assessment.sql": ("946fde58e49ae89113a1777ce18dead10a93fa5eb07ac4f0ec6ad9bab7189bfa", "trial declutter assessment: subscription_trial_cost_guard() changed"),
+    "20261105223709_photo_publication_listing_bound_accepted_20261105.sql": ("1c64912297663ddaf2dd835de06c0497f662afbc907d72cb18423fe7ff0707a6", "Review changed accepted-photo publication authority: public.photo_publication_receipt_shape(jsonb)"),
+    "20261105224531_photo_publication_bound_output_ledger_20261105.sql": ("f27960b88586110dfca8becf46dff933bc6639508d436f0e20b6421af0f04412", "Review changed listing-bound publication source before output custody repair"),
+    "20261106222156_listing_access_transaction_memo_20261106.sql": ("d45beeaaa85104ba7074594850dce4ae838615dc72b829d7dc7783b3b68269fd", "library_content_access changed since 2026-11-06; review the memo before applying"),
+    "20261106224239_library_owner_transaction_memo_20261106.sql": ("5c814b6628248e4e83076e1eea2ba05597d5e102a5eb2408691461c33947b482", "library_team_owner changed since 2026-11-06; review the memo before applying"),
+    "20261106224718_access_chain_plpgsql_plan_cache_20261106.sql": ("e6d3d67c91154c015a7b92b02637fd737d9b77459152742e2ccaf3cf7219f3fd", "changed since 2026-11-06; review before converting"),
+    "20261106230302_workspace_directory_candidate_orgs_20261107.sql": ("d2d72dd1028546161cad47fa338323fc66d8e956e5116bf19134f0a39dc99a62", "workspace_directory changed since 2026-11-06; review the candidate-org rewrite before applying"),
+    "20261106231733_photo_quality_advisory_judge_20261107.sql": ("1bb3ed4fce70a51a2ba8909311994ecb8079968b806067624969eff7f766ec7f", "photo_quality_finish changed since 2026-11-06; review the advisory-judge rewrite before applying"),
+}
+
+
+# Production recorded these SQL bodies under the versions in their canonical
+# filenames, although the original source commits used earlier timestamps.
+# A future db push identifies migrations by version; guard against reintroducing
+# either old version or changing the bytes of an already-applied migration.
+APPLIED_VERSION_RECONCILIATIONS = {
+    "20261028212254_credit_pack_sandbox_test_authority.sql": (
+        "20261028180000", "fa511e40ac5da499def68957f9ecf4d5058efb4b746f42ef402771ed4737e70d"),
+    "20261028213014_trial_card_backed_authority.sql": (
+        "20261028211732", "3d5d2b8a77cc08f236bdedc844bf3ee1a587df5157ec9aed95313a2f4e42ea3d"),
+    "20261106222156_listing_access_transaction_memo_20261106.sql": (
+        "20261106230000", "d45beeaaa85104ba7074594850dce4ae838615dc72b829d7dc7783b3b68269fd"),
+    "20261106224239_library_owner_transaction_memo_20261106.sql": (
+        "20261106233000", "5c814b6628248e4e83076e1eea2ba05597d5e102a5eb2408691461c33947b482"),
+    "20261106224718_access_chain_plpgsql_plan_cache_20261106.sql": (
+        "20261106234500", "e6d3d67c91154c015a7b92b02637fd737d9b77459152742e2ccaf3cf7219f3fd"),
+    "20261106230302_workspace_directory_candidate_orgs_20261107.sql": (
+        "20261107001500", "d2d72dd1028546161cad47fa338323fc66d8e956e5116bf19134f0a39dc99a62"),
+    "20261106231733_photo_quality_advisory_judge_20261107.sql": (
+        "20261107004500", "1bb3ed4fce70a51a2ba8909311994ecb8079968b806067624969eff7f766ec7f"),
+}
+
+
+def partition_fresh_migrations(paths):
+    paths = tuple(paths)
+    names = [path.name for path in paths]
+    require(len(names) == len(set(names)), "Duplicate migration filenames in fresh replay")
+    paths_by_name = dict(zip(names, paths))
+    versions = [name.split("_", 1)[0] for name in names]
+    require(len(versions) == len(set(versions)), "Duplicate migration versions in fresh replay")
+    for canonical_name, (obsolete_version, expected_hash) in APPLIED_VERSION_RECONCILIATIONS.items():
+        require(obsolete_version not in versions,
+                f"Obsolete applied migration version remains in source: {obsolete_version}")
+        require(canonical_name in paths_by_name,
+                f"Applied migration source missing: {canonical_name}")
+        actual_hash = hashlib.sha256(paths_by_name[canonical_name].read_bytes()).hexdigest()
+        require(actual_hash == expected_hash,
+                f"Already-applied migration SQL changed: {canonical_name}")
+    missing = set(LIVE_STATE_ONLY_MIGRATIONS) - set(names)
+    require(not missing, f"Classified live-state migrations missing: {sorted(missing)}")
+    guarded_missing = set(GUARDED_ONE_SHOT_MIGRATIONS) - set(names)
+    require(not guarded_missing, f"Guarded one-shot migrations missing: {sorted(guarded_missing)}")
+    require(not set(GUARDED_ONE_SHOT_MIGRATIONS) & set(LIVE_STATE_ONLY_MIGRATIONS),
+            "A migration cannot be both guarded one-shot and live-state only")
+    require(set(GUARDED_ONE_SHOT_MIGRATIONS) <= SINGLE_APPLICATION_MIGRATIONS,
+            "Guarded one-shot classification missing from single-application policy")
+    schema, live_state = [], []
+    for path in paths:
+        guarded = GUARDED_ONE_SHOT_MIGRATIONS.get(path.name)
+        if guarded is not None:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            require(actual == guarded[0], f"Guarded one-shot migration changed: {path.name}")
+        expected = LIVE_STATE_ONLY_MIGRATIONS.get(path.name)
+        if expected is None:
+            schema.append(path)
+        else:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            require(actual == expected, f"Classified live-state migration changed: {path.name}")
+            live_state.append(path)
+    return schema, live_state
 
 
 def replayable_migration(name):
-    return name not in SINGLE_APPLICATION_MIGRATIONS and (
+    return name not in SINGLE_APPLICATION_MIGRATIONS and name not in LIVE_STATE_ONLY_MIGRATIONS and (
         name.startswith(("0005b_", "0008b_")) or name >= "0009")
 
 
@@ -110,9 +341,9 @@ def invariant_rows(output, exit_code):
     require(len(set(names)) == len(names), "Duplicate invariant names")
     required = {
         "all three explicit Astra writing seats keep their 0030/0034 paid-plan gates",
-        "no gpt-6-astra row is reachable on the free or trial tier",
-        "plan_entitlements match paid plans and 0032 trial/free for every metered feature",
-        "org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)",
+        "no gpt-6-astra row is reachable on the free, trial or new Pro tier",
+        "plan_entitlements match current paid/trial/free catalog for every metered feature",
+        "org_entitlement on a fitness trial org is the single-location free week (0/5/0/0/0, 1 seat, 500¢)",
     }
     require(required.issubset(names), "Required paid-plan/entitlement gates absent")
     failed = [name.strip() for _, name, passed in rows if passed != "t"]
@@ -129,8 +360,20 @@ def main():
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "TZ": "UTC"}
     bins = {name: shutil.which(name) for name in ("initdb", "pg_ctl", "psql", "createdb")}
     require(all(bins.values()), "Use an already installed PostgreSQL distribution")
-    require(shutil.disk_usage("/tmp").free >= 1024**3, "Less than 1 GiB available on the evidence filesystem")
-    out = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir="/tmp"))
+    evidence_parent = Path(os.environ.get("RENDP_AUDIT_EVIDENCE_DIR", "/tmp"))
+    evidence_parent.mkdir(parents=True, exist_ok=True)
+    require(shutil.disk_usage(evidence_parent).free >= 1024**3,
+            "Less than 1 GiB available on the evidence filesystem")
+    if evidence_parent.resolve() == Path("/tmp").resolve():
+        out = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir="/tmp"))
+    else:
+        # The negative SQL fixtures intentionally require this owned /tmp
+        # pathname. Keep it as a short symlink while all cluster bytes and
+        # evidence live on the external volume.
+        external = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir=evidence_parent))
+        out = Path(tempfile.mkdtemp(prefix="rendprop-db-audit-", dir="/tmp"))
+        out.rmdir()
+        out.symlink_to(external, target_is_directory=True)
     data, sockets = out / "cluster", out / "socket"
     sockets.mkdir(mode=0o700)
     receipt = {"sourceCommit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
@@ -140,8 +383,10 @@ def main():
                           "No actual JWT verification or HTTP Data API", "No deployed cron verification"]}
     sqlroot = root / "services/supabase"
     migrations = sorted((sqlroot / "migrations").glob("*.sql"))
+    schema_migrations, live_state_migrations = partition_fresh_migrations(migrations)
     sources = migrations + list(sorted((sqlroot / "tests").glob("*.sql"))) + [Path(__file__).resolve()]
     receipt["sourceHashes"] = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+    receipt["liveStateOnlyMigrations"] = [str(p.relative_to(root)) for p in live_state_migrations]
     print("EVIDENCE:", out, flush=True)
 
     def run(name, command, expected=0, input_text=None):
@@ -187,10 +432,34 @@ def main():
         require(identity.strip() == f"{data}||rendprop_audit", "Cluster identity/network mismatch")
         environment["PGOPTIONS"] = "-c statement_timeout=30000 -c lock_timeout=5000"
         run("bootstrap", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
-        for migration in migrations:
+        # Recreate the live ledger order in a separate database: the index
+        # writer grant shipped before this forward-dated reservation migration.
+        # The focused fixture proves old bare links, duplicate publication,
+        # new unclaimed links, and deletion tombstones without production data.
+        run("createdb-address-cutover", [bins["createdb"], "--no-password", *connection,
+                                      "rendprop_address_cutover"])
+        address_psql = [bins["psql"], "-X", "--no-password", *connection,
+                        "-d", "rendprop_address_cutover", "-v", "ON_ERROR_STOP=1"]
+        run("address-cutover-setup", address_psql + ["-q", "-f",
+            str(sqlroot / "tests/property_address_reservations_setup.sql")])
+        for filename in ("20261026175227_public_property_address_lookup.sql",
+                         "20261027032646_property_address_index_writer_execute.sql",
+                         "20261027040000_property_address_reservations.sql"):
+            run("address-cutover-apply-" + filename.removesuffix(".sql"),
+                address_psql + ["-q", "-f", str(sqlroot / "migrations" / filename)])
+        address_assert = run("address-cutover-assert", address_psql + ["-f",
+            str(sqlroot / "tests/property_address_reservations_assert.sql")])
+        require("address reservation database checks passed" in address_assert,
+                "Address cutover fixture did not complete")
+        receipt["addressCutoverFixture"] = {"passed": True, "database": "rendprop_address_cutover",
+            "liveLedgerOrder": True, "syntheticOnly": True,
+            "checks": ["claimed bare", "new unique fenced", "duplicate address",
+                       "address correction", "withdrawal", "deletion tombstone", "ACL"]}
+        for migration in schema_migrations:
             run("apply-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
         counts = []
         receipt["invariantRuns"] = []
+        receipt["reflectionFixtures"] = []
         for phase in ("initial", "replayed"):
             if phase == "replayed":
                 # Reapply each historical version where it actually existed.
@@ -202,14 +471,32 @@ def main():
                         "-v", "ON_ERROR_STOP=1"]
                 run("bootstrap-replay", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
                 replay = []
-                for migration in migrations:
+                guarded_refusals = []
+                for migration in schema_migrations:
                     run("historical-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
-                    if replayable_migration(migration.name):
+                    if migration.name in GUARDED_ONE_SHOT_MIGRATIONS:
+                        expected_refusal = GUARDED_ONE_SHOT_MIGRATIONS[migration.name][1]
+                        rejected = run("reject-" + migration.stem,
+                                       psql + ["-q", "-1", "-f", str(migration)], expected=3)
+                        require(expected_refusal in rejected,
+                                f"{migration.name} refused for a reason other than its pinned first refusal")
+                        guarded_refusals.append(migration.name)
+                    elif replayable_migration(migration.name):
                         run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
                         replay.append(migration)
                 receipt["replayedMigrations"] = len(replay)
+                receipt["guardedOneShotRefusals"] = guarded_refusals
                 receipt["singleApplicationMigrations"] = sorted(SINGLE_APPLICATION_MIGRATIONS)
                 receipt["replayMode"] = "second clean database; each replayable migration twice at its historical schema point"
+            for filename, marker, assertion_count in REFLECTION_FIXTURES:
+                fixture = sqlroot / "tests" / filename
+                require(fixture in sources, "Required reflection fixture missing from source receipt")
+                reflection = run("reflection-" + phase + "-" + fixture.stem,
+                                 psql + ["-f", str(fixture)])
+                require(marker in reflection, f"{filename} did not complete its {assertion_count} assertions")
+                receipt["reflectionFixtures"].append({"phase": phase, "fixture": filename,
+                    "assertions": assertion_count, "rolledBack": True,
+                    "database": psql[psql.index("-d") + 1]})
             output = run("invariants-" + phase, psql + ["-f", str(sqlroot / "tests/invariants.sql")], expected=(0, 3))
             # Preserve a genuine red suite, but still test migration replay.
             # A SQL/load error is not a completed red suite and aborts here.
@@ -313,7 +600,8 @@ def main():
                         "keptRed": sorted(KEPT_RED),
                         "keptRedFailures": sorted({name for phase in receipt["invariantRuns"] for name in phase["keptRedFailures"]}),
                         "staleKeptRed": stale_kept_red,
-                        "appliedMigrations": len(migrations), "invariantsEachRun": counts[0],
+                        "appliedMigrations": len(schema_migrations),
+                        "reviewedMigrations": len(migrations), "invariantsEachRun": counts[0],
                         "negativeControl": "Actual team entitlement corrupted; real invariant gate exited 3"})
     except BaseException as error:
         receipt.update({"accepted": False, "failure": f"{type(error).__name__}: {error}"})
@@ -321,7 +609,10 @@ def main():
     finally:
         try:
             if started or (data / "postmaster.pid").exists():
-                run("stop", [bins["pg_ctl"], "-D", str(data), "-w", "-t", "30", "-m", "fast", "stop"])
+                # External audit volumes can take longer than 30 seconds to
+                # flush a full replay even after the server has accepted the
+                # shutdown request. This is cleanup, not a test-query budget.
+                run("stop", [bins["pg_ctl"], "-D", str(data), "-w", "-t", "120", "-m", "fast", "stop"])
             receipt["clusterStopped"] = not (data / "postmaster.pid").exists()
             require(receipt["clusterStopped"], "Owned cluster still has a PID file after stop")
         except BaseException as error:

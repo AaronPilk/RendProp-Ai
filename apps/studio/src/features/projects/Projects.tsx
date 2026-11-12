@@ -42,10 +42,11 @@ export default function Projects(props:Props){
  const refreshIndex=useCallback(async()=>{if(!services||!workspace)return;try{const rows=decodeProjectIndex(await services.api("/functions/v1/studio/projects",{orgId:workspace.org.id,signal:controller.current.signal}));if(mounted.current){setIndex(rows);setListError("");}}catch(error){if(mounted.current&&!controller.current.signal.aborted)setListError(error instanceof Error?error.message:"Saved projects could not be loaded.");}},[services,workspace?.org.id]);
  const usedHashes=()=>new Set([...draftMedia(current.current.draft).map(c=>c.source.sha256),...(current.current.draft.music?[current.current.draft.music.source.sha256]:[])]);
  const publish=()=>{if(mounted.current)setFilesVersion(v=>v+1);};
- async function keepFile(hash:string,file:File){
+ async function keepFile(hash:string,file:File,signal?:AbortSignal){
+  const abort=signal?AbortSignal.any([signal,controller.current.signal]):controller.current.signal;abort.throwIfAborted();
   files.current.set(hash,file);if(stored.current.has(hash)&&(!selectedRef.current||cloud.current.has(hash)))return;
   if(pending.current.has(hash))return pending.current.get(hash);
-  const project=selectedRef.current,abort=controller.current.signal;setWriting(v=>v+1);
+  const project=selectedRef.current;setWriting(v=>v+1);
   const work=(async()=>{
    let browserError:unknown;
    try{if(!stored.current.has(hash)){await storeProjectFile(scope,hash,file,abort);stored.current.add(hash);}}catch(error){browserError=error;}
@@ -66,11 +67,16 @@ export default function Projects(props:Props){
   propsRef.current.onSourcesChange?.(sources);
   for(const source of sources)void keepFile(source.sha256,source.file).catch(()=>{});
  },[scope,services,workspace?.org.id]);
+ const prepareSources=useCallback<NonNullable<VideoEditorProps["prepareSources"]>>(async(sources,signal)=>{
+  setMessage("");
+  await Promise.all(sources.map(source=>keepFile(source.sha256,source.file,signal)));
+  signal.throwIfAborted();
+ },[scope,services,workspace?.org.id]);
  const resolve=useCallback(async(hash:string,signal:AbortSignal):Promise<File|null>=>{
   const combined=AbortSignal.any([signal,controller.current.signal]);let file=files.current.get(hash)??null;
   if(!file){try{file=await readProjectFile(scope,hash,combined);if(file)stored.current.add(hash);}catch{ /* Cloud restoration remains possible when browser storage is unavailable. */ }}
   if(selectedRef.current&&services&&workspace&&!cloud.current.has(hash)){
-   try{const saved=decodeSavedMedia(await services.api(`/functions/v1/studio/project-media?sha256=${hash}`,{orgId:workspace.org.id,signal:combined}),hash);if(saved?.complete){cloud.current.add(hash);if(!file)file=await downloadSavedMedia(saved,combined);}}
+   try{const saved=decodeSavedMedia(await services.api(`/functions/v1/studio/project-media?sha256=${hash}`,{orgId:workspace.org.id,signal:combined}),hash);if(saved?.complete){cloud.current.add(hash);if(!file)file=await downloadSavedMedia(saved,combined,{actor:workspace.user.id,org:workspace.org.id,listing:null});}}
    catch(error){combined.throwIfAborted();if(!file)throw error;}
   }
   combined.throwIfAborted();if(file)files.current.set(hash,file);return file;
@@ -139,14 +145,15 @@ export default function Projects(props:Props){
    fence();
    if(sync.current?.hasUnsavedWork)throw new Error("Finish syncing the current project before saving another copy.");
    const title=projectName(name||current.current.draft.title||"Untitled video"),key=projectKey(crypto.randomUUID());setBusy(true);setMessage("");
-   next=new DocumentSync(services,workspace.org.id,key,setState,{listingId:null});tentative.current.add(next);await next.open();fence();
+   next=new DocumentSync(services,workspace.org.id,key,value=>{if(sync.current===next)setState(value);},{listingId:null});tentative.current.add(next);await next.open();fence();
    const payload=decodeProject({...current.current,name:title,archived:false});next.queue(payload as unknown as Record<string,unknown>);await next.flush();fence();
+   if(next.writeRejection)throw next.writeRejection;
    if(next.state!=="saved"){
     // Retain the uncertain writer and its exact key. Retrying reconciles it,
     // instead of purchasing storage or creating another project identity.
-    sync.current?.dispose();sync.current=next;selectedRef.current=key;setSelected(key);current.current=payload;backup(key,payload);throw new Error("Project save is awaiting confirmation. Retry sync before creating another copy.");
+    sync.current?.dispose();sync.current=next;setState(next.state);selectedRef.current=key;setSelected(key);current.current=payload;backup(key,payload);throw new Error("Project save is awaiting confirmation. Retry sync before creating another copy.");
    }
-   sync.current?.dispose();sync.current=next;selectedRef.current=key;setSelected(key);current.current=payload;setName(title);backup(key,payload);
+   sync.current?.dispose();sync.current=next;setState(next.state);selectedRef.current=key;setSelected(key);current.current=payload;setName(title);backup(key,payload);
    for(const hash of usedHashes()){const file=files.current.get(hash)??await readProjectFile(scope,hash,controller.current.signal);if(file)await keepFile(hash,file);}
    await refreshIndex();setMessage([...usedHashes()].every(hash=>cloud.current.has(hash))?"Your project and originals are saved to your account.":"Project saved. Reselect the missing originals to finish uploading them for other devices.");
   }catch(error){if(next&&next!==sync.current)next.dispose();if(mounted.current&&!signal.aborted)setMessage(error instanceof Error?error.message:"This project could not be saved.");}
@@ -169,7 +176,7 @@ export default function Projects(props:Props){
    {selected&&<button disabled={!writable||busy||writing>0} onClick={()=>void archive()}>{current.current.archived?"Unarchive":"Archive"}</button>}
    {connected&&!writable&&<p>Your workspace role can view saved projects. An owner or administrator can grant editing access.</p>}
    {!!index.some(p=>p.archived)&&<label className="project-archive-toggle"><input type="checkbox" checked={showArchived} onChange={e=>setShowArchived(e.target.checked)}/>Show archived</label>}
-   <p role="status">{selected?writing?"Saving original files to your account…":state==="conflict"?"A newer project was saved on another device. Your browser copy is preserved.":state==="offline"?"Account saving is paused. Your browser copy is preserved.":state==="saving"?"Saving project…":missing.length?`Project saved; ${missing.length} original file${missing.length===1?"":"s"} still need uploading.`:"Project and originals saved to your account.":writing?"Keeping originals in this browser…":"Local video: originals stay in this browser. Save a project to use it on another device."}</p>
+   <p role="status">{selected?writing?"Saving original files to your account…":state==="conflict"?"A newer project was saved on another device. Your browser copy is preserved.":state==="offline"?"Account saving is paused. Your browser copy is preserved.":state==="saving"?"Saving project…":missing.length?`Project saved; ${missing.length} original file${missing.length===1?"":"s"} still need uploading.`:"Project and originals saved to your account.":writing?"Keeping originals in this browser…":missing.length?`Local video: ${missing.length} original file${missing.length===1?" is":"s are"} not backed up. Keep this tab open and retry saving or reselect the originals.`:"Local video: originals stay in this browser. Save a project to use it on another device."}</p>
    {(state==="offline"||missing.length>0)&&<button disabled={busy||writing>0} onClick={()=>void retryFiles().catch(error=>setMessage(error.message))}>Retry saving</button>}
    {state==="conflict"&&<button disabled={busy} onClick={()=>void open(selected,true)}>Open newer saved version</button>}
    {recovery&&<button disabled={busy||writing>0||state==="conflict"} onClick={()=>void recover()}>Recover browser edit: {recovery.name}</button>}
@@ -178,6 +185,6 @@ export default function Projects(props:Props){
    {listError&&<p role="alert">{listError} <button onClick={()=>void refreshIndex()}>Retry project list</button></p>}
    {message&&<p role="status">{message}</p>}
   </section>
-  <VideoEditor {...props} key={initial.epoch} readOnly={props.readOnly||busy||!!selected&&!writable} initialDraft={initial.draft} initialConversation={initial.conversation} conversationStorageKey={selected?undefined:props.conversationStorageKey} onDraftChange={changed} onSourcesChange={sourcesChanged} onSwitchBlockChange={observeEditorBlock} relinkRequest={relink} resolveMusic={resolveMusic} onMusicSourceChange={musicChanged} requestMediaAnalysis={analyze} />
+  <VideoEditor {...props} key={initial.epoch} readOnly={props.readOnly||busy||!!selected&&!writable} initialDraft={initial.draft} initialConversation={initial.conversation} conversationStorageKey={selected?undefined:props.conversationStorageKey} onDraftChange={changed} prepareSources={prepareSources} onSourcesChange={sourcesChanged} onSwitchBlockChange={observeEditorBlock} relinkRequest={relink} resolveMusic={resolveMusic} onMusicSourceChange={musicChanged} requestMediaAnalysis={analyze} />
  </div>;
 }

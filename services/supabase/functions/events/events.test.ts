@@ -140,6 +140,75 @@ Deno.test("whitelist: a whitelisted key still gets scrubbed", () => {
   assertEquals(out.dropped, 0);
 });
 
+// Found live 2026-10-02: all three crash summaries reported by build37 had
+// their diagnostic app_version stored as "[redacted])". Batch metadata already
+// used scrubMeta; these whitelisted props still used the generic phone rule.
+Deno.test("diagnostic version: crash and error retain the original build", () => {
+  for (const name of ["crash", "error"]) {
+    for (const version of ["1.0.3 (37)", "1.0.3 (39)", "1.0.2 (25)", "1.0 (16)"]) {
+      const out = sanitizeProps(name, { app_version: `  ${version}  ` });
+      assertEquals(out.props.app_version, version, `${name} diagnostic ${version}`);
+      assertEquals(out.dropped, 0);
+    }
+  }
+});
+
+Deno.test("diagnostic version: appended PII and malformed values keep the metadata scrubber", () => {
+  for (const name of ["crash", "error"]) {
+    for (const value of [
+      "1.0.3 (37) call 4155550132", "1.0.3 (37) aaron@skyway.media",
+      "1.0.3 (37) 742 Evergreen Terrace", "1.0.3 (37) https://example.com/private",
+      "1.0.3 (37) /var/mobile/private.jpg", "+1 (415) 555-0132", "4155550132",
+      "415.555.0132", "212.555.0199", "1.415.555.0132",
+      "415.555.0132 (1)", "212.555.0199 (1)", "1.415.555.0132 (1)",
+      "1.0.3 (123456789)", "1000.0.3 (37)", "1.0.3.4 (37)", "26.6.2",
+      "malformed (version)", "1".repeat(45), "v".repeat(90),
+    ]) {
+      const out = sanitizeProps(name, { app_version: value });
+      assertEquals(out.props.app_version, scrubString(value, 40), `${name} invalid version ${value}`);
+      const serialized = JSON.stringify(out.props);
+      for (const privateText of ["4155550132", "(415)", "415.555.0132", "212.555.0199", "1.415.555.0132",
+                                 "skyway.media", "Evergreen", "example.com", "/var/mobile"]) {
+        assert(!serialized.includes(privateText), serialized);
+      }
+      assert(String(out.props.app_version).length <= 40);
+    }
+    for (const phone of ["415.555.0132", "212.555.0199", "1.415.555.0132"]) {
+      assertEquals(sanitizeProps(name, { app_version: phone }).props.app_version, "[redacted]");
+      assertEquals(sanitizeProps(name, { app_version: `${phone} (1)` }).props.app_version, "[redacted])");
+    }
+    assertEquals(sanitizeProps(name, { app_version: "  " }), { props: {}, dropped: 1 });
+    assertEquals(sanitizeProps(name, { app_version: { nested: "1.0.3 (37)" } }), { props: {}, dropped: 1 });
+  }
+});
+
+Deno.test("diagnostic version: the exemption never changes other property scrubbing", () => {
+  for (const name of ["crash", "error"]) {
+    for (const key of EVENT_SCHEMA[name].filter(key => key !== "app_version")) {
+      for (const value of ["1.0.3 (37)", "aaron@skyway.media", "+1 (415) 555-0132",
+                           "742 Evergreen Terrace", "https://example.com/private", "/var/mobile/private.jpg",
+                           "x".repeat(500)]) {
+        const out = sanitizeProps(name, { [key]: value });
+        assertEquals(out.props[key], scrubString(value), `${name}.${key} generic scrubber unchanged`);
+      }
+    }
+  }
+  const unlisted = sanitizeProps("app_open", { app_version: "1.0.3 (37)" });
+  assertEquals(unlisted, { props: {}, dropped: 1 }, "version exemption cannot bypass event whitelist");
+});
+
+Deno.test("diagnostic version: normalization retains late-report build independently of launch metadata", () => {
+  const out = normalizeBatch([
+    { name: "crash", props: { app_version: "1.0.3 (37)", signal: "11", exception_type: "1" } },
+    { name: "error", props: { app_version: "1.0.3 (38)", category: "hang" } },
+  ], NOW);
+  assertEquals(out.events.map(event => event.props.app_version), ["1.0.3 (37)", "1.0.3 (38)"]);
+  assertEquals(out.droppedProps, 0);
+  assertEquals(out.unknownName, null);
+  assertEquals(out.events[0].props.signal, "11");
+  assertEquals(out.events[1].props.category, "hang");
+});
+
 Deno.test("whitelist: numbers and booleans pass, nested values do not", () => {
   const out = sanitizeProps("render_finished", {
     ok: true,

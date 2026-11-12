@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "scope": "internal TestFlight only",
+  "verifiedAt": "2026-10-07T00:47:51.808177+00:00",
+  "sourceCommit": "7f5879ebd2bcaf46b0afbeafa3b38080d49afe3d",
+  "sourceTree": "b68141da58dd88d1d7e7a013a68b4e196d6ec266",
+  "bundleId": "com.rendprop.app",
+  "version": "1.0.4",
+  "build": "46",
+  "processingState": "VALID",
+  "buildAudienceType": "INTERNAL_ONLY",
+  "expired": false,
+  "internalBuildState": "IN_BETA_TESTING",
+  "internalGroupBuildIncluded": true,
+  "exactCI": {
+    "runUrl": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37543160957",
+    "jobsPassed": 12,
+    "testedSourceTree": "b68141da58dd88d1d7e7a013a68b4e196d6ec266",
+    "receiptSHA256": "e4d028f144d378a7fafef9eb191651ef03f2186f79b3539bbe740ea62bf9dbdb",
+    "executionProvenance": {
+      "originalAttempt1SuccessCarriedForward": 11,
+      "newAttempt2NativeSuccess": 1,
+      "all12FreshAttempt2ExecutionsClaimed": false
+    }
+  },
+  "actualDelivery": {
+    "archiveAttempts": 1,
+    "uploadAttempts": 1,
+    "uploadExitCode": 0,
+    "retainedIPASHA256": "a65abfd57827b9003649c761530e8782ece2ad8bb575964fbcdfe17a3c7375c3",
+    "distributionGetTaskAllow": false,
+    "nativeInputsBound": 248,
+    "trackedSwiftCompiled": 143,
+    "generatedSwiftCompiled": 1,
+    "distributionNativeSectionsMatched": 37,
+    "resourcesMatched": 7
+  },
+  "backend": {
+    "sourceCommit": "7f5879ebd2bcaf46b0afbeafa3b38080d49afe3d",
+    "canonicalMigrationsAppliedOnce": 3,
+    "functions": {
+      "me": 50,
+      "apple-subscriptions": 25,
+      "renders": 44
+    },
+    "dormantCatalogAccepted": true,
+    "trialConfigEnabled": false,
+    "fundingAndTrialRows": 0,
+    "ownerFundingApproved": false,
+    "trialActivationApproved": false
+  },
+  "studio": {
+    "status": "deployed-and-reconciled",
+    "sourceCommit": "7f5879ebd2bcaf46b0afbeafa3b38080d49afe3d",
+    "workerVersion": "aef8c5c8-32ab-495b-9ebb-0aa41bd876e4",
+    "verifiedAt": "2026-10-07T00:56:59.063Z",
+    "newDeploymentCLIInvocations": 1,
+    "CLIExitCode": 0,
+    "originalCLIEvidenceOutcome": "unknown-stop-no-redispatch",
+    "originalUnknownResultPreserved": true,
+    "newDeploymentSourceMetadataAndServedAssetAcceptance": true,
+    "reconciliationMetadataGETs": 8,
+    "servedGETs": 35,
+    "exactServedFiles": 31,
+    "servedApplicationAssets": 28,
+    "oauthCallback307QueryPreserved": true,
+    "unknownRoutes404NoSPAFallback": true,
+    "accountLoginVerified": false,
+    "blindRedispatchAllowed": false,
+    "priorVerifiedDeploymentRemainsHistorical": true
+  },
+  "boundedTrialPolicy": {
+    "activated": false,
+    "hostedWalkthroughAdmissions": 1,
+    "footage": "captured or imported; no new AI video generation included",
+    "maximumVideoSeconds": 90,
+    "photoEditAdmissions": 5,
+    "distinctPublishedListings": 1,
+    "maximumDays": 7,
+    "uploadBudgetBytes": 1073741824,
+    "independentActionBuckets": true,
+    "guaranteedSuccessfulPhotoOutputs": false,
+    "earlyAppleRenewalClaimed": false
+  },
+  "purchaseAdmission": {
+    "newOrdinaryPaidCheckoutEnabled": false,
+    "newPlanChangeCheckoutEnabled": false,
+    "eligibleTrialRequiresExactFundedHold": true,
+    "liveTrialOffersEnabled": false,
+    "existingRestoreAndManageRetained": true
+  },
+  "evidenceSHA256": {
+    "appleAvailability": "75c797243c7b9f8e5ec9ba5fa2a346bc1e21d1652ba129fb6af20e34fe8829d5",
+    "independentAppleAvailability": "d2fea24bb646418955ab437f6df7b4ce4b25ee5b08deccca688842087cc44fe4",
+    "rootInternalDeliveryAcceptance": "06dff7a81c42485996176297a9b43d0b556e3fa5dbc56e1852f95154dedc97d7",
+    "uploadedPackageBinding": "3522642f2a25f9010c8e4b4567b37fdf36dc9e7e87539c775c5518591767c4e4",
+    "independentUploadedPackage": "5a391421143be640c393a33dea25a7a55982714c4a97a26e35d1bd570ccfea2e",
+    "archiveSourceBinding": "7a34a06be1ee08c775526353774384073b948fc27c0e12b7a4c3f86c95fb59e7",
+    "independentArchiveReview": "7578bcca9e28573a3658c65d3c4d9d7b3760a31b3a94f4ad25b592e6cca80c0c",
+    "backendDormantAcceptance": "5e8c03c2f65171e73be2d441dddf511739007f7c11be46e46aa191653370b437",
+    "backendRuntimeReadback": "8779f5be6ee9a3c1932399e66b3545bcd699bfffbadc7ef6a47b5fed55aba3c1",
+    "backendCatalogReadback": "1a560d13ce04bcd30eb85d1982fead76172bf88e3fc13d7eb52c85423e2e2708",
+    "studioOriginalUnknownCLIResult": "cf31eb7ea58240522b6a8410655d009510d440485798e57fb92f539502cb7c56",
+    "studioReconciledMetadata8GET": "dc1d9bcc9b0a02bde74eea07054bb8db3a562fb219865097975518ff93fa43f1",
+    "studioActualServed35GET": "f624ce7c19899c554d4edee927330d8e6959474760097c179b72f94a2b23dc07",
+    "studioRootActualAcceptance": "b7b14fd0b658ca919a9220a4d47db7b19275554a52143eae3ce7cb466c9fa30d",
+    "studioIndependentActualAcceptance": "d895b1399c5d2dc2c37db1a7806373105020119221e0188667e28d6fac75edf6"
+  },
+  "testingResiduals": [
+    "The SQL inventory retains 269/270 passing assertions and its documented agent-reel Astra answer-ceiling failure: seeded ceiling700 equals requested visible700. CI recognizes this existing failure; no provider budget or strict assertion was increased or weakened.",
+    "Retained current local Deno verification records1648 passed and one existing ignored case; exact CI job and prior leaf receipts remain the authorities for their individual scopes."
+  ],
+  "limitations": [
+    "No public App Store or App Review submission/release performed by this delivery. Public1.0.3(42) remains the prior public record.",
+    "Apple availability and package binding do not prove installation, physical camera/AR, real StoreKit, customer-media quality, private-team behavior or phone-to-Studio acceptance.",
+    "Studio metadata and served-file verification do not establish authenticated account login, real cross-device behavior or protected-media/cache cutover.",
+    "Trial config is disabled; no sponsor dollars, pools, Apple serving schedules or trial/serving grants were seeded. Proposed$5/$25 funding is not approved.",
+    "Paid100/200/400 marketing bundles and the75% margin target remain financially uncertified.",
+    "Protected-media/cache cutover and required physical/privacy/team acceptance remain separate launch gates."
+  ]
+}

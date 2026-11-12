@@ -7,9 +7,10 @@ import {
   saveAppearance,
 } from "./theme";
 
-export function AppearanceSelector({ compact = false, className = "" }: {
+export function AppearanceSelector({ compact = false, className = "", presentation = "select" }: {
   compact?: boolean;
   className?: string;
+  presentation?: "select" | "pills";
 }) {
   const id = useId();
   const [appearance, setAppearance] = useState(readAppearance);
@@ -24,6 +25,17 @@ export function AppearanceSelector({ compact = false, className = "" }: {
     window.addEventListener("storage", syncPreference);
     return () => window.removeEventListener("storage", syncPreference);
   }, []);
+
+  if (presentation === "pills") return (
+    <div className={`studio-appearance-pills ${className}`} role="group" aria-label="Appearance">
+      {(["light", "dark", "system"] as const).map(choice => <button
+        key={choice}
+        type="button"
+        aria-pressed={appearance === choice}
+        onClick={() => { setAppearance(choice); saveAppearance(choice); }}
+      >{choice[0].toUpperCase() + choice.slice(1)}</button>)}
+    </div>
+  );
 
   return (
     <label className={`appearance-selector${compact ? " is-compact" : ""} ${className}`} htmlFor={id}>

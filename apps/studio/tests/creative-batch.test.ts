@@ -4,6 +4,7 @@ import { PhotoBatch, batchEligible, MAX_BATCH_PHOTOS } from "../src/features/cre
 import type { BatchPhotoEntry } from "../src/features/creative/BatchPhotoStudio";
 import type { StudioPhoto } from "../src/data/contracts";
 import type { UploadJournal } from "../src/features/listings/uploads";
+import { importedPhoto } from "../src/features/creative/photo-lineage";
 import { StudioError } from "../src/data/config";
 
 const listingId = "11111111-1111-4111-8111-111111111111";
@@ -12,6 +13,7 @@ const outputId = "33333333-3333-4333-8333-333333333333";
 const proofId = "44444444-4444-4444-8444-444444444444";
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
 const choice = { edit: "declutter" as const, style: "modern", prompt: "" };
+const customChoice = { edit: "custom" as const, style: "modern", prompt: "Improve brightness only; keep the garage door and trim unchanged." };
 const photos = (count = 3): StudioPhoto[] => Array.from({ length: count }, (_, index) => ({ id: `photo-${index + 1}`, listingId, url: `https://media.example.invalid/photo-${index + 1}.png`, expiresAt: "2026-09-14T23:59:59Z", caption: `Photo ${index + 1}`, isStaged: false, sort: index }));
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function fixture() {
@@ -19,7 +21,7 @@ function fixture() {
   const events: string[] = [], keys: string[] = [], resumeValues: (UploadJournal | undefined)[] = [];
   const deps = {
     assertScope: () => { if (!current) throw new Error("Account changed"); },
-    prepare: async (photo: StudioPhoto) => { events.push(`prepare:${photo.id}`); return { file: new File([photo.id], `${photo.id}.jpg`, { type: "image/jpeg" }), base64: "c291cmNl", mime: "image/jpeg" as const, preview: "data:image/jpeg;base64,c291cmNl" }; },
+    prepare: async (photo: StudioPhoto) => { events.push(`prepare:${photo.id}`); return importedPhoto({ file: new File([photo.id], `${photo.id}.jpg`, { type: "image/jpeg" }), base64: "c291cmNl", mime: "image/jpeg" as const, preview: "data:image/jpeg;base64,c291cmNl" }); },
     upload: async (file: File, role: "original" | "gallery", _signal: AbortSignal, resume?: UploadJournal, onJournal?: (journal: UploadJournal) => void) => {
       events.push(`upload:${role}:${file.name}`); resumeValues.push(resume);
       if (onJournal) onJournal({ version: 1, operationId: "same-operation" } as UploadJournal);
@@ -48,6 +50,32 @@ test("batch keeps originals and disclosure through explicit review/save; duplica
   assert.equal(f.events.filter(e => e.startsWith("attach")).length, 1);
 });
 
+test("ambiguous or permanent custom edits stop before source upload or paid generation", () => {
+  for (const prompt of ["Make the house look better", "Clean the garage", "Paint the garage door white", "Improve brightness and remove the cracks"]) {
+    const f = fixture();
+    assert.throws(() => new PhotoBatch(photos(1), listingId, { ...customChoice, prompt }, f.deps), /What should change|real finishes/);
+    assert.deepEqual(f.events, []);
+    assert.deepEqual(f.keys, []);
+  }
+});
+
+test("custom previews retain full instructions and require exact preview review before gallery upload", async () => {
+  const f = fixture(), generate = f.deps.generate;
+  const tail = " Keep the garage door and trim unchanged.";
+  const prompt = "Improve brightness. " + " ".repeat(580 - tail.length) + tail;
+  f.deps.generate = async (...args) => { assert.equal((args[2] as { prompt: string }).prompt, prompt.trim()); return generate(...args); };
+  const batch = new PhotoBatch(photos(2), listingId, { ...customChoice, prompt }, f.deps);
+  await batch.run();
+  await assert.rejects(batch.save(0), /Compare this preview/);
+  assert.equal(f.events.some(event => event.startsWith("upload:gallery") || event.startsWith("attach:")), false);
+  batch.entries[0]!.reviewed = true;
+  await batch.save(0);
+  await assert.rejects(batch.save(1), /Compare this preview/);
+  assert.equal(f.events.filter(event => event.startsWith("upload:gallery")).length, 1);
+  assert.equal(f.events.filter(event => event.startsWith("attach:")).length, 1);
+  assert.equal(f.keys.length, 2, "review/save must never re-generate the previews");
+});
+
 test("ordinary generation failure preserves completed photos and continues without retrying the failed request", async () => {
   const f = fixture(), generate = f.deps.generate;
   f.deps.generate = async (...args) => { if (args[4] === "Photo 2") { f.events.push("failed:Photo 2"); throw new Error("Reply was lost"); } return generate(...args); };
@@ -67,6 +95,51 @@ test("quota or authorization failure stops all remaining paid dispatches", async
     await batch.run();
     assert.equal(calls, 1);
     assert.deepEqual(batch.entries.map(e => e.state), ["failed", "stopped", "stopped"]);
+  }
+});
+
+test("pending or held quality review stops the batch without a second photo or automatic retry", async () => {
+  for (const code of ["photo_quality_pending", "photo_quality_hold"]) {
+    const f = fixture(); let calls = 0;
+    f.deps.generate = async () => { calls++; throw new StudioError(code, "Saved privately while checking.", 409); };
+    const batch = new PhotoBatch(photos(), listingId, choice, f.deps);
+    await batch.run(); await batch.run();
+    assert.equal(calls, 1);
+    assert.equal(batch.stopRequested, true);
+    assert.deepEqual(batch.entries.map(entry => entry.state), ["failed", "stopped", "stopped"]);
+    assert.equal(f.events.filter(event => event.startsWith("prepare:")).length, 1);
+    assert.equal(f.events.filter(event => event.startsWith("upload:original:")).length, 1);
+    assert.match(batch.entries[0]!.error!, /saved edit is retained/);
+    assert.doesNotMatch(batch.entries[0]!.error!, /No AI edit was started/);
+  }
+});
+
+test("a retained pending or held operation stops recovery before any source upload or new generation", async () => {
+  for (const code of ["photo_quality_pending", "photo_quality_hold"]) {
+    const f = fixture(); let recoveries = 0;
+    const batch = new PhotoBatch(photos(), listingId, choice, { ...f.deps,
+      recover: async () => { recoveries++; throw new StudioError(code, "Review remains unresolved.", 409); },
+    });
+    await batch.run(); await batch.run();
+    assert.equal(recoveries, 1);
+    assert.deepEqual(f.events, []);
+    assert.deepEqual(f.keys, []);
+    assert.deepEqual(batch.entries.map(entry => entry.state), ["failed", "stopped", "stopped"]);
+    assert.match(batch.entries[0]!.error!, /saved edit is retained/);
+    assert.doesNotMatch(batch.entries[0]!.error!, /No AI edit was started/);
+  }
+});
+
+test("a typed server clarification stops a custom batch without repeating source uploads", async () => {
+  for (const [code, status] of [["photo_clarification_required", 409], ["unsupported_edit", 400]] as const) {
+    const f = fixture(); let calls = 0;
+    f.deps.generate = async () => { calls++; throw new StudioError(code, "Choose a specific change. No edit has been charged.", status); };
+    const batch = new PhotoBatch(photos(), listingId, customChoice, f.deps);
+    await batch.run();
+    assert.equal(calls, 1);
+    assert.equal(f.events.filter(event => event.startsWith("upload:")).length, 1);
+    assert.deepEqual(batch.entries.map(entry => entry.state), ["failed", "stopped", "stopped"]);
+    assert.doesNotMatch(batch.entries[0]!.error!, /may still count/);
   }
 });
 
@@ -154,4 +227,41 @@ test("selection bounds, listing scope, originals, edit and staging settings are 
   assert.throws(() => new PhotoBatch([original], listingId, { ...choice, edit: "custom", prompt: " " }, f.deps), /settings/);
   assert.throws(() => new PhotoBatch([original], listingId, { ...choice, edit: "stage", style: "invented" }, f.deps), /settings/);
   assert.equal(f.keys.length, 0);
+});
+
+
+test("batch sends the edited current pixels while uploading and retaining the actual original", async () => {
+  const f = fixture(), source = await f.deps.prepare(photos(1)[0]!);
+  f.deps.prepare = async () => ({ ...source, file: new File(["decluttered"], "decluttered.png", { type: "image/png" }), base64: "decluttered", disclosures: ["Clutter removed."], edits: ["Digitally decluttered"] });
+  const generate = f.deps.generate;
+  f.deps.generate = async (...args) => { assert.equal((args[0] as { base64: string }).base64, "decluttered"); return generate(...args); };
+  const batch = new PhotoBatch(photos(1), listingId, { ...choice, edit: "stage" }, f.deps);
+  await batch.run();
+  assert.ok(f.events.includes("upload:original:photo-1.jpg"));
+  assert.equal(batch.entries[0]!.result!.original, source.original!.file);
+  assert.deepEqual(batch.entries[0]!.result!.edits, ["Digitally decluttered", "Virtually staged"]);
+});
+
+// New choices are semantically distinct; legacy request/result values stay accepted.
+test("Contemporary is offered without relabelling historic Scandinavian", async () => {
+ const {STAGING_STYLE_CHOICES,ACCEPTED_STAGING_STYLES}=await import("../src/features/creative/staging-styles");
+ assert.deepEqual(STAGING_STYLE_CHOICES,["modern","rustic","minimalist","contemporary"]);
+ assert(ACCEPTED_STAGING_STYLES.includes("scandinavian"));
+});
+
+test("staging batch forwards Contemporary or an unchanged legacy style exactly",async()=>{
+ for(const style of ["contemporary","scandinavian"]){
+  const f=fixture(),generate=f.deps.generate;
+  f.deps.generate=async(...args)=>{assert.equal((args[2] as {style:string}).style,style);return generate(...args);};
+  const batch=new PhotoBatch(photos(1),listingId,{...choice,edit:"stage",style},f.deps);
+  await batch.run();assert.equal(batch.choice.style,style);assert.equal(batch.entries[0]?.state,"ready");
+ }
+});
+
+test("closed paid review stops remaining batch work and only a new explicit batch may submit again",async()=>{
+ const f=fixture();let calls=0;
+ f.deps.generate=async()=>{calls++;throw new StudioError("photo_quality_closed","The edit is closed and remains private.",422,{operation_closed:true,provider_cost_incurred:"possible"});};
+ const batch=new PhotoBatch(photos(),listingId,choice,f.deps);await batch.run();await batch.run();
+ assert.equal(calls,1);assert.equal(batch.stopRequested,true);assert.deepEqual(batch.entries.map(e=>e.state),["failed","stopped","stopped"]);assert.match(batch.entries[0]!.error!,/may use another allowance/);assert.doesNotMatch(batch.entries[0]!.error!,/No AI edit was started/);
+ const manual=new PhotoBatch(photos(1),listingId,choice,f.deps);await manual.run();assert.equal(calls,2,"Only a separately requested batch starts the second attempt");assert.notEqual(manual.entries[0]!.requestKey,batch.entries[0]!.requestKey);
 });

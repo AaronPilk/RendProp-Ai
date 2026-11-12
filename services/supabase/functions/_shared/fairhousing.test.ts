@@ -33,6 +33,23 @@ function refusal(fn: () => void): HttpError | null {
 }
 
 const NON_HOUSING = ["venue", "restaurant", "retail", "fitness", "other"];
+
+Deno.test("existing copy guards screen compatibility characters, accents and invisible separators", () => {
+  for (const copy of ["ａｄｕｌｔｓ ｏｎｌｙ", "adults\u200b only", "idéál for families", "family\u00a0friendly"])
+    assertThrows(() => assertMarketingCopy(copy, "This script", "real_estate"), HttpError);
+  assertThrows(() => assertFairHousing("add a \u200bｆａｍｉｌｙ", "This edit", "real_estate"), HttpError);
+  assertMarketingCopy("A sunlit living room and a step-free entrance", "This script", "real_estate");
+});
+
+Deno.test("bounded multilingual copy rules preserve industry scope", () => {
+  for (const copy of ["Ideal para familias", "Apenas para adultos", "Proibido crianças", "Pas d’enfants", "Idéal pour les familles", "Solo cristianos"])
+    assertThrows(() => assertMarketingCopy(copy, "This script", "real_estate"), HttpError);
+  for (const industry of NON_HOUSING) {
+    assertMarketingCopy("Apenas para adultos", "This script", industry);
+    assertMarketingCopy("Idéal pour les familles", "This script", industry);
+    assertThrows(() => assertMarketingCopy("Sin extranjeros", "This script", industry), HttpError);
+  }
+});
 const HOUSING_MARKERS = ["HUD", "housing", "listing", "§3604", "buyer", "resident", "neighborhood", "property"];
 
 function assertNoHousingWording(message: string) {

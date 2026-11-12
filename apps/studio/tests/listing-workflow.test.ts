@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { File } from "node:buffer";
-import { canPublishAsset, decodeListingState, listingPayload, parseChapterText, tourLinks } from "../src/features/listings/model";
+import { canPublishAsset, decodeListingState, listingPayload, parseChapterText, tourLinks, websiteDesignPreviews } from "../src/features/listings/model";
 import type { Asset } from "../src/features/listings/model";
 import { cancelListingUpload, fingerprintFile, uploadListingAsset, validateUpload } from "../src/features/listings/uploads";
 import type { UploadJournal } from "../src/features/listings/uploads";
@@ -114,6 +114,12 @@ test("property state rejects cross-workspace data and malformed page cursors", (
   assert.throws(() => decodeListingState({ ...state, next_offset: 999 }, org, listing), /pagination/);
   assert.throws(() => decodeListingState({ ...state, assets: [{ id: asset, listing_id: org }] }, org, listing), /another property/);
   assert.equal(tourLinks("javascript:alert(1)"), null);
+  assert.equal(websiteDesignPreviews("javascript:alert(1)"), null);
+  assert.deepEqual(websiteDesignPreviews("oak-street")?.map(design => [design.name, design.paid, design.href]), [
+    ["Classic", false, "https://rendprop.com/f/oak-street?preview_theme=basic"],
+    ["Signature Estate", true, "https://rendprop.com/f/oak-street?preview_theme=signature-estate"],
+    ["Coastal Luxe", true, "https://rendprop.com/f/oak-street?preview_theme=coastal-luxe"],
+  ]);
 });
 test("spatial review requires current artifact and approved state before a shared URL", async () => {
   const room = { id: asset, listing_id: listing, room_label: "Living room", status: "review", progress: 1, attempt_number: 1, artifact_revision: org, privacy_state: "unreviewed", viewer_url: "https://rendprop.com/3d/private", share_url: null, can_retry: false, can_cancel: false, can_resume: false };

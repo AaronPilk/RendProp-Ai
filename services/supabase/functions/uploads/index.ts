@@ -1,3 +1,4 @@
+import { requireContentWrite } from "../_shared/library-access.ts";
 // Upload transport v2: service-only reservations authorize one exact-size
 // gateway dispatch per journaled operation. No reusable R2 PUT URL fallback.
 // Requires 0037 + configured gateway and drained legacy URLs before rollout.
@@ -92,17 +93,8 @@ async function reloadAsset(
 
 /** Marketing is read-only (audit P0-7): only owner/admin/agent may upload. */
 // deno-lint-ignore no-explicit-any
-async function requireWriteRole(admin: any, userId: string, orgId: string) {
-  const { data, error } = await admin
-    .from("memberships").select("role").eq("user_id", userId).eq(
-      "org_id",
-      orgId,
-    ).maybeSingle();
-  if (error) throw new HttpError(500, `Role lookup failed: ${error.message}`);
-  const role = data?.role;
-  if (!role || role === "marketing") {
-    throw new HttpError(403, "Your role does not permit uploading media");
-  }
+async function requireWriteRole(admin: any, userId: string, orgId: string, listingId: string) {
+  await requireContentWrite(admin, userId, orgId, listingId);
 }
 
 /**
@@ -126,7 +118,7 @@ async function requireAssetWriteRole(
     throw new HttpError(400, `Listing lookup failed: ${error.message}`);
   }
   if (!data) throw new HttpError(404, "Listing not found");
-  await requireWriteRole(admin, userId, data.org_id as string);
+  await requireWriteRole(admin, userId, data.org_id as string, asset.listing_id as string);
 }
 
 // Video at/above this size (or an explicit multipart flag) uses multipart.
@@ -233,7 +225,7 @@ interface CreateBody {
    *  an AI-altered photo → public renders bucket, key `original-<asset>.<ext>`
    *  (always kind photo; CA AB 723 access-to-the-original). default "capture" =
    *  raw walkthrough/photo → private uploads bucket. */
-  role?: "capture" | "render" | "original" | "gallery";
+  role?: "capture" | "render" | "original" | "gallery" | "contact_photo";
 }
 
 interface BatchBody {
@@ -288,7 +280,7 @@ Deno.serve(async (req) => {
       transportConfiguration();
       const body = await readJson<CreateBody & BatchBody>(req);
       const listing = await requireListing(db, body.listing_id);
-      await requireWriteRole(admin, user.id, listing.org_id);
+      await requireWriteRole(admin, user.id, listing.org_id, body.listing_id);
       await assertNotDeleting(user.id);
       const batch = seg[0] === "batch";
       const files = batch ? body.files : [body];
@@ -326,7 +318,7 @@ Deno.serve(async (req) => {
     }
 
     assert(seg.length === 2, 405, "Unsupported uploads path");
-    const assetId = seg[0], asset = await requireAsset(db, assetId);
+    const assetId = seg[0], asset = await requireCompletionAsset(db, admin, user.id, assetId, seg[1]);
     await requireAssetWriteRole(db, admin, user.id, asset);
     const bucket = r2BucketFor(asset.bucket);
     if (seg[1] === "renew") {
@@ -446,6 +438,8 @@ Deno.serve(async (req) => {
             uploadId: String(asset.upload_id),
             parts: actual.map((p) => ({ partNumber: p.number, etag: p.etag })),
           });
+          const readAdmission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:assetId}));
+          assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Bounded upload completion activation pending");
           const head = await headObject(bucket, String(asset.storage_key));
           assert(
             head.exists && head.bytes === Number(asset.bytes) && head.etag &&
@@ -458,6 +452,8 @@ Deno.serve(async (req) => {
         },
       );
     } else {
+      const readAdmission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:assetId}));
+      assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Bounded upload completion activation pending");
       const transfer = transfers[0],
         head = await headObject(bucket, String(transfer.object_key));
       const type = baseMediaType(head.contentType),
@@ -539,11 +535,12 @@ function uploadSpec(
 ) {
   const role = body.role ?? "capture";
   assert(
-    ["capture", "render", "original", "gallery"].includes(role),
+    ["capture", "render", "original", "gallery", "contact_photo"].includes(role),
     400,
     "Invalid upload role",
   );
-  const publicPhoto = role === "original" || role === "gallery" ||
+  assert(role !== "contact_photo" || body.kind === undefined || body.kind === "photo", 400, "Client headshots must be photos.");
+  const publicPhoto = role === "original" || role === "gallery" || role === "contact_photo" ||
     role === "render" && body.kind === "photo";
   const kind = publicPhoto || body.kind === "photo" ? "photo" : "video";
   const bucket = role === "capture" ? "uploads" : "renders";
@@ -569,6 +566,8 @@ function uploadSpec(
     ? `original-${id}`
     : role === "gallery"
     ? `gallery-${id}`
+    : role === "contact_photo"
+    ? `contact-${id}`
     : id;
   const multipart = kind === "video" &&
     (body.multipart === true || Number(body.bytes) > MULTIPART_THRESHOLD);
@@ -674,4 +673,41 @@ async function requireAsset(db: any, assetId: string) {
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);
   if (!data) throw new HttpError(404, "Asset not found");
   return data as Record<string, unknown>;
+}
+
+/** A presenter's media gate may hide an unapproved AI master after its bytes
+ * were stored. Only its original v2 reservation owner may finish that transport;
+ * completion never certifies publication, QC or media-read permission. */
+// deno-lint-ignore no-explicit-any
+async function requireCompletionAsset(db: any, admin: any, actor: string, assetId: string, action: string) {
+  try { return await requireAsset(db, assetId); }
+  catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 404 || action !== "complete") throw error;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuid.test(actor) || !uuid.test(assetId)) throw error;
+    actor = actor.toLowerCase(); assetId = assetId.toLowerCase();
+    const { data: reservation, error: lookupError } = await admin.from("upload_reservations")
+      .select("asset_id,actor_id,org_id,listing_id,state,spec").eq("asset_id", assetId).eq("actor_id", actor).maybeSingle();
+    if (lookupError) throw new HttpError(503, "Owned upload completion authority could not be verified");
+    if (!reservation || reservation.asset_id !== assetId || reservation.actor_id !== actor ||
+        !uuid.test(reservation.org_id) || !uuid.test(reservation.listing_id) ||
+        !["open", "completed"].includes(reservation.state) || !reservation.spec ||
+        typeof reservation.spec !== "object" || Array.isArray(reservation.spec)) throw error;
+    // Recheck today's listing-specific writable library, never a cached member
+    // role or the existence of a transport record alone.
+    await requireWriteRole(admin, actor, reservation.org_id, reservation.listing_id);
+    const asset = await requireAsset(admin, assetId), spec = reservation.spec;
+    assert(asset.id === assetId && asset.listing_id === reservation.listing_id && asset.transport_version === 2 &&
+      asset.upload_aborted === false && typeof asset.uploaded === "boolean" &&
+      reservation.state === (asset.uploaded ? "completed" : "open") && spec.listing_id === reservation.listing_id &&
+      ["kind", "bucket", "bytes", "content_type_declared", "part_size", "parts_total"].every(k => asset[k] === spec[k]) &&
+      (asset.uploaded && !spec.content_type_declared || asset.content_type === spec.content_type),
+      409, "The saved upload no longer matches its original reservation");
+    const prefix = `${asset.bucket}/${reservation.org_id}/${reservation.listing_id}/`;
+    const role = spec.key_role, stem = role === "gallery" ? `gallery-${assetId}` : role === "original" ? `original-${assetId}` : assetId;
+    assert(["gallery", "original", "default"].includes(role) && typeof asset.storage_key === "string" &&
+      asset.storage_key.startsWith(prefix) && new RegExp(`^${stem}(?:-complete-[0-9a-f-]{36})?\\.[a-zA-Z0-9]{1,8}$`).test(asset.storage_key.slice(prefix.length)),
+      409, "The saved upload key no longer matches its original reservation");
+    return asset;
+  }
 }

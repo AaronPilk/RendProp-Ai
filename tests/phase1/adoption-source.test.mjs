@@ -8,7 +8,8 @@ test('AuthStore durably prepares source before identified session replacement', 
   assert.ok(exchange.indexOf('recovery.prepare(') >= 0);
   assert.ok(exchange.indexOf('recovery.prepare(') < exchange.indexOf('applySession('));
   assert.ok(exchange.includes('sourceRefresh: priorRefresh'));
-  assert.ok(exchange.includes('try SecureStore.getChecked(Keys.accessToken)'));
+  assert.ok(exchange.includes('try Self.priorAccessTokenForAdoption()'));
+  assert.ok(auth.includes('guard !sessionStorageSuppressed else { return nil }\n        return try SecureStore.getChecked(Keys.accessToken) ?? storedAccessToken()'));
   assert.ok(exchange.includes('try SecureStore.getChecked(Keys.refreshToken)'));
   assert.ok(exchange.includes('throw APIError.server'));
 });
@@ -26,7 +27,7 @@ test('launch and foreground retry the durable handoff; sign-out discards it thro
   // A signed-out phone has no anonymous source left to hand off; keeping the
   // record made the next Apple sign-in 409 forever. Sign-out must drop it, and
   // only the recovery object may touch the Keychain record (no inline deletes).
-  const signOut = auth.slice(auth.indexOf('func signOut()'), auth.indexOf('func setDisplayName'));
+  const signOut = auth.slice(auth.indexOf('func signOut('), auth.indexOf('func setDisplayName'));
   assert.ok(signOut.includes('discardPendingAdoption()'));
   assert.ok(!signOut.includes('Keys.pendingAdoption'));
 });

@@ -22,15 +22,31 @@ struct PaywallView: View {
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var purchases = PurchaseManager.shared
+    @ObservedObject private var auth = AuthStore.shared
 
     @State private var period: BillingPeriod = .monthly
-    @State private var selectedPlan: RendpropPlan = .pro
+    @State private var selectedPlan: RendpropPlan = .max
+    @State private var selectedTeamVariant: TeamSeatVariant?
+    @State private var standardPriceChoice: StandardPriceChoice?
+    @State private var showsStandardPriceConfirmation = false
+
+    private struct StandardPriceChoice {
+        let product: Product
+        let orgID: UUID
+        let workspaceName: String
+        let period: BillingPeriod
+        let actorID: String?
+        let sessionRevision: UInt64
+        let selectedOrgID: UUID?
+        let environment: PurchaseEnvironment
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
+                    billingWorkspace
                     content
                     legalBlock
                 }
@@ -48,12 +64,47 @@ struct PaywallView: View {
                 }
             }
         }
-        .task {
+        .alert(standardPriceChoice?.environment == .sandbox
+               ? "Test Pro subscription?" : "Subscribe at standard price?",
+               isPresented: $showsStandardPriceConfirmation,
+               presenting: standardPriceChoice) { choice in
+            Button(choice.environment == .sandbox
+                   ? "Continue test at \(choice.product.displayPrice)\(choice.period.priceSuffix)"
+                   : "Continue at \(choice.product.displayPrice)\(choice.period.priceSuffix)") {
+                Task {
+                    guard selectedOffer.product?.id == choice.product.id,
+                      purchases.billingContext?.orgID == choice.orgID,
+                      purchases.standardPriceCheckoutEnvironment(for: choice.product) == choice.environment,
+                      auth.userID == choice.actorID,
+                      auth.syncSessionRevision == choice.sessionRevision,
+                      WorkspaceContext.selectedOrgID == choice.selectedOrgID else { return }
+                    await purchases.purchase(choice.product, expectedOrgID: choice.orgID,
+                                             standardPrice: true,
+                                             standardPriceEnvironment: choice.environment)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { choice in
+            if choice.environment == .sandbox {
+                Text("This is a TestFlight subscription test at \(choice.product.displayPrice)\(choice.period.priceSuffix), without the free trial. No real charge will be made. It applies to \(choice.workspaceName) · Library ID \(choice.orgID.uuidString.lowercased().suffix(8)). Apple shows the test terms before you confirm.")
+            } else {
+                Text("Pro starts at \(choice.product.displayPrice)\(choice.period.priceSuffix) without the free trial. It applies to \(choice.workspaceName) · Library ID \(choice.orgID.uuidString.lowercased().suffix(8)). Apple shows the final charge and renewal terms before you confirm.")
+            }
+        }
+        .task(id: "\(auth.userID ?? "none"):\(auth.syncSessionRevision)") {
             PurchaseManager.shared.start()
+            Task { await purchases.refreshStandardPriceEnvironment() }
+            await purchases.refreshBillingContext()
             // `source`, not `reason`: the server's per-event props whitelist
             // (services/supabase/functions/events/schema.ts) allows only
             // `source` and `plan` on paywall_viewed, and drops anything else.
             PaywallEvents.track("paywall_viewed", ["source": reason.analyticsValue])
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            Task { await purchases.refreshBillingContext() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropPlanChanged)) { _ in
+            Task { await purchases.refreshBillingContext() }
         }
     }
 
@@ -61,7 +112,7 @@ struct PaywallView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Turn any phone walkthrough into a cinematic tour")
+            Text(purchases.activePlan == nil ? "Choose your Rendprop plan" : "Change your Rendprop plan")
                 .font(.rpTitle)
                 .foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -70,13 +121,36 @@ struct PaywallView: View {
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if purchases.billingContext?.isCeilingMode == true {
+                Text("An eligible, funded 7-day trial lets you create one listing, add photos, and use limited AI edits for decluttering or staging. Video, aerial openings, hosted walkthroughs, and website publishing begin with a paid plan. Apple handles billing and cancellation.")
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
             } else {
-                Text("Pick a plan. Cancel any time.")
+                Text("Choose a plan and review its terms before subscribing. Apple shows any available trial offer and confirms the charge. Apple handles billing and cancellation.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var billingWorkspace: some View {
+        if let context = purchases.billingContext {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(context.name, systemImage: "person.2.fill").font(.rpHeadline)
+                Text(context.canManageSubscription ? "New subscriptions apply to this workspace. Apple manages payment and cancellation. An existing Apple subscription stays with the workspace that owns it." : context.unavailableMessage)
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                if context.showsServicePending {
+                    Text(ServingActivationSummary.pendingTitle).font(.rpHeadline)
+                    Text(ServingActivationSummary.pendingExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        } else if let error = purchases.billingError {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(error).font(.rpCaption).foregroundStyle(Theme.warn)
+                Button("Refresh billing access") { Task { await purchases.refreshBillingContext() } }
+            }.card()
+        } else { ProgressView("Checking workspace billing…") }
     }
 
     // MARK: Body states
@@ -88,9 +162,56 @@ struct PaywallView: View {
         } else if purchases.products.isEmpty {
             unavailableCard
         } else {
-            periodPicker
+            // Monthly only today: no picker, so nobody sees a "Yearly" tab
+            // that falls back to monthly prices.
+            if RendpropProducts.sellsAnnual { periodPicker }
             planCards
-            messageBlock
+            trialDetails
+            if purchases.billingContext?.servingActivation?.available != false {
+                SelectedPlanDetails(plan: selectedPlan, variant: selectedTeamVariant,
+                                    period: selectedOffer.period,
+                                    afterTrial: (purchases.billingContext?.trialUsage != nil &&
+                                                 RecordedTrialPresentation.isCurrent(planName: purchases.billingContext?.planName)) || selectedHasIntroOffer)
+            }
+        }
+        messageBlock
+    }
+
+    private var selectedHasIntroOffer: Bool {
+        selectedOffer.product.map { purchases.showsIntroOffer(for: $0) } ?? false
+    }
+
+    @ViewBuilder private var trialDetails: some View {
+        if RecordedTrialPresentation.isCurrent(planName: purchases.billingContext?.planName)
+            || purchases.billingContext?.servingActivation?.authority == .fundedTrial,
+           let trial = purchases.billingContext?.trialUsage {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(trial.statusLabel).font(.rpHeadline).foregroundStyle(Theme.ink)
+                ForEach(trial.rows, id: \.title) { row in
+                    LabeledContent(row.title, value: row.value).font(.rpCaption)
+                }
+                Text(trial.creationScope).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let end = trial.endDate {
+                    Text("Trial access ends \(end.formatted(date: .abbreviated, time: .shortened)).")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                Text(TrialUsageSummary.explanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+                .accessibilityIdentifier("paywall.recordedTrial")
+        } else if selectedHasIntroOffer, let product = selectedOffer.product,
+                  let offer = purchases.heldTrialOffer(for: product),
+                  offer.enabled, !offer.benefitLines.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Trial includes").font(.rpHeadline).foregroundStyle(Theme.ink)
+                ForEach(offer.benefitLines, id: \.self) { line in
+                    Label(line, systemImage: "checkmark").font(.rpCaption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Up to 7 days, or until the included usage is used. Each allowance is separate and does not reset. Usage does not bring forward Apple's charge date. Your saved work remains available under your workspace's access and retention terms.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+                .accessibilityIdentifier("paywall.trialIncludes")
         }
     }
 
@@ -137,6 +258,7 @@ struct PaywallView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityLabel(Text("How often you're charged"))
+            .accessibilityIdentifier("paywall.period")
 
             HStack(spacing: 6) {
                 Image(systemName: "gift.fill")
@@ -155,6 +277,7 @@ struct PaywallView: View {
             ForEach(RendpropPlan.allCases) { plan in
                 planCard(plan)
             }
+            teamSeatOptions
         }
     }
 
@@ -164,24 +287,74 @@ struct PaywallView: View {
         Button {
             Haptics.selection()
             selectedPlan = plan
+            selectedTeamVariant = nil
         } label: {
             PlanCardBody(plan: plan,
                          period: offer.period,
                          priceText: Self.priceText(offer.product, period: offer.period),
                          note: offer.note,
-                         isSelected: selectedPlan == plan,
-                         isCurrent: isCurrentPlan(plan))
+                         isSelected: selectedPlan == plan && selectedTeamVariant == nil,
+                         isCurrent: offer.product.map { purchases.activeProductID == $0.id } ?? false)
         }
         .buttonStyle(.plain)
         .disabled(offer.product == nil)
         .opacity(offer.product == nil ? 0.45 : 1)
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("paywall.plan.\(plan.rawValue)")
+        .accessibilityAddTraits(selectedPlan == plan && selectedTeamVariant == nil ? [.isSelected] : [])
+    }
+
+    /// StoreKit supplies the localized price; a fresh server sale list controls
+    /// whether a new charge is offered. Keep the current variant visible for
+    /// Apple subscription management if sale activation is later withdrawn.
+    @ViewBuilder private var teamSeatOptions: some View {
+        let available = TeamSeatVariant.all.filter {
+            (purchases.billingContext?.teamSeatProducts.contains($0.productID) == true ||
+                purchases.activeProductID == $0.productID) &&
+            purchases.product(for: $0.productID) != nil
+        }
+        if !available.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("More Team seats").font(.rpHeadline).foregroundStyle(Theme.ink)
+                ForEach(available, id: \.productID) { variant in
+                    if let product = purchases.product(for: variant.productID) {
+                        Button {
+                            Haptics.selection()
+                            selectedPlan = .team
+                            selectedTeamVariant = variant
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "person.2.fill").foregroundStyle(Theme.accent)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("\(variant.seats) seats · \(variant.monthlyCredits) monthly credits")
+                                        .font(.rpHeadline).foregroundStyle(Theme.ink)
+                                    Text(product.displayPrice + "/month")
+                                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: selectedTeamVariant == variant ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(Theme.accent)
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 13)
+                            .frame(minHeight: 52)
+                            .background(Theme.card, in: Capsule())
+                            .overlay(Capsule().strokeBorder(
+                                selectedTeamVariant == variant ? Theme.accent : Theme.border,
+                                lineWidth: selectedTeamVariant == variant ? 2 : 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("paywall.team.seats.\(variant.seats)")
+                        .accessibilityAddTraits(selectedTeamVariant == variant ? [.isSelected] : [])
+                    }
+                }
+            }
+        }
     }
 
     /// What one card offers while the picker is on `period`.
     ///
-    /// A plan doesn't have to sell both periods. Team has no yearly product at
-    /// launch (`RendpropProducts.notSoldAtLaunch`), so on the Yearly tab its
+    /// A plan doesn't have to sell both periods. Annual products are not sold
+    /// at launch (`RendpropProducts.notSoldAtLaunch`), so on the Yearly tab its
     /// card falls back to the monthly product: a real price, "Billed every
     /// month.", and a small "Monthly only" note — never an empty card, and
     /// never a Subscribe button pointed at a product that isn't for sale.
@@ -198,9 +371,22 @@ struct PaywallView: View {
         guard let sold = plan.soldPeriod(for: period) else {
             return PlanOffer(product: nil, period: period, note: nil)
         }
-        return PlanOffer(product: purchases.product(for: plan.productID(for: sold)),
+        guard let productID = plan.productID(for: sold) else {
+            return PlanOffer(product: nil, period: sold, note: nil)
+        }
+        return PlanOffer(product: purchases.product(for: productID),
                          period: sold,
                          note: sold == period ? nil : sold.onlyNote)
+    }
+
+    private var selectedOffer: PlanOffer {
+        if selectedPlan == .team, let variant = selectedTeamVariant,
+           (purchases.billingContext?.teamSeatProducts.contains(variant.productID) == true ||
+            purchases.activeProductID == variant.productID),
+           let product = purchases.product(for: variant.productID) {
+            return PlanOffer(product: product, period: .monthly, note: nil)
+        }
+        return planOffer(for: selectedPlan)
     }
 
     /// StoreKit's price string, or a plain dash when that product didn't load.
@@ -245,15 +431,48 @@ struct PaywallView: View {
 
     @ViewBuilder
     private var buyBar: some View {
-        if !purchases.products.isEmpty {
-            buyBarContent(planOffer(for: selectedPlan))
-        }
+        buyBarContent(selectedOffer)
     }
 
     private func buyBarContent(_ offer: PlanOffer) -> some View {
         VStack(spacing: 10) {
             if let product = offer.product {
+                Text("Selected: \(selectedPlan.displayName)\(selectedTeamVariant.map { " · \($0.seats) seats" } ?? "") · \(offer.period.pickerLabel)")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                    .accessibilityIdentifier("paywall.selection")
                 buyButton(product)
+                if let environment = purchases.standardPriceCheckoutEnvironment(for: product),
+                   let billing = purchases.billingContext {
+                    SecondaryButton(title: environment == .sandbox
+                                      ? "Test Pro at \(product.displayPrice)\(offer.period.priceSuffix)"
+                                      : "Subscribe at \(product.displayPrice)\(offer.period.priceSuffix) now",
+                                    systemImage: "creditcard",
+                                    isDisabled: purchases.isPurchasing || purchases.isRestoring) {
+                        standardPriceChoice = .init(product: product, orgID: billing.orgID,
+                                                    workspaceName: billing.name, period: offer.period,
+                                                    actorID: auth.userID, sessionRevision: auth.syncSessionRevision,
+                                                    selectedOrgID: WorkspaceContext.selectedOrgID,
+                                                    environment: environment)
+                        showsStandardPriceConfirmation = true
+                    }
+                    .accessibilityIdentifier("paywall.standardPrice")
+                    Text(environment == .sandbox
+                         ? "TestFlight test purchase only. No real charge will be made. Apple confirms the test subscription before it begins."
+                         : "Pay the standard price now, without a free trial. Apple confirms the charge before subscribing.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                }
+                if purchases.activeProductID != product.id, !purchases.canStartNewPurchase(for: product) {
+                    Text(purchases.canCheckTrialAvailability(for: product)
+                         ? "Check availability to reserve this plan's trial terms before Apple's confirmation. Checking does not start Apple billing."
+                         : purchases.trialEligibility(for: product) == false
+                            ? PurchaseDispatchAdmission.paidUnavailableMessage
+                            : TrialPurchaseAdmission.unavailableMessage)
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("paywall.trialUnavailable")
+                }
                 // `offer.period`, not the picker: the button buys what the card
                 // shows, so the billing sentence has to match the card too.
                 Text(disclosure(for: product, period: offer.period))
@@ -270,7 +489,12 @@ struct PaywallView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            restoreButton
+            HStack(spacing: 20) {
+                restoreButton
+                Button("Manage subscription") { Task { await purchases.manageSubscriptions() } }
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+                    .accessibilityIdentifier("paywall.manage")
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 20)
@@ -281,8 +505,22 @@ struct PaywallView: View {
 
     private func buyButton(_ product: Product) -> some View {
         PrimaryButton(title: buyTitle(for: product),
-                      isDisabled: purchases.isPurchasing) {
-            Task { await PurchaseManager.shared.purchase(product) }
+                      isDisabled: purchases.isPurchasing || purchases.isRestoring ||
+                        (purchases.activeProductID != product.id && Config.useLiveBackend &&
+                            (purchases.billingContext?.canManageSubscription != true ||
+                             (!purchases.canStartNewPurchase(for: product) && !purchases.canCheckTrialAvailability(for: product))))) {
+            let continuingHeldTrial = purchases.showsIntroOffer(for: product)
+            let checkingAvailability = !purchases.canStartNewPurchase(for: product) && purchases.canCheckTrialAvailability(for: product)
+            let expectedOrgID = purchases.billingContext?.orgID
+            Task {
+                if purchases.activeProductID == product.id { await purchases.manageSubscriptions() }
+                else if checkingAvailability {
+                    await purchases.checkTrialAvailability(product, expectedOrgID: expectedOrgID)
+                } else {
+                    await purchases.purchase(product, expectedOrgID: expectedOrgID,
+                                             continuingHeldTrial: continuingHeldTrial)
+                }
+            }
         }
         .overlay(alignment: .trailing) {
             if purchases.isPurchasing {
@@ -305,21 +543,48 @@ struct PaywallView: View {
                     .font(.rpCaption.weight(.semibold))
             }
         }
-        .disabled(purchases.isRestoring)
+        .disabled(purchases.isRestoring || purchases.isPurchasing)
+        .accessibilityIdentifier("paywall.restore")
         .foregroundStyle(Theme.accent)
     }
 
     /// "Start 7-day free trial" ONLY when the customer is eligible AND the
-    /// product actually carries an introductory offer. Otherwise "Subscribe".
+    /// product has confirmed held terms. New paid purchases stay unavailable
+    /// until their own funding admission exists; Manage remains reachable.
     private func buyTitle(for product: Product) -> String {
-        purchases.showsIntroOffer(for: product) ? "Start 7-day free trial" : "Subscribe"
+        if purchases.activeProductID == product.id { return "Manage current subscription" }
+        if purchases.billingContext?.isCeilingMode == true {
+            if purchases.showsIntroOffer(for: product) { return "Continue with Apple" }
+            if purchases.canCheckTrialAvailability(for: product) && !purchases.canStartNewPurchase(for: product) { return "Check trial availability" }
+            if purchases.activePlan != nil { return "Confirm plan change with Apple" }
+            return "Subscribe with Apple"
+        }
+        if Config.useLiveBackend && !Config.isUITesting,
+           purchases.trialEligibility(for: product) == false { return "Paid subscriptions unavailable" }
+        if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
+            return purchases.canCheckTrialAvailability(for: product) ? "Check trial availability" : "Trial unavailable"
+        }
+        if purchases.showsIntroOffer(for: product) { return "Continue with Apple" }
+        if purchases.activePlan != nil { return "Confirm plan change with Apple" }
+        return "Subscribe with Apple"
     }
 
     private func disclosure(for product: Product, period: BillingPeriod) -> String {
-        if purchases.showsIntroOffer(for: product) {
-            return PaywallLegal.trialDisclosure + " " + PaywallLegal.autoRenewDisclosure
+        if purchases.activeProductID == product.id { return "This is the subscription on this Apple ID. Apple shows its renewal date and cancellation options; its original workspace keeps the plan." }
+        if purchases.billingContext?.isCeilingMode == true {
+            if purchases.canCheckTrialAvailability(for: product) && !purchases.canStartNewPurchase(for: product) {
+                return "A seven-day free trial needs an exact funded reservation and Apple's eligibility. Checking does not start billing; you can review its terms before Apple's confirmation."
+            }
+            return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.showsIntroOffer(for: product),
+                price: product.displayPrice, period: period.priceSuffix)
         }
-        return period.billingNote + " " + PaywallLegal.autoRenewDisclosure
+        if Config.useLiveBackend && !Config.isUITesting,
+           purchases.trialEligibility(for: product) == false { return PurchaseDispatchAdmission.paidUnavailableMessage }
+        if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
+            return "Trial availability depends on a funded reservation and Apple's current eligibility. Checking does not start Apple billing. Review the reserved terms and Apple's confirmation before continuing."
+        }
+        return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.showsIntroOffer(for: product),
+            price: product.displayPrice, period: period.priceSuffix)
     }
 
     // MARK: Legal (App Review 3.1.2)
@@ -363,22 +628,9 @@ private struct PlanCardBody: View {
     let isCurrent: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             titleRow
             priceRow
-            Text(period.billingNote)
-                .font(.rpCaption)
-                .foregroundStyle(Theme.inkDim)
-            Divider().opacity(0.4)
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(plan.benefits, id: \.self) { line in
-                    benefitRow(line)
-                }
-            }
-            Text(plan.tagline)
-                .font(.rpCaption)
-                .foregroundStyle(Theme.inkDim)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.spacing)
@@ -393,8 +645,9 @@ private struct PlanCardBody: View {
     private var priceRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(priceText)
-                .font(.rpTitle)
+                .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
             if let note {
                 Text(note)
                     .font(.rpKicker)
@@ -413,7 +666,7 @@ private struct PlanCardBody: View {
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
             if isCurrent {
-                badge("Your plan", tint: Theme.good)
+                badge("On this Apple ID", tint: Theme.good)
             } else if plan.isMostPopular {
                 badge("Most popular", tint: Theme.accent)
             }
@@ -433,16 +686,43 @@ private struct PlanCardBody: View {
             .background(tint.opacity(0.12), in: Capsule())
     }
 
-    private func benefitRow(_ line: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "checkmark")
-                .font(.rpCaption.weight(.bold))
-                .foregroundStyle(Theme.accent)
-            Text(line)
-                .font(.rpCaption)
-                .foregroundStyle(Theme.ink)
+}
+
+/// The selected plan's full allowance list stays visible without repeating it
+/// inside every choice. Price and actual billing period remain on each row.
+private struct SelectedPlanDetails: View {
+    let plan: RendpropPlan
+    let variant: TeamSeatVariant?
+    let period: BillingPeriod
+    var afterTrial: Bool = false
+    private var title: String {
+        variant.map { "Team · \($0.seats) seats" } ?? plan.displayName
+    }
+    private var benefitLines: [String] {
+        guard let variant else { return plan.benefits }
+        return plan.allowances.customerBenefitLines(seats: variant.seats)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(afterTrial ? "After the trial · \(title)" : "Included with \(title)").font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text(plan.tagline).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            ForEach(benefitLines, id: \.self) { line in
+                Label(line, systemImage: "checkmark")
+                    .font(.rpCaption).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Plan & usage shows current limits. Any active balance appears under Credits & extra usage, with costs shown before eligible edits.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+            DisclosureGroup("How video allowances work") {
+                Text(PlanAllowances.videoAllowanceExplanation)
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
+            }.font(.rpCaption).foregroundStyle(Theme.accent)
+                .accessibilityIdentifier("paywall.videoAllowances")
+            Text(period.billingNote).font(.rpCaption).foregroundStyle(Theme.inkDim)
         }
+        .frame(maxWidth: .infinity, alignment: .leading).card()
+        .accessibilityIdentifier("paywall.selectedDetails")
     }
 }

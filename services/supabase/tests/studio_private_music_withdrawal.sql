@@ -6,7 +6,11 @@ do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();o uuid;l uuid:=
  insert into auth.users(id,email,raw_user_meta_data) values(a,'music-author@fixture.invalid','{}'),(b,'music-reviewer@fixture.invalid','{}');
  select org_id into strict o from public.memberships where user_id=a;
  insert into public.memberships(user_id,org_id,role) values(b,o,'agent');
+ -- This existing private listing was created during the owner's synthetic
+ -- active intro week; withdrawal controls still run on Free.
+ update public.orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=o;
  insert into public.listings(id,org_id,agent_id,address) values(l,o,a,'Synthetic music property');
+ update public.orgs set plan='free',plan_source=null,trial_ends_at=null where id=o;
  insert into music_fixture values(a,b,o,l,gen_random_uuid(),repeat('a',64),jsonb_build_object('listingId',l,'sources','[]'::jsonb,'draft',jsonb_build_object('clips','[]'::jsonb,'music',jsonb_build_object('licensed',true,'source',jsonb_build_object('sha256',repeat('a',64),'size',3)))));
 end $$;
 grant select on music_fixture to service_role;

@@ -10,7 +10,8 @@ export default function CapturePlan({services,workspace,listing,onPlan,onPrepare
   const [plan,setPlan]=useState<ProductionPlan>(),[state,setState]=useState<SyncState>("loading"),[error,setError]=useState(""),[attempt,setAttempt]=useState(0),[expanded,setExpanded]=useState(false);
   const [backup,setBackup]=useState<ProductionPlan>(),[media,setMedia]=useState<ListingMedia>(),[mediaBusy,setMediaBusy]=useState(false),[mediaError,setMediaError]=useState("");
   const sync=useRef<DocumentSync|null>(null),current=useRef<ProductionPlan|undefined>(undefined),abort=useRef(new AbortController()),onPlanRef=useRef(onPlan);onPlanRef.current=onPlan;
-  const canEdit=["owner","admin","agent"].includes(workspace.memberships.find(member=>member.orgId===workspace.org.id)?.role??"");
+  const member=workspace.memberships.find(member=>member.orgId===(workspace.libraryOrgId??workspace.org.id));
+  const canEdit=member?.canWrite??["owner","admin","agent"].includes(member?.role??"");
   const localKey=`${scopeKey(workspace.user.id,workspace.org.id)}:production:${listing.id}`;
   useEffect(()=>{
     const controller=new AbortController();abort.current=controller;

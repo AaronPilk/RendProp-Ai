@@ -1,0 +1,217 @@
+{
+  "status": "EXACT74_SUBMITTED_WAITING_FOR_REVIEW_AUTO_AFTER_APPROVAL",
+  "preparedUTC": "2026-10-14T03:16:43.042213+00:00",
+  "version": "1.0.4",
+  "build": "74",
+  "archiveSourceCommit": "c60e4c20f39cfdef3ab0609677100d931886bffd",
+  "archiveSourceVerified": true,
+  "ipaSHA256": "09f690dd7d31fe12b65385fbb16e7d65aad8e685879f0e3e715990b1909228f8",
+  "intro": {
+    "durationSeconds": 55.366667,
+    "bytes": 3409254,
+    "videoSHA256": "8ccd867b223e36b4f42348fac8fe3e75b288850dbc463fcfbab0422ed5d6dfb1",
+    "transcriptSHA256": "ff66150cc9caeb4f28942f87729176fd46906e627bdde0585a367ba05282a3f2",
+    "fullDecodePassed": true,
+    "resourcesMatchedArchiveAndExport": true
+  },
+  "TestFlight": {
+    "buildID": "0d6dfeeb-9ecb-49bf-a1bc-33e8d9115901",
+    "processing": "VALID",
+    "internalState": "IN_BETA_TESTING",
+    "membershipVerified": true,
+    "testingNotesVerified": true
+  },
+  "phoneAcceptance": {
+    "passed": true,
+    "scope": "Actual sponsored-owner physical iPhone74 only",
+    "captureCount": 11,
+    "checkedUTC": "2026-10-14T03:11:31.737396+00:00",
+    "homeAddressEntry": true,
+    "introductionPlayback": true,
+    "settingsReplay": true,
+    "knowledgeChecks": true,
+    "doneReturnedToSettings": true,
+    "ordinaryRetailPurchasesCertified": false,
+    "subjectiveAudioListeningClaimed": false,
+    "receiptSHA256": "44f6940078b2e4fb98f45ddb2640c3efcc49b1551c0f0f8a5a2bd7f8c3da682b"
+  },
+  "CI": {
+    "historicalFailedRun": "38501706161",
+    "historicalFailedCommit": "c60e4c20f39cfdef3ab0609677100d931886bffd",
+    "historicalResult": "failure",
+    "historicalJobCounts": {
+      "success": 13,
+      "failure": 2,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "historicalFirstFailureStage": "Synthetic AVAssetWriter fixture before production decoder",
+    "historicalWriterCause": "Unresolved; no writer.status/error/frame index readings",
+    "historicalProductionAssertionsReached": false,
+    "historicalNegativeControlsReached": false,
+    "historicalLaterOfflineGatesSkipped": true,
+    "historicalFailurePreserved": true,
+    "testOnlyChangeScope": [
+      "apps/ios/tests/ClipFramesTests.swift",
+      "apps/ios/tests/fixtures/ClipFramesFixtureWriter.swift.txt",
+      "apps/ios/tests/fixtures/clip-frames-known-good.mp4",
+      "apps/ios/tests/fixtures/clip-frames-known-good.provenance.json",
+      "apps/ios/tests/run-clip-frames.py"
+    ],
+    "currentRun": "38504902086",
+    "currentCommit": "053f152145a4df12b3818533f26d986b97e3737b",
+    "currentSnapshotObservedUTC": null,
+    "currentSnapshotReadUTC": "2026-10-14T03:48:03.896256+00:00",
+    "currentStatus": "in_progress",
+    "currentConclusion": null,
+    "currentFinalResultVerified": false,
+    "sourceEquivalenceEntries": 179,
+    "sourceEquivalenceTrees": {
+      "apps/ios/Rendprop": {
+        "entries": 155,
+        "gitTreeManifestSHA256": "32fe26d690157022ac8448cabe5a14fbe0f9a127dd2642e902673a6d6603e5be",
+        "byteIdentical": true
+      },
+      "apps/ios/project.yml": {
+        "entries": 1,
+        "gitTreeManifestSHA256": "fff1b5a50077aed01309a7b25526bb8ac793e2670c270884140268048fb1373b",
+        "byteIdentical": true
+      },
+      "apps/ios/Rendprop.xcodeproj": {
+        "entries": 6,
+        "gitTreeManifestSHA256": "7f8c0df199e805e533f8944ca3bf87bded7964fe8d08511ada6b756279c7c699",
+        "byteIdentical": true
+      },
+      "tools/spatial-spike/capture-ios/Sources": {
+        "entries": 17,
+        "gitTreeManifestSHA256": "ddb302d0e64117ec816e6e12e6a885f690b8ac2d46edb84fc25af0f0ed803ae1",
+        "byteIdentical": true
+      }
+    },
+    "rootCIDecision": "APPROVED_SCOPED_CURRENT_PROOFS_PLUS_IDENTICAL_PRIOR_RUNTIME_AND_CLASSIFIED_CI_EXCEPTION",
+    "currentRunGreenClaimed": false,
+    "currentJobCounts": {
+      "success": 12,
+      "failure": 1,
+      "in_progress": 1,
+      "queued": 0
+    },
+    "currentNativeSteps52Through67Passed": true,
+    "currentUIKitExportsPassed": true,
+    "remainingNativeSteps68Through76FreshRunPassClaimed": false,
+    "priorSourceBoundCompleteCheckpoint": "a6cf755dc462280b584a185b9f29b80d8a44b62f",
+    "priorCompleteCheckpointAll15JobsPassed": true,
+    "unchangedActualSwiftFilesVerified": 150,
+    "allStudioTreeEntriesMatchPriorCheckpoint": true,
+    "classifiedFailure": "Studio actual measured122ms timing refusal correctly produced no file/cleaned resources; test expected another refusal message. Current audio suite not reached; exact unchanged source reuses prior complete pass."
+  },
+  "Apple": {
+    "preflightReadUTC": "2026-10-14T03:12:32.488224+00:00",
+    "currentAttachedBuild": "74",
+    "currentState": "READY_FOR_REVIEW",
+    "currentReleaseType": "AFTER_APPROVAL",
+    "canceled 72Review": "COMPLETE",
+    "activeOrDraftReviews": 1,
+    "candidate74": "VALID/App Store eligible",
+    "submitted74": true,
+    "targetReleaseType": "AFTER_APPROVAL after exact Build 74 attachment only",
+    "finalSubmissionJournal": "/Users/pilksclaes/Rendprop AI/_bridge/build74-release-prep/apple-submission74-once.json",
+    "finalReviewSubmissionState": "WAITING_FOR_REVIEW",
+    "finalVersionState": "READY_FOR_REVIEW",
+    "finalReleaseTypeReadback": "AFTER_APPROVAL",
+    "finalReviewSubmissionID": "cdd8edb2-1b4b-4a46-a06e-08376f9b9d1a",
+    "submittedUTC": "2026-10-14T03:45:00.531926+00:00",
+    "writesAttempted": 7,
+    "confirmedWrites": 7,
+    "reviewContactAndAccountUnchanged": true,
+    "metadataReadbackMatches": true,
+    "publicDistributionVerified": false
+  },
+  "metadata": {
+    "correctedFrame01CompleteOtherSixPreserved": true,
+    "newAssetReplacementNeeded": false,
+    "AerialMeasurementsAnd3D": "COMING_SOON",
+    "rootReviewed": true
+  },
+  "executionAuthorized": true,
+  "closedSubmissionScenarios": 18,
+  "closedProofDoesNotReplacePhoneOrCI": true,
+  "limits": [
+    "Sponsored-owner phone acceptance does not certify ordinary retail purchases or all public provider routes.",
+    "Physical receipt does not claim subjective audio listening or emotion verification.",
+    "Current CI must not be called green until its final jobs and required aggregate conclude.",
+    "The first failed CI is preserved, even if the new fixture-only run passes."
+  ],
+  "finalRootFieldsToFill": [
+    "Later CI final repetition result and Apple approval/distribution outcome; current submission/automatic release are confirmed."
+  ],
+  "AppleCallsByDraftTask": 0,
+  "helperOrApprovalChangesByDraftTask": false,
+  "evidenceBindings": {
+    "archive": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-apple/archive-verified.json",
+      "sha256": "beebd3760ad1b41ab9223a6697aa0ef55646f9315710eea5d7739eb17533e529"
+    },
+    "source": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-apple/source-preflight.json",
+      "sha256": "c30378768383abf588bc077b542d3ad9dff611b906ed7685d5d77b39e59aa63e"
+    },
+    "media": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-quick-start/source/receipt.json",
+      "sha256": "bb90e187f41389de3c412a6982132482d1bfcd83fe0e5fc0a2c8fc3e5a409f7f"
+    },
+    "decode": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-quick-start/receipt.json",
+      "sha256": "e7725970b301ce500f6f9fb997a6422d029e2a63bc2cae40dbd6b148b8dea1c5"
+    },
+    "testflight": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-apple/testflight-availability.json",
+      "sha256": "47a294ea519be5c287bd4d6a67731e2d4e65e14aeaa5fc3b3ff5bc9e035fda6d"
+    },
+    "phone": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-phone-checks/receipt.json",
+      "sha256": "44f6940078b2e4fb98f45ddb2640c3efcc49b1551c0f0f8a5a2bd7f8c3da682b"
+    },
+    "equivalence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-release-prep/archive-ci-source-equivalence.json",
+      "sha256": "396ddd7b8f60a94641f05142389dc8db91d761af361f3e2f739d92ec8eff3c07"
+    },
+    "firstCI": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-ci-monitor/final-classification.json",
+      "sha256": "8f49bc223b682384a96152a12ae6ef73529796949affb3680ffeef3b4ec02871"
+    },
+    "firstFailure": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-ci-monitor/offline-first-failure-classification.json",
+      "sha256": "f3ea0ebff24efe80c1b2e568505223fb48786477b7190132f97aa8fc74369697"
+    },
+    "newCI": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-release-prep/ci-snapshot-at-release.json",
+      "sha256": "0385b08437043e25ac61f5d6f8889f4c3ad4cd7e8daf39ab4d7b670421492816"
+    },
+    "preflight": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-release-prep/read-preflight.json",
+      "sha256": "4a4091a1d45fdc26f53886f210178afe90b765e900720958a077d886427a2a59"
+    },
+    "review": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-release-prep/root-release-review.json",
+      "sha256": "e8ea571fcae0eb4c85af316cd109e4daecab18993a817c45b389cb2cc93fabf9"
+    },
+    "closedSubmission": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-release-prep/closed-submission-proof/receipt.json",
+      "sha256": "c7f6481a5fd15d7fa2bce2415adcfe2034e2545ef16e7f5996121c4efa60ccc1"
+    },
+    "rootCIDecision": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-release-prep/root-ci-release-decision.json",
+      "sha256": "b9d5e5b28c26a385f879f8d8a467e1cecae2c166b1361337f363d5a23b7e58f9"
+    },
+    "submission": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-release-prep/apple-submission74-once.json",
+      "sha256": "3702183b71a5c2e9e39036d829ef6b52a3011986a78227c447de59fa14504737"
+    },
+    "StudioClassification": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build74-ci-stabilized-monitor/studio-clock-refusal-readonly-classification.json",
+      "sha256": "8a458850bfd6a69bd9923d6b8a5e560575d42eafc22062a7d8ee13007298cbdd"
+    }
+  },
+  "recordedUTC": "2026-10-14T03:48:03.896256+00:00"
+}

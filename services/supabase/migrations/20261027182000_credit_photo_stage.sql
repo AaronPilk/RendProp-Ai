@@ -1,0 +1,102 @@
+-- Extend the same exact customer-credit/supplier-cost fence to virtual staging.
+-- Dormant until the matching iOS binary, exact paid schedule, and active
+-- monthly-credit catalog are verified. One staged photo costs 15 credits;
+-- all attempted generation and its saved judge share a 75-cent supplier cap.
+begin;
+insert into public.credit_tariffs(operation,version,credits,active)
+values('photo.stage','photo-stage-v1',15,false)
+on conflict(operation,version) do nothing;
+
+create or replace function public.credit_serving_cost_reserve(
+ p_actor uuid,p_org uuid,p_key text,p_stage text,p_provider text,p_model text,
+ p_input_sha256 text,p_hold_cents numeric,p_tariff_version text,
+ p_credit_org uuid,p_credit_key text,p_environment text
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare h public.credit_holds; reservation uuid; total numeric; bill uuid;
+  qc_id uuid; evidence public.photo_edit_evidence;
+begin
+ if current_setting('role',true) is distinct from 'service_role' then raise insufficient_privilege; end if;
+ if p_actor is null or p_org is null or p_credit_org is null or
+    p_key is null or p_key !~ '^[A-Za-z0-9:_-]{8,128}$' or
+    p_credit_key is null or p_credit_key !~ '^[A-Za-z0-9:_-]{8,128}$' or
+    p_stage is null or p_stage !~ '^[a-z0-9:._-]{1,80}$' or
+    p_provider is null or length(p_provider) not between 1 and 40 or
+    p_model is null or length(p_model) not between 1 and 240 or
+    p_input_sha256 is null or p_input_sha256 !~ '^[a-f0-9]{64}$' or
+    p_hold_cents is null or p_hold_cents::text in('NaN','Infinity','-Infinity') or
+    p_hold_cents<=0 or p_hold_cents>100000000 or p_hold_cents<>round(p_hold_cents,4) or
+    p_tariff_version is null or length(p_tariff_version) not between 1 and 120 or
+    p_environment not in('Production','Sandbox') then
+   raise exception 'RP400: A bounded verified credit attempt is required'; end if;
+ bill:=public.library_actor_billing_org(p_actor,p_org);
+ if bill is distinct from p_credit_org or
+    not public.library_financial_actor(p_actor,p_org) or
+    (not exists(select 1 from auth.users where id=p_actor and is_anonymous is false)
+     and not public.org_has_verified_retail_guest(p_actor,p_org)) or
+    exists(select 1 from public.deletion_requests where user_id=p_actor and status in('pending','processing')) then
+   raise exception 'RP403: Current editor and billing workspace required'; end if;
+ perform pg_advisory_xact_lock(hashtextextended('serving:'||bill,72452));
+ perform pg_advisory_xact_lock(hashtextextended('credit-wallet:'||bill||':'||p_environment,71003));
+ select * into h from public.credit_holds where org_id=bill and actor_id=p_actor
+   and environment=p_environment and request_key=p_credit_key for update;
+ if h.id is null or h.state not in('reserved','settled') or not (
+   (h.operation='photo.declutter' and h.tariff_version='photo-declutter-v1') or
+   (h.operation='photo.stage' and h.tariff_version='photo-stage-v1')) then
+   raise exception 'RP402: This photo credit hold is unavailable'; end if;
+ if p_key=p_credit_key then
+   if (h.operation='photo.declutter' and p_stage !~ '^photo[.]declutter:[0-9]+$') or
+     (h.operation='photo.stage' and p_stage !~ '^photo[.]stage:[0-9]+$') or
+     not exists(select 1 from public.serving_operations o where o.org_id=p_org
+       and o.actor_id=p_actor and o.request_key=p_key) then
+     raise exception 'RP403: Original photo operation required'; end if;
+ else
+   if p_key !~ '^photo-qc:[a-f0-9-]{36}$' or p_stage<>'photo.qc:0' then
+     raise exception 'RP403: Only the saved photo judge may share this hold'; end if;
+   qc_id:=substring(p_key from 10)::uuid;
+   select e.* into evidence from public.photo_quality_checks q
+     join public.photo_edit_evidence e on e.id=q.evidence_id
+     where q.id=qc_id and e.actor_id=p_actor and e.org_id=p_org
+       and e.request_key=p_credit_key and e.edit=substring(h.operation from 7);
+   if evidence.id is null then raise exception 'RP403: Saved matching photo check required'; end if;
+   if not exists(select 1 from public.serving_operations o where o.org_id=p_org
+      and o.actor_id=p_actor and o.request_key=p_key) then
+     raise exception 'RP403: Saved judge operation required'; end if;
+ end if;
+ if exists(select 1 from public.serving_cost_reservations r where r.org_id=p_org
+    and r.actor_id=p_actor and r.request_key=p_key and r.stage=p_stage) then
+   raise exception 'RP409: This provider attempt is already journaled'; end if;
+ -- Supplier quote may never exceed the retail credit risk ceiling. An
+ -- uncertain submission retains its bound; only definitive rejection frees it.
+ select coalesce(sum(r.hold_cents),0) into total
+   from public.serving_cost_reservations r where r.credit_hold_id=h.id
+     and r.budget_source='credits' and r.state<>'rejected';
+ if total+p_hold_cents>h.credits*5 then
+   raise exception 'RP402: This credit quote cannot fund another provider attempt'; end if;
+ -- Free Sandbox purchases are not real revenue. Bound the real supplier bill
+ -- to internal QA accounts and $3 per billing workspace per rolling day.
+ if p_environment='Sandbox' then
+   if not(public.org_has_internal_testing_grant(bill) or
+      public.org_has_private_internal_testing(bill)) then
+     raise exception 'RP403: Sandbox credits are restricted to internal testing'; end if;
+   select coalesce(sum(r.hold_cents),0) into total
+     from public.serving_cost_reservations r where r.billing_org_id=bill
+       and r.budget_source='credits' and r.credit_environment='Sandbox'
+       and r.state<>'rejected' and r.created_at>=now()-interval '1 day';
+   if total+p_hold_cents>300 then
+     raise exception 'RP402: The daily Sandbox test budget is used up'; end if;
+ end if;
+ insert into public.serving_cost_reservations(org_id,billing_org_id,actor_id,request_key,
+   stage,provider,model,input_sha256,tariff_version,hold_cents,sponsored_unlimited,
+   budget_source,credit_hold_id,credit_environment,trial_kind)
+ values(p_org,bill,p_actor,p_key,p_stage,p_provider,p_model,p_input_sha256,
+   p_tariff_version,p_hold_cents,false,'credits',h.id,p_environment,false)
+ returning id into reservation;
+ return jsonb_build_object('reserved',true,'id',reservation,'hold_cents',p_hold_cents,
+   'budget','credits','credit_hold_id',h.id);
+end$$;
+
+revoke all on function public.credit_serving_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,text,uuid,text,text)
+ from public,anon,authenticated;
+grant execute on function public.credit_serving_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,text,uuid,text,text)
+ to service_role;
+commit;

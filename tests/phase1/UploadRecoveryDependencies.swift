@@ -9,7 +9,14 @@ protocol APIClient {
     func renewUpload(assetID: String) async throws -> UploadTicket
     func completeUpload(assetID: String, parts: [(number: Int, etag: String)]?, metadata: UploadMetadata) async throws
     func abortUpload(assetID: String) async throws
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL]
+}
+extension APIClient {
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws {
+        try await beforeSend()
+        try await abortUpload(assetID: assetID)
+    }
 }
 enum Config {
     static let useLiveBackend = true
@@ -28,11 +35,16 @@ final class AuthStore {
     static let shared = AuthStore()
     static var currentAccessToken: String? = "offline-fixture-only"
     static var connections = 0
+    var userID: String? = "11111111-1111-4111-8111-111111111111"
+    var syncSessionRevision: UInt64 = 1
     static func jwtSubject(_ token: String) -> String? { "11111111-1111-4111-8111-111111111111" }
     func ensureSession() async -> Bool {
         if Self.currentAccessToken == nil { Self.connections += 1; Self.currentAccessToken = "offline-fixture-only" }
         return true
     }
+}
+enum WorkspaceContext {
+    static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222")
 }
 enum Haptics { static func success() {} }
 final class BackgroundSessionBridge {
@@ -60,7 +72,12 @@ final class RecoveryAPI: APIClient {
     var uncertain = false
     var rollback = false
     var failAbortOnce = false
+    var beforeAbortDispatch: (() async -> Void)?
     var completionFailure: APIError?
+    var admissionFailure: APIError?
+    /// Holds a synthetic photo ticket at the account boundary. No network.
+    var holdTicket = false
+    var ticketGate: CheckedContinuation<Void, Never>?
     /// `/renew` keeps answering "cannot plan a transfer" (503) even though the
     /// PUT itself would go through — the rejected-transfer shape.
     var refuseRenewal = false
@@ -79,6 +96,8 @@ final class RecoveryAPI: APIClient {
     func requestUpload(filename: String, bytes: Int64, listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?, idempotencyKey: String?) async throws -> UploadTicket {
         log.append("create"); creates += 1; keys.append(idempotencyKey ?? "missing")
+        if holdTicket { await withCheckedContinuation { ticketGate = $0 } }
+        if let admissionFailure { throw admissionFailure }
         var result = ticket((aborted || missing) ? newID : oldID)
         result.replayed = legacy
         return result
@@ -116,6 +135,11 @@ final class RecoveryAPI: APIClient {
         guard assetID == oldID && (legacy || abortable) else { throw APIError.badResponse(409) }
         aborted = true; legacy = false
         if failAbortOnce { failAbortOnce = false; throw URLError(.networkConnectionLost) }
+    }
+    func abortUpload(assetID: String, beforeSend: @escaping @MainActor () throws -> Void) async throws {
+        await beforeAbortDispatch?()
+        try await beforeSend()
+        try await abortUpload(assetID: assetID)
     }
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] { [:] }
     func transfer(_ request: URLRequest, _ file: URL) async throws -> URLResponse {

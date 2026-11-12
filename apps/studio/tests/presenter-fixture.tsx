@@ -5,6 +5,7 @@ import type { StudioServices } from "../src/data/services";
 import type { Listing, Workspace } from "../src/data/contracts";
 import type { Draft, Profile } from "../src/features/presenter/model";
 import "../src/styles.css";
+import "../src/features/creative/creative.css";
 const org="11111111-1111-4111-8111-111111111111",listing="22222222-2222-4222-8222-222222222222",second="22222222-2222-4222-8222-222222222223",user="33333333-3333-4333-8333-333333333333",editor="33333333-3333-4333-8333-333333333334",viewer="33333333-3333-4333-8333-333333333335",video="55555555-5555-4555-8555-555555555555";
 const ids=Array.from({length:9},(_,i)=>`44444444-4444-4444-8444-${String(i+1).padStart(12,"0")}`);
 let actor=user,epoch=1,lose="",failBefore="",readFailure=false,hold="",release:(()=>void)|undefined;

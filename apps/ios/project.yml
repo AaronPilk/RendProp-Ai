@@ -6,8 +6,8 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    MARKETING_VERSION: "1.0.3"
-    CURRENT_PROJECT_VERSION: "31"
+    MARKETING_VERSION: "1.0.9"
+    CURRENT_PROJECT_VERSION: "147"
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "5F5C5G25Y6"   # Aaron Pilkington — real Team ID (OU= from signing cert)
     CODE_SIGN_STYLE: Automatic
@@ -156,6 +156,11 @@ schemes:
       config: Debug
       targets:
         - RendpropUITests
+      # The Run-action StoreKit file is not automatically applied to
+      # `xcodebuild test`. Select it explicitly for the Test action too.
+      testPlans:
+        - path: RendpropStoreKit.xctestplan
+          defaultPlan: true
       # Only the screenshots the walk names are attached. Xcode's automatic
       # per-step capture would bury `01-home` … `09-health-probe` in hundreds
       # of unnamed PNGs at export time.

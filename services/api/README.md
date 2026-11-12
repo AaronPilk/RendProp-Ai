@@ -17,5 +17,8 @@ proposal and duration-band billing described by the starter design are not a
 description of today's production system. Render jobs, entitlements, provider
 cost records and subscription handlers use the current Supabase contracts.
 
-For production evidence and migration/deployment sequencing, start with the
-[24 September release record](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md).
+For current candidate contracts and migration/deployment sequencing, start with
+the [6 October launch handoff](../../docs/handoff/LAUNCH-READINESS-20261006.md).
+It is not a delivery receipt; completed changes require their dated production
+receipts. The [24 September record](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+retains historical production evidence.

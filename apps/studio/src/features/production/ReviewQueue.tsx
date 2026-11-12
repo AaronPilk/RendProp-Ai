@@ -75,13 +75,13 @@ function SharedReview({services,workspace,review,onChanged,onCopy}:{services:Stu
   const resolveNarration=useCallback(async(id:string,signal:AbortSignal)=>{
     if(!preview)throw new Error("Open the saved version before restoring narration.");
     const raw=await services.api("/functions/v1/studio/production-review/narration",{method:"POST",orgId:workspace.org.id,signal,body:{key:review.key,document_user_id:review.document_user_id,result_id:id,expected_document_revision:preview.revision}}) as {result:unknown};
-    return downloadNarration(raw.result,id,signal);
+    return downloadNarration(raw.result,id,signal,{actor:workspace.user.id,org:workspace.org.id,listing:review.listing_id,review:{owner:review.document_user_id,result:id,revision:preview.revision}});
   },[services,workspace.org.id,review.key,review.document_user_id,preview?.revision]);
   const resolveMusic=useCallback(async(source:AudioSourceRef,signal:AbortSignal)=>{
     if(!preview)throw new Error("Open the saved version before restoring music.");
     const raw=await services.api("/functions/v1/studio/production-review/music",{method:"POST",orgId:workspace.org.id,signal,body:{listing_id:review.listing_id,sha256:source.sha256,key:review.key,document_user_id:review.document_user_id,expected_document_revision:preview.revision}});
     const media=decodeSavedMedia(raw,source.sha256);if(!media||media.bytes!==source.size)throw new Error("The review's music source could not be verified.");
-    return downloadSavedMedia(media,signal);
+    return downloadSavedMedia(media,signal,{actor:workspace.user.id,org:workspace.org.id,listing:review.listing_id,review:{owner:review.document_user_id,result:media.id,revision:preview.revision}});
   },[services,workspace.org.id,review.key,review.listing_id,review.document_user_id,preview?.revision]);
   return <><div className="production-actions"><button disabled={busy||!bundle?.document||bundle.review.status==="draft"} onClick={()=>void restore()}>{busy?"Restoring original media…":"Preview this saved version"}</button></div>{error&&<p role="alert">{error}</p>}{bundle&&!bundle.document&&<p>The author has changed this draft. Its new contents stay private until they submit it again.</p>}{preview&&<VideoEditor key={preview.revision} readOnly initialMode="simple" initialDraft={preview.draft} resolveNarration={resolveNarration} resolveMusic={resolveMusic} relinkRequest={{id:`review-${preview.revision}`,files:preview.files}} seekRequest={seek}/>}
     {onCopy&&<VersionHistory services={services} workspace={workspace} listingId={review.listing_id} authorId={review.document_user_id} onCopy={onCopy}/>}

@@ -1,9 +1,10 @@
+import type {PrivateMediaScope} from "../../data/private-media";
 import {EDIT_LIMITS} from "../../editor/model";
 import {decodeResult} from "../creative/model";
 
 /** A signed result is still read with a bounded stream before audio decoding. */
-export async function downloadNarration(value:unknown,id:string,signal:AbortSignal):Promise<Blob>{
-  const result=decodeResult(value);
+export async function downloadNarration(value:unknown,id:string,signal:AbortSignal,scope?:PrivateMediaScope):Promise<Blob>{
+  const result=decodeResult(value,scope);
   if(result.id!==id||result.kind!=="voice"||result.state!=="completed"||!result.url||!result.duration||result.duration>300)throw new Error("The saved narration is unavailable. Choose a completed voice result.");
   const response=await fetch(result.url,{signal,credentials:"omit",redirect:"error",referrerPolicy:"no-referrer"});
   if(!response.ok||!response.body||Number(response.headers.get("content-length"))>EDIT_LIMITS.narrationBytes){void response.body?.cancel().catch(()=>{});throw new Error("Narration could not be restored. Retry its saved result.");}

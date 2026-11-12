@@ -11,7 +11,7 @@ export function signedURL(id: string, filename: string) {
   return { url: `https://${"a".repeat(32)}.r2.cloudflarestorage.com/rendprop-renders/renders/${org}/${id}/${filename}?${params}`, expiresAt: new Date(issued.getTime() + 599000).toISOString() };
 }
 export function kitFixture() {
-  const calls: { path: string; method: string }[] = [], listeners = new Set<() => void>(); let version = 1, currentUser = user;
+  const calls: { path: string; method: string }[] = [], listeners = new Set<() => void>(); let version = 1, currentUser = user, scopeGeneration = 1;
   const snapshot = () => ({ status: "signed-in", identityVersion: version, identity: { userId: currentUser, isAnonymous: false } });
   const photo = (id: string, asset: string, staged: boolean) => ({ id: asset, listingId: id, ...signedURL(id, `${asset}.png`), caption: staged ? "Virtually staged / AI-altered photo" : "Saved kitchen caption", isStaged: staged, isAltered: staged, originalUrl: staged && asset !== ids.missing ? signedURL(id, `${ids.original}.png`).url : staged ? null : signedURL(id, `${asset}.png`).url, sort: asset === ids.plain ? 0 : 1 });
   const media = (id: string): ListingMedia => ({ orgId: org, listingId: id, photos: id === listingA ? [photo(id, ids.plain, false), photo(id, ids.altered, true), photo(id, ids.missing, true)] : [], videos: [], nextOffset: null, unavailableCount: 0 });
@@ -19,16 +19,23 @@ export function kitFixture() {
   let holdRead = false, releaseRead: (() => void) | undefined;
   const services = {
     getSnapshot: snapshot, subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+    listingReadScope: async (physicalOrg: string, listingId: string, libraryOrg: string, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      if (physicalOrg !== org || libraryOrg !== org || ![listingA, listingB].includes(listingId)) throw new Error("Fixture refuses another property scope");
+      const captured = version, capturedScope = scopeGeneration;
+      return () => { signal?.throwIfAborted(); if (version !== captured || currentUser !== user) throw new Error("Fixture account changed"); if (scopeGeneration !== capturedScope) throw new Error("Fixture workspace read changed"); };
+    },
     listListings: async () => structuredClone(listings), listMedia: async (_org: string, id: string) => media(id),
     api: async (path: string, options: { orgId: string; method?: string; signal?: AbortSignal }) => {
       if (options.orgId !== org || options.method && options.method !== "GET") throw new Error("Fixture blocks all mutations and foreign workspaces");
       calls.push({ path, method: options.method ?? "GET" });
       const url = new URL(path, "https://fixture.invalid"), id = url.searchParams.get("listing_id") || url.searchParams.get("key")?.split(":")[1];
+      if (path.endsWith("/client-contact")) return {contact:null};
       if (path.includes("studio/listing-state?")) { const result = state(id!); if (holdRead) { holdRead = false; await new Promise<void>(resolve => { releaseRead = resolve; }); } return result; }
       if (path.includes("studio/creative-results?")) return { results: id === listingA ? [ids.video, ids.blocked].map(asset => ({ id: asset, listing_id: id, kind: "video", state: "completed", ...{ url: signedURL(id!, `${asset}.mp4`).url, expires_at: signedURL(id!, `${asset}.mp4`).expiresAt }, asset_id: asset, provenance_id: asset, source_asset_id: null, source_url: null, label: asset === ids.video ? "Reviewed office reel" : "Video needing review", disclosure: "Edited in Rendprop Studio from saved sources.", video_kind: "edit", qc_required: true, qc_publishable: asset === ids.video, words: [] })) : [], next_offset: null };
       if (path.includes("studio/documents?")) return { document: id === listingA ? { key: `creative:${id}`, kind: "creative", listing_id: id, revision: 1, payload: { schema: 1, script: "Saved listing script. Private reference https://example.invalid/?access_token=do-not-copy", shots: [], cutaways: [] }, updated_at: "2026-09-22T12:00:00Z" } : null };
       throw new Error(`Unexpected fixture route ${path}`);
     },
   } as unknown as StudioServices;
-  return { services, calls, state, media, changeAccount: () => { currentUser = "40000000-0000-4000-8000-000000000009"; version++; listeners.forEach(listener => listener()); }, delayRead: () => { holdRead = true; }, releaseRead: () => releaseRead?.() };
+  return { services, calls, state, media, changeAccount: () => { currentUser = "40000000-0000-4000-8000-000000000009"; version++; listeners.forEach(listener => listener()); }, refreshWorkspace: () => { scopeGeneration++; }, delayRead: () => { holdRead = true; }, releaseRead: () => releaseRead?.() };
 }

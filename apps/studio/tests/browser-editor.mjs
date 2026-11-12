@@ -77,9 +77,16 @@ let previewProcess;
 let activePage;
 let previewOutput = "";
 let beforeDist;
-const responseChecks = [];
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const check = (name, details = {}) => receipt.checks.push({ name, ...details });
+
+async function navigateStudio(page, name) {
+  const navigation = page.getByRole("navigation", { name: "Studio navigation" });
+  const target = navigation.getByRole("button", { name, exact: true });
+  if (!await target.isVisible())
+    await navigation.locator("details.secondary-navigation > summary").click();
+  await target.click();
+}
 
 async function fingerprintDist() {
   const files = [];
@@ -315,8 +322,9 @@ async function downloadExport(
   { audio, ratio, seconds, caption = false, toneStart = 0.35 },
 ) {
   await page
-    .getByRole("combobox", { name: /^Export format/ })
-    .selectOption(format.value);
+    .getByRole("group", { name: "Export format", exact: true })
+    .getByRole("radio", { name: format.label, exact: true })
+    .check();
   await page.locator(".rp-editor-export-button").click();
   const link = page.locator(".rp-editor-download");
   await expect(link).toBeVisible({ timeout: 30_000 });
@@ -459,8 +467,9 @@ async function assertPhotoThenVideo(path) {
 
 async function beginLongExport(page, format) {
   await page
-    .getByRole("combobox", { name: /^Export format/ })
-    .selectOption(format.value);
+    .getByRole("group", { name: "Export format", exact: true })
+    .getByRole("radio", { name: format.label, exact: true })
+    .check();
   await page.locator(".rp-editor-export-button").click();
   await expect(
     page.getByRole("button", { name: "Cancel export", exact: true }),
@@ -479,6 +488,15 @@ async function beginLongExport(page, format) {
 try {
   beforeDist = await fingerprintDist();
   receipt.dist = beforeDist;
+  // Rollup may place this shared component in a named common chunk. Bind the
+  // actual compiled editor by its component literals, not an obsolete filename.
+  receipt.editorAssets = [];
+  for (const file of beforeDist.files.filter(file => /^assets\/.*\.js$/.test(file.path))) {
+    const content = await readFile(join(distDirectory, file.path), "utf8");
+    if (["Local video editor", "Bring your story to life.", "Export format", "Cancel export"]
+      .every(marker => content.includes(marker))) receipt.editorAssets.push(file);
+  }
+  assert.equal(receipt.editorAssets.length, 1, "The frozen build must contain the actual editor component");
   const versions = await Promise.all([
     command("ffmpeg", ["-version"]),
     command("ffprobe", ["-version"]),
@@ -607,7 +625,15 @@ try {
         receipt.disallowedRequests.push(`Redirect ${url.origin}${url.pathname}`);
         return route.abort("blockedbyclient");
       }
-      await route.fulfill({ response });
+      const bytes = await response.body();
+      const path = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\//, "");
+      if ((path === "index.html" || path.startsWith("assets/")) && response.status() === 200) {
+        const expected = beforeDist.files.find(file => file.path === path);
+        assert.ok(expected, `Served asset ${path} is absent from the fingerprinted dist.`);
+        assert.equal(sha256(bytes), expected.sha256, `Served asset ${path} differs from the built bytes.`);
+        await route.fulfill({ response, body: bytes });
+        receipt.servedAssets.push({path, sha256: expected.sha256, bytes: bytes.length});
+      } else await route.fulfill({ response, body: bytes });
     } catch (error) {
       receipt.assetErrors.push(`Read-only request failed: ${error.message}`);
       await route.abort("failed").catch(() => {});
@@ -619,73 +645,42 @@ try {
   page.on("console", (message) => {
     if (message.type() === "error") receipt.consoleErrors.push(message.text());
   });
-  page.on("response", (response) => {
-    const url = new URL(response.url());
-    if (
-      url.origin !== base.origin ||
-      !(url.pathname === "/" || url.pathname.startsWith("/assets/")) ||
-      response.status() !== 200
-    )
-      return;
-    const promise = response
-      .body()
-      .then((bytes) => {
-        const path = url.pathname === "/" ? "index.html" : decodeURIComponent(url.pathname.slice(1));
-        const expected = beforeDist.files.find((file) => file.path === path);
-        const actualHash = sha256(bytes);
-        assert.ok(
-          expected,
-          `Served asset ${path} is absent from the fingerprinted dist.`,
-        );
-        assert.equal(
-          actualHash,
-          expected.sha256,
-          `Served asset ${path} differs from the built bytes.`,
-        );
-        receipt.servedAssets.push({
-          path,
-          sha256: actualHash,
-          bytes: bytes.length,
-        });
-      })
-      .catch((error) => receipt.assetErrors.push(error.message));
-    responseChecks.push(promise);
-  });
   await page.goto(base.href, { waitUntil: "networkidle" });
   assert.equal(
     await page.locator('script[src*="@vite/client"]').count(),
     0,
     "This test must use built dist, not the Vite dev server.",
   );
-  await page
-    .getByRole("navigation", { name: "Studio navigation" })
-    .getByRole("button", { name: /^Video editor(?: NEW)?$/ })
-    .click();
+  await navigateStudio(page, "Create");
   await expect(
-    page.getByRole("heading", { name: "Video editor", exact: true, level: 1 }),
-  ).toBeVisible();
+    page.getByRole("navigation", { name: "Studio navigation" })
+      .getByRole("button", { name: "Create", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   const editor = page.getByRole("region", { name: "Local video editor" });
+  await editor.getByRole("button", { name: "Pro view", exact: true }).click();
   const undo = editor.getByRole("button", { name: "Undo", exact: true });
   const redo = editor.getByRole("button", { name: "Redo", exact: true });
   const revision = async () => Number((await editor.locator(".rp-editor-revision").innerText()).replace("Rev ", ""));
   await expect(undo).toBeDisabled();
   await expect(redo).toBeDisabled();
   await expect(editor.getByRole("heading", { name: "Bring your story to life.", exact: true })).toBeVisible();
+  const firstImportStarted = performance.now();
   await page
     .getByLabel("Add photos or videos", { exact: true })
     .setInputFiles(source);
   await expect(
     page.getByRole("button", { name: /^Select clip 1: source-tone.mp4/ }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
+  receipt.firstImportMilliseconds = performance.now() - firstImportStarted;
   await expect(
     page.getByLabel("Trim start (sec)", { exact: true }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "Play", exact: true }).click();
   await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: "Content planner", exact: true }).click();
+  await navigateStudio(page, "Content planner");
   await expect(page.getByRole("heading", { name: "Content planner", level: 1, exact: true })).toBeVisible();
   await expect(editor).toBeHidden();
-  await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: /^Video editor(?: NEW)?$/ }).click();
+  await navigateStudio(page, "Create");
   await expect(editor).toBeVisible();
   await expect(page.getByRole("button", { name: "Reselect original file", exact: true })).toHaveCount(0);
   await expect(page.locator(".rp-editor-export-button")).toBeEnabled();
@@ -713,13 +708,15 @@ try {
   assert.equal(await revision(), beforeHistory + 6, "Undo/Redo must allocate new revisions, never restore stale export identities.");
   await expect(page.locator(".rp-editor-export-button")).toBeEnabled();
   check("Undo/Redo restores exact trims and caption with monotonic revisions and keeps current original media connected");
+  await expect(page.getByRole("group", { name: "Export format", exact: true }))
+    .toHaveAttribute("aria-busy", "false");
   const formats = await page
-    .getByRole("combobox", { name: /^Export format/ })
-    .locator("option")
+    .getByRole("group", { name: "Export format", exact: true })
+    .getByRole("radio")
     .evaluateAll((options) =>
       options.map((option) => ({
         value: option.value,
-        label: option.textContent,
+        label: option.labels[0].textContent.trim(),
       })),
     );
   assert.ok(
@@ -923,9 +920,9 @@ try {
   );
 
   await beginLongExport(page, primary);
-  await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: "Content planner", exact: true }).click();
+  await navigateStudio(page, "Content planner");
   await expect(page.getByRole("heading", { name: "Content planner", level: 1, exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: /^Video editor(?: NEW)?$/ }).click();
+  await navigateStudio(page, "Create");
   await expect(editor).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel export", exact: true })).toHaveCount(0, { timeout: 10_000 });
   await expect(editor.getByRole("status").filter({ hasText: /Export cancelled because you left the video editor/ })).toBeVisible();
@@ -957,10 +954,11 @@ try {
     "export succeeds after revision, explicit, visibility, and editor-navigation cancellation",
   );
 
-  await Promise.all(responseChecks);
+  await page.waitForLoadState("networkidle");
   assert.ok(
-    receipt.servedAssets.some((asset) => /VideoEditor.*\.js$/.test(asset.path)),
-    "The built editor chunk must be fetched and fingerprinted.",
+    receipt.editorAssets.every(expected => receipt.servedAssets.some(asset =>
+      asset.path === expected.path && asset.sha256 === expected.sha256)),
+    "The actual built editor component bytes must be served and fingerprinted.",
   );
   assert.deepEqual(
     receipt.assetErrors,
@@ -991,10 +989,12 @@ try {
   receipt.status = "failed";
   receipt.error =
     error instanceof Error ? (error.stack ?? error.message) : String(error);
-  if (activePage && !activePage.isClosed())
+  if (activePage && !activePage.isClosed()) {
+    receipt.failureDOM = await activePage.locator("body").innerText().catch(() => "Unavailable");
     await activePage
       .screenshot({ path: join(artifacts, "failure.png"), fullPage: true })
       .catch(() => {});
+  }
   process.exitCode = 1;
 } finally {
   if (beforeDist) {

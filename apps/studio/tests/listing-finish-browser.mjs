@@ -28,7 +28,7 @@ try {
   await expect(page.getByRole("tab", { name: "1 Media" })).toHaveAttribute("aria-selected", "true");
   await guide().getByRole("button", { name: "Review details", exact: true }).click();
   await expect(page.getByLabel("Address or property name")).toHaveValue("10 Oak Street");
-  await guide().getByRole("button", { name: "Open Reel Studio", exact: true }).click();
+  await guide().getByRole("button", { name: "Make a video", exact: true }).click();
   await expect(page.getByRole("status", { name: "Opened tool" })).toHaveText("reel:20000000-0000-4000-8000-000000000002");
   await guide().getByRole("button", { name: "Open AI Photo Studio", exact: true }).click();
   await expect(page.getByRole("status", { name: "Opened tool" })).toHaveText("studio:20000000-0000-4000-8000-000000000002");
@@ -48,7 +48,7 @@ try {
   await noMutations(); receipt.checks.push("Generated video points to existing accuracy-review tool without granting approval or publishing");
   await open("readonly");
   await expect(guide().getByRole("button", { name: "Open accuracy review", exact: true })).toBeDisabled();
-  await expect(guide().getByRole("button", { name: "Open Reel Studio", exact: true })).toBeDisabled();
+  await expect(guide().getByRole("button", { name: "Make a video", exact: true })).toBeDisabled();
   await expect(guide().getByRole("button", { name: "Open AI Photo Studio", exact: true })).toBeDisabled();
   await guide().getByRole("button", { name: "View results needing review" }).click();
   await guide().getByRole("button", { name: "Review details", exact: true }).click();
@@ -67,6 +67,31 @@ try {
   await guide().locator(".lw-finish-next").getByRole("button", { name: "View sharing options" }).click();
   await expect(page.getByRole("link", { name: "Open MLS tour" })).toHaveAttribute("href", "https://rendprop.com/u/fixture-oak");
   await noMutations(); receipt.checks.push("Existing published tour links and sharing options derive from published render state");
+  // W5: three design previews for the published slug; purchase is stated to
+  // happen in the iPhone app; a preview is a plain outbound link, never a write.
+  const designs = guide().getByRole("group", { name: "Website designs", exact: true });
+  await expect(designs).toBeVisible();
+  for (const [name, theme] of [["Classic", "basic"], ["Signature Estate", "signature-estate"], ["Coastal Luxe", "coastal-luxe"]]) {
+    const link = designs.getByRole("link", { name: `Preview design: ${name}`, exact: true });
+    await expect(link).toHaveAttribute("href", `https://rendprop.com/f/fixture-oak?preview_theme=${theme}`);
+    await expect(link).toHaveAttribute("target", "_blank");
+    const box = await link.boundingBox(); assert.ok(box && box.height >= 36, `${name} preview link is a comfortable target`);
+  }
+  assert.equal(await designs.getByRole("link").count(), 3);
+  await expect(designs).toContainText("the purchase happens in the Rendprop iPhone app");
+  await expect(designs).toContainText("A preview never changes the published website or unlocks a design.");
+  assert.equal(await designs.locator('[data-design="signature-estate"] .lw-finish-design-note').innerText(), "Paid design · buy in the iPhone app");
+  assert.equal(await designs.locator('[data-design="basic"] .lw-finish-design-note').innerText(), "Included with every published website");
+  assert.equal(await designs.locator("button, form, input").count(), 0, "design previews are links only; no purchase or write control in Studio");
+  await page.screenshot({ path: join(artifacts, "finish-listing-designs-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "design previews add no phone overflow");
+  await page.screenshot({ path: join(artifacts, "finish-listing-designs-mobile.png"), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await noMutations(); receipt.checks.push("Published listing offers three design preview links to /f/<slug>?preview_theme=…, states purchase happens in the iPhone app, and performs no write");
+  await open("photos");
+  await expect(guide().getByRole("group", { name: "Website designs", exact: true })).toHaveCount(0);
+  receipt.checks.push("Unpublished listing shows no design previews (there is no public slug to preview)");
   await open("error");
   await expect(guide().getByRole("heading", { name: "Check the latest property status" })).toBeVisible();
   await expect(guide().locator(".lw-finish-checklist")).toHaveCount(0);

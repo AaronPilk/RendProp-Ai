@@ -25,6 +25,10 @@ do $$ declare s uuid; d uuid; o uuid; personal uuid; begin
     select org_id into strict o from public.memberships where user_id=s;
     select org_id into strict personal from public.memberships where user_id=d;
     insert into _fixture values(n,s,d,o,personal,('a0382000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid);
+    -- The current listing admission policy requires an active introductory
+    -- week; keep the adoption fixture's source listings valid under it.
+    update public.orgs set plan='trial',plan_source='trial',
+      trial_ends_at=now()+interval '7 days' where id=o;
     if n <> 2 then insert into public.listings(org_id,agent_id,status) values(o,s,'draft'); end if;
   end loop;
 end $$;
