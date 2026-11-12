@@ -19,16 +19,21 @@ export function PropertyPreview({listing,services,workspace}:{listing:Listing;se
     const scope={identityVersion:version,user:workspace.user.id,library,org:listing.orgId,listing:listing.id};
     // The chosen cover when there is one; otherwise the first saved photo. A
     // home with photos must never look empty only because no cover was picked.
-    const show=(media:ListingMedia)=>{
-      const cover=listing.mainPhotoKey?media.photos.find(p=>{try{return(isPrivateMediaURL(p.url)?privateMediaCapability(p.url,{actor:workspace.user.id,org:listing.orgId,listing:listing.id}).key:new URL(p.url).pathname.split("/").slice(2).map(decodeURIComponent).join("/"))===listing.mainPhotoKey;}catch{return false;}}):undefined;
-      setURL((cover??media.photos[0])?.url??null);
-    };
+    const chosen=(media:ListingMedia)=>listing.mainPhotoKey?media.photos.find(p=>{try{return(isPrivateMediaURL(p.url)?privateMediaCapability(p.url,{actor:workspace.user.id,org:listing.orgId,listing:listing.id}).key:new URL(p.url).pathname.split("/").slice(2).map(decodeURIComponent).join("/"))===listing.mainPhotoKey;}catch{return false;}}):undefined;
+    const show=(media:ListingMedia)=>setURL((chosen(media)??media.photos[0])?.url??null);
     // A property already opened in this session, or a preview read a moment
     // ago, is reused while its links are valid instead of signing a page again.
-    const known=recallMedia(services,"full",scope)??recallMedia(services,"preview",scope);
+    // A one-picture preview is reused only while it still holds the chosen cover.
+    const full=recallMedia(services,"full",scope),preview=full?null:recallMedia(services,"preview",scope);
+    const known=full??(preview&&(!listing.mainPhotoKey||chosen(preview))?preview:null);
     if(known){show(known);return()=>controller.abort();}
-    void services.listMedia(listing.orgId,listing.id,controller.signal,0,library).then(media=>{
-      const identity=services.getSnapshot();if(controller.signal.aborted||identity.identityVersion!==version||identity.identity?.userId!==workspace.user.id)return;
+    const current=()=>{const identity=services.getSnapshot();return!controller.signal.aborted&&identity.identityVersion===version&&identity.identity?.userId===workspace.user.id;};
+    // One card shows one picture, so ask for one: the chosen cover, else the
+    // first saved photo. If that single photo cannot be shown but the home
+    // holds more, read the ordinary first page as before.
+    void services.listMedia(listing.orgId,listing.id,controller.signal,0,library,{limit:1,cover:true}).then(async media=>{
+      if(!current())return;
+      if(!media.photos.length&&media.hasMore!==undefined&&(media.hasMore||media.unavailableCount>0)){media=await services.listMedia(listing.orgId,listing.id,controller.signal,0,library);if(!current())return;}
       rememberMedia(services,"preview",scope,media);show(media);
     }).catch(()=>{if(!controller.signal.aborted)setFailed(true);});return()=>controller.abort();
   },[listing.id,listing.orgId,listing.mainPhotoKey,services,workspace.org.id,workspace.libraryOrgId,workspace.user.id]);

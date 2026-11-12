@@ -41,22 +41,22 @@ export type ServingActivation = {
 export function decodeServingActivation(value: unknown, orgId: string): ServingActivation | null {
   if (value === undefined) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new StudioError("invalid-response", "Your service activation could not be verified. Refresh before starting new work.");
+    throw new StudioError("invalid-response", "We could not check that your plan is switched on. Refresh before starting new work.");
   }
   const row = value as Record<string, unknown>;
-  if (row.org_id !== orgId) throw new StudioError("identity-mismatch", "This service activation belongs to a different workspace. Reload Studio.");
+  if (row.org_id !== orgId) throw new StudioError("identity-mismatch", "This plan information belongs to a different workspace. Reload Studio.");
   if (typeof row.authority !== "string" || !Object.hasOwn(servingAuthorities, row.authority)) {
-    throw new StudioError("invalid-response", "Your service activation could not be verified. Refresh before starting new work.");
+    throw new StudioError("invalid-response", "We could not check that your plan is switched on. Refresh before starting new work.");
   }
   const authority = row.authority as ServingActivation["authority"], [available, funded] = servingAuthorities[authority];
   if (row.available !== available || row.funded !== funded) {
-    throw new StudioError("invalid-response", "Your service activation could not be verified. Refresh before starting new work.");
+    throw new StudioError("invalid-response", "We could not check that your plan is switched on. Refresh before starting new work.");
   }
   return { orgId, available, funded, authority };
 }
 
 function invalid(): never {
-  throw new StudioError("invalid-response", "Your trial allowance could not be verified. Refresh your account before starting new work.");
+  throw new StudioError("invalid-response", "We could not check your free trial. Refresh your account before starting new work.");
 }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();

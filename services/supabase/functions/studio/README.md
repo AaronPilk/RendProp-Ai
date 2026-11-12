@@ -58,6 +58,14 @@ examine up to 50 photos, 50 completed capture assets and 50 stored renders;
 `next_offset` advances by 50 or is null. An oversized collection fails visibly at
 the paging boundary instead of claiming completeness.
 
+A caller that shows one picture (a Home card) may add `limit=<1-50>` and/or
+`cover=1` at `offset=0`. `limit` examines that many rows of each kind instead of
+50. `cover=1` reads photos only (no videos) and puts the listing's chosen cover
+first, read from the listing record, never from the request. Such a preview
+never pages: `next_offset` is null and `has_more` says whether more exists. Every
+access check of an ordinary page still applies. Without these parameters the
+route behaves exactly as before.
+
 Listing-media signed reads expire after 600 seconds and are restricted to canonical authorized
 objects. Unavailable/unlinked outputs are counted, not issued unrestricted object
 capabilities. Presenter permission checks also follow tracked derived media before

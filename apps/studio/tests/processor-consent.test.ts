@@ -31,19 +31,19 @@ test("precise unpublished404 preserves basev1, every other404/error/unknown curr
  let v=1;const changed=service(async()=>{v++;return contract();});changed.getSnapshot=()=>({status:"signed-in",identityVersion:v,identity:{userId:actor,isAnonymous:false}});await assert.rejects(()=>fetchProcessorAvailability(changed,scope),/account changed/);
 });
 test("permission is required before any paid work and a saved request never upgrades/downgrades its snapshot",()=>{
- assert.throws(()=>permissionBeforePaidWork(availability(),null),/Review and allow/);assert.deepEqual(permissionBeforePaidWork(availability(),permission()),permission());
+ assert.throws(()=>permissionBeforePaidWork(availability(),null),/Read and allow AI processing/);assert.deepEqual(permissionBeforePaidWork(availability(),permission()),permission());
  assert.deepEqual(permissionBeforePaidWork({kind:"legacy"},null),{token:CONSENT_V1});
- assert.throws(()=>permissionBeforePaidWork(availability(),permission(),{}),/original AI permission/);
- assert.throws(()=>permissionBeforePaidWork(availability(),permission(),{permission:{token:CONSENT_V1}}),/original AI permission/);
- assert.throws(()=>permissionBeforePaidWork({kind:"legacy"},permission(),{permission:permission()}),/original AI permission/);
+ assert.throws(()=>permissionBeforePaidWork(availability(),permission(),{}),/AI permission (it|your saved video) was started with/);
+ assert.throws(()=>permissionBeforePaidWork(availability(),permission(),{permission:{token:CONSENT_V1}}),/AI permission (it|your saved video) was started with/);
+ assert.throws(()=>permissionBeforePaidWork({kind:"legacy"},permission(),{permission:permission()}),/AI permission (it|your saved video) was started with/);
  assert.throws(()=>permissionBeforePaidWork(availability(),null,{permission:permission()}),/before resuming/);
  assert.deepEqual(permissionBeforePaidWork(availability(),permission(),{permission:permission()}),permission());
 });
 test("journal keeps consent outside the closed manifest, immutable for the same op and exact across lostreply/relaunch",async()=>{
  const store=storage(),saved=journal();await assert.rejects(()=>enqueueVideo(service(async(_p,o)=>{assert.deepEqual(o.body,saved.input);assert.equal(o.body.permission,undefined);assert.equal(o.aiConsent,CONSENT_V2);assert.equal(o.aiConsentDisclosure,PROCESSOR_DISCLOSURE.disclosure_revision);assert.equal(JSON.parse([...store.entries.values()][0]).permission.copy_sha256,PROCESSOR_DISCLOSURE.copy_sha256);throw Error("lost reply");}),scope,saved,store),/lost reply/);
  const reloaded=readVideoJournal(store,scope)!;assert.deepEqual(reloaded,saved);assert.deepEqual(reloaded.input,saved.input);
- assert.throws(()=>saveVideoJournal(store,scope,{...reloaded,permission:{token:CONSENT_V1}}),/original AI permission/);assert.deepEqual(readVideoJournal(store,scope),saved);
- const old={...saved};delete old.permission;const legacyStore=storage();saveVideoJournal(legacyStore,scope,old);assert.throws(()=>saveVideoJournal(legacyStore,scope,saved),/original AI permission/);
+ assert.throws(()=>saveVideoJournal(store,scope,{...reloaded,permission:{token:CONSENT_V1}}),/AI permission (it|your saved video) was started with/);assert.deepEqual(readVideoJournal(store,scope),saved);
+ const old={...saved};delete old.permission;const legacyStore=storage();saveVideoJournal(legacyStore,scope,old);assert.throws(()=>saveVideoJournal(legacyStore,scope,saved),/AI permission (it|your saved video) was started with/);
  assert.deepEqual(videoPermissionHeaders(permission()),{aiConsent:CONSENT_V2,aiConsentDisclosure:PROCESSOR_DISCLOSURE.disclosure_revision});
 });
 test("unknown/allnull/partial/future job metadata remains readable but cannot authorize paidresume",()=>{
@@ -64,13 +64,13 @@ test("accepted v2 resume uses original recorded revision without current-disclos
  for(const profile of ["legacy","fal-kling3-4k-v1","fal-kling3-4k-steady-v2",PROCESSOR_DISCLOSURE.profiles[0]]){
  const job=decodeJob(queued({consent_revision:CONSENT_V2,processor_consent:stored(),quality_profile:profile}),scope);let n=0;
  await resumeVideo(service(async(p,o)=>{n++;assert.ok(p.endsWith("/resume"));assert.equal(o.aiConsent,CONSENT_V2);assert.equal(o.aiConsentDisclosure,stored().disclosure_revision);return{...job,state:"queued",resume_available:false};}),scope,job);assert.equal(n,1);}
- let sent=0;await assert.rejects(()=>resumeVideo(service(async()=>{sent++;return queued();}),scope,decodeJob(queued({consent_revision:null,processor_consent:null,quality_profile:null}),scope)),/could not be verified/);assert.equal(sent,0);
+ let sent=0;await assert.rejects(()=>resumeVideo(service(async()=>{sent++;return queued();}),scope,decodeJob(queued({consent_revision:null,processor_consent:null,quality_profile:null}),scope)),/could not confirm the AI permission/);assert.equal(sent,0);
 });
 
 test("revocation is exact scoped durable intent; unknown reads and changed physical/account scope cannot retire it",async()=>{
  const store=storage(),intent=saveVideoStop(store,scope,operation);assert.deepEqual(readVideoStops(store,scope),[intent]);let calls=0;
  await assert.rejects(()=>reconcileVideoStop(service(async()=>{calls++;throw Error("read unavailable");}),scope,intent,store),/read unavailable/);assert.equal(calls,1);assert.equal(store.length,1);
- assert.throws(()=>readVideoStops(store,{...scope,org:asset}),/could not be read/);
+ assert.throws(()=>readVideoStops(store,{...scope,org:asset}),/could not read one of your requests to stop/);
  calls=0;await assert.rejects(()=>reconcileVideoStop(service(async()=>{calls++;return null;}),{...scope,org:asset},intent,store),/another workspace/);assert.equal(calls,0);assert.equal(store.length,1);
  let version=1;const late=service(async()=>{version++;return{job:queued(),operation_closed:false};});late.getSnapshot=()=>({status:"signed-in",identityVersion:version,identity:{userId:actor,isAnonymous:false}});await assert.rejects(()=>reconcileVideoStop(late,scope,intent,store),/account changed/);assert.equal(store.length,1);
 });

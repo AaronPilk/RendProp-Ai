@@ -32,20 +32,20 @@ test("an operation accepted before the discard keeps its job; a capacity refusal
 test("lost replies, open replies, foreign echoes, unknown reasons and account switches never count as a discard",async()=>{
  await assert.rejects(()=>abandonVideoOperation(service(async()=>{throw Error("unknown network outcome");}),scope,journal),/unknown/);
  await assert.rejects(()=>abandonVideoOperation(service(async()=>({...closure,operation_closed:false,closed_reason:null})),scope,journal),/not confirmed/);
- for(const bad of [{...closure,operation_id:other},{...closure,listing_id:other},{...closure,selected_library_org_id:org}])await assert.rejects(()=>abandonVideoOperation(service(async()=>bad),scope,journal),/another request/);
- await assert.rejects(()=>abandonVideoOperation(service(async()=>({...closure,closed_reason:"forgotten"})),scope,journal),/not recognized/);
- await assert.rejects(()=>abandonVideoOperation(service(async()=>({...closure,job:queued()})),scope,journal),/proof/);
+ for(const bad of [{...closure,operation_id:other},{...closure,listing_id:other},{...closure,selected_library_org_id:org}])await assert.rejects(()=>abandonVideoOperation(service(async()=>bad),scope,journal),/for a different video\. Your saved request is unchanged/);
+ await assert.rejects(()=>abandonVideoOperation(service(async()=>({...closure,closed_reason:"forgotten"})),scope,journal),/could not tell where this saved video stands/);
+ await assert.rejects(()=>abandonVideoOperation(service(async()=>({...closure,job:queued()})),scope,journal),/for a different video request/);
  let version=1;const switching={api:async()=>{version=2;return closure;},getSnapshot:()=>({status:"signed-in",identityVersion:version,identity:{userId:actor,isAnonymous:false}})} as any;
  await assert.rejects(()=>abandonVideoOperation(switching,scope,journal),/account changed/);
  // An accepted journal never reaches the discard route; it keeps normal cancel/recovery.
- await assert.rejects(()=>abandonVideoOperation(service(async()=>{throw Error("must not call");}),scope,{...journal,job_id:jobID}),/already has a server video/);
+ await assert.rejects(()=>abandonVideoOperation(service(async()=>{throw Error("must not call");}),scope,{...journal,job_id:jobID}),/video was already started for this request/);
 });
 
 test("lookup after a lost discard reply reports the same closure; pre-C2 replies keep their meaning",async()=>{
  assert.deepEqual(await inspectVideoOperation(service(async()=>closure),scope,journal),{job:null,closed:true,abandoned:true});
  assert.deepEqual(await inspectVideoOperation(service(async()=>({...closure,closed_reason:undefined})),scope,journal),{job:null,closed:true},"a reasonless closure from an older server is a capacity refusal");
  assert.deepEqual(await inspectVideoOperation(service(async()=>({job:null})),scope,journal),{job:null,closed:false},"not found is not proof of anything");
- await assert.rejects(()=>inspectVideoOperation(service(async()=>({job:null,closed_reason:"abandoned"})),scope,journal),/incomplete/);
+ await assert.rejects(()=>inspectVideoOperation(service(async()=>({job:null,closed_reason:"abandoned"})),scope,journal),/only received part of this saved video/);
 });
 
 test("a discarded recipe is archived separately from refusals and from the next recipe",()=>{

@@ -172,7 +172,7 @@ export function validatePlanItem(value: unknown): PlanItem {
   )
     throw new Error("Choose a title and channel.");
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(p.id as string))
-    throw new Error("Invalid content plan identity.");
+    throw new Error("One saved plan could not be read.");
   if (typeof p.date !== "string")
     throw new Error("Choose a valid date and time.");
   wallDate(p.date);
@@ -206,7 +206,7 @@ export function validatePlans(items: unknown): PlanItem[] {
     throw new Error("Keep up to 100 planned posts in this browser.");
   const result = items.map(validatePlanItem);
   if (new Set(result.map((item) => item.id)).size !== result.length)
-    throw new Error("Saved content plans have duplicate identities.");
+    throw new Error("Two saved plans share the same ID.");
   return result;
 }
 function requireBackupSize(bytes: number): void {
@@ -285,7 +285,7 @@ export function previewPlanImport(
     const identities = new Set(existing.map((item) => item.id));
     const overlaps = incoming.filter((item) => identities.has(item.id)).length;
     if (overlaps)
-      throw new Error(`${overlaps} imported ${overlaps === 1 ? "plan has an identity" : "plans have identities"} already in this workspace. Merge cannot overwrite or duplicate plans. Choose Replace only if the backup should replace the entire queue.`);
+      throw new Error(`${overlaps} imported ${overlaps === 1 ? "plan is" : "plans are"} already in this workspace. Merge cannot overwrite or duplicate plans. Choose Replace only if the backup should replace the entire queue.`);
     if (existing.length + incoming.length > MAX_PLANS)
       throw new Error(`Merging would create ${existing.length + incoming.length} plans; the limit is ${MAX_PLANS}. No plans will be dropped. Choose a smaller backup or Replace.`);
   }

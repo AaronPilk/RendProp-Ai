@@ -6,7 +6,7 @@ export type GallerySelection={schema:1;actor_id:string;org_id:string;library_org
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 function ids(value:unknown,max:number):value is string[]{return Array.isArray(value)&&value.length<=max&&value.every(x=>typeof x==="string"&&UUID.test(x))&&new Set(value).size===value.length;}
 export function decodeGallerySelection(value:unknown,scope:GalleryScope):GallerySelection{
- const error=()=>new Error("The listing photo selection could not be verified. Refresh this property before choosing photos.");
+ const error=()=>new Error("We could not read which photos are on the listing. Refresh this property before choosing photos.");
  if(!value||typeof value!=="object"||Array.isArray(value))throw error();const s=value as Record<string,unknown>;
  if(s.schema!==1||s.actor_id!==scope.actor||s.org_id!==scope.org||s.library_org_id!==scope.library||s.listing_id!==scope.listing||
   !(s.gallery_asset_ids===null||ids(s.gallery_asset_ids,100))||!ids(s.effective_asset_ids,100)||

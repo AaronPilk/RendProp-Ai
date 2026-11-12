@@ -17,7 +17,7 @@ export async function resumePhotoRequest(services:StudioServices,identity:PhotoR
  try{
   const result=await services.api("/functions/v1/ai-photo-v2",{orgId:identity.library,method:"POST",body:JSON.parse(row.requestJSON),idempotencyKey:row.requestKey,photoQualityProtocol:PHOTO_RECOVERY_PROTOCOL,signal,timeoutMs:300_000,maxResponseBytes:PHOTO_OUTPUT_WIRE_BYTES});
   signal.throwIfAborted();assertScope();const value=result as {image_b64?:unknown;mime?:unknown;disclosure?:unknown};
-  if(photoOutputSize(value?.image_b64)===null||!["image/jpeg","image/png","image/webp"].includes(String(value.mime))||typeof value.disclosure!=="string")throw new StudioError("invalid-response","The saved photo answer could not be confirmed. Check this same edit again.");
+  if(photoOutputSize(value?.image_b64)===null||!["image/jpeg","image/png","image/webp"].includes(String(value.mime))||typeof value.disclosure!=="string")throw new StudioError("invalid-response","We could not read your saved edit. Check this edit again; that will not start a new one.");
   row=await readyPhotoRequest(row,result);signal.throwIfAborted();assertScope();return{row,result:JSON.parse(row.resultJSON!)};
  }catch(error){
   // Identity/abort/unknown outcomes retain the exact operation. A definite

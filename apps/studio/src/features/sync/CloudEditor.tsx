@@ -317,7 +317,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     try {
       validateFileBatch(request.files, currentDraft.current?.clips ?? []);
       if (request.sourceMedia) {
-        if (request.sourceMedia.length !== request.files.length) throw new Error("The selected media changed. Choose it from the library again.");
+        if (request.sourceMedia.length !== request.files.length) throw new Error("The photo or video you selected has changed. Choose it again.");
         const needed = new Set(request.sourceMedia.map(item => item.id)); let offset: number | null = 0;
         do {
           const result = await services.api(`/functions/v1/studio/listing-state?listing_id=${target}&offset=${offset}`, {orgId: workspace.org.id, signal: controller.current.signal}) as {listing_id: string; org_id: string; assets: {id: string}[]; photos: {id: string}[]; next_offset: number | null};
@@ -326,7 +326,7 @@ export default function CloudEditor(props: CloudEditorProps) {
           if (result.next_offset !== null && (result.next_offset !== offset + 100 || result.next_offset > 10000)) throw new Error("The property media list could not be completed.");
           offset = result.next_offset;
         } while (offset !== null && needed.size);
-        if (needed.size) throw new Error("Some selected media is no longer available in this property. Refresh the library and choose it again.");
+        if (needed.size) throw new Error("Some of the photos or videos you selected are no longer in this property. Refresh and choose them again.");
         request.files.forEach((file, index) => importSources.current.set(file, {assetId: request.sourceMedia![index].id, listingId: target}));
       }
       if (controller.current.signal.aborted) return false;

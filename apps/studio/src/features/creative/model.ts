@@ -127,7 +127,7 @@ export function requiredText(
   max = 4000,
 ): string {
   const result = text(value, max);
-  if (!result) throw new Error(`The creative service did not return ${label}.`);
+  if (!result) throw new Error(`We did not get ${label} back. Try again in a minute.`);
   return result;
 }
 export function listingFacts(listing: Listing): Record<string, unknown> {
@@ -342,14 +342,14 @@ function mediaLink(value: unknown, scope?: PrivateMediaScope): string | null {
     parsed.protocol !== "https:" ||
     !/^[a-f0-9]{32}\.r2\.cloudflarestorage\.com$/.test(parsed.hostname) ||
     parsed.username || parsed.password || parsed.port || parsed.hash
-  ) throw new Error("The creative result has an invalid media link.");
+  ) throw new Error("The link to this result is not valid. Refresh and try again.");
   return parsed.href;
 }
 export function decodeResult(value: unknown, scope?: PrivateMediaScope): CreativeResult {
   const r = record(value), id = requiredText(r.id, "a result identifier", 80);
   if (
     !/^[a-f0-9-]{36}$/i.test(id) || !["voice", "video"].includes(String(r.kind))
-  ) throw new Error("The creative service returned an invalid result.");
+  ) throw new Error("We got back a result Studio could not read. Refresh and try again.");
   const url = mediaLink(r.url, scope);
   return {
     id,

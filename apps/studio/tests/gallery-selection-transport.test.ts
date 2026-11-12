@@ -73,7 +73,7 @@ for(const mode of["lost-reply","refresh-reply"]as const)test(`actual component $
 });
 test("actual component later explicit refresh clears only its matching uncertainty after failed reconciliation GET",async()=>{
  const f=fixture("failed-read");try{await f.open();const h=componentHarness(f);await h.selectPhoto({action:"use",photo_id:PHOTO,reviewed:false},"Photo selected.");assert.match(h.ui.actionError,/may have been saved/);assert(h.context.uncertainSelection.current instanceof UnconfirmedGallerySelection);assert.equal(h.ui.notice,"");assert.equal(f.counts().patches,1);
-  await h.refresh();assert.equal(h.ui.actionError,"");assert.equal(h.ui.readError,"");assert.equal(h.ui.notice,"Your listing photo selection is verified.");assert.equal(h.context.uncertainSelection.current,null);assert.deepEqual(h.ui.selection?.gallery_asset_ids,[ASSET]);assert.equal(f.counts().patches,1);
+  await h.refresh();assert.equal(h.ui.actionError,"");assert.equal(h.ui.readError,"");assert.equal(h.ui.notice,"Your listing photos are up to date.");assert.equal(h.context.uncertainSelection.current,null);assert.deepEqual(h.ui.selection?.gallery_asset_ids,[ASSET]);assert.equal(f.counts().patches,1);
  }finally{f.services.dispose();}
 });
 for(const mode of["403","409","qc"]as const)test(`actual component healthy refresh never erases its definite ${mode} refusal`,async()=>{

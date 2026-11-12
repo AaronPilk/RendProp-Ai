@@ -17,6 +17,7 @@ import {
   type StudioConfig,
   StudioError,
   validateStudioConfig,
+  EDGE_FUNCTION_REGION,
 } from "../src/data/index";
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -813,6 +814,11 @@ test("private media is bound to org and listing and rejects unsafe or expired UR
       .nextOffset,
     50,
   );
+  // A one-picture preview reports whether more exists; an ordinary page never carries the field.
+  assert.equal(Object.hasOwn(result, "hasMore"), false);
+  assert.equal(decodeMedia({ ...dto, has_more: true }, ORG, LISTING).hasMore, true);
+  assert.equal(decodeMedia({ ...dto, has_more: false }, ORG, LISTING).hasMore, false);
+  assert.throws(() => decodeMedia({ ...dto, has_more: "yes" }, ORG, LISTING), code("invalid-response"));
   assert.throws(
     () => decodeMedia({ ...dto, next_offset: 0 }, ORG, LISTING),
     code("invalid-response"),
@@ -1118,30 +1124,68 @@ test("mutations keep workspace scope and never replay an ambiguous or unauthoriz
     assert.equal(writes,1);assert.equal(auth.refreshCalls(),0);services.dispose();
   }
 });
-test("trial capacity refusals give retry guidance without blaming the customer's plan", async () => {
+test("a plan refusal the server cannot explain keeps a plain fixed sentence and never shows unsafe text", async () => {
   for (const machineCode of ["trial_capacity_unavailable", "quota_exceeded", undefined]) {
-    const auth = mockAuth(); let writes = 0;
-    const services = createStudioServices(config, { auth: auth.auth, fetch: fakeFetch((url, options) => {
-      if (options.method === "POST") { writes++; return json({ code: machineCode, error: "https://private.invalid/?token=do-not-show" }, 402); }
-      return fixtureResponse(url);
-    }) });
+    // No usable text, or text from a server that predates the plain-language layer (no next_step).
+    for (const body of [{ code: machineCode, error: "https://private.invalid/?token=do-not-show", next_step: "upgrade_plan" }, { code: machineCode, error: "This workspace has no funded serving allowance" }]) {
+      const auth = mockAuth(); let writes = 0;
+      const services = createStudioServices(config, { auth: auth.auth, fetch: fakeFetch((url, options) => {
+        if (options.method === "POST") { writes++; return json(body, 402); }
+        return fixtureResponse(url);
+      }) });
+      try {
+        await services.loadWorkspace();
+        await assert.rejects(services.api("/functions/v1/ai-photo", { orgId: ORG, method: "POST", body: { listing_id: LISTING } }), (error) => {
+          assert(error instanceof StudioError);
+          assert.equal(error.status, 402);
+          assert.doesNotMatch(error.message, /private|token=|funded|serving/);
+          if (machineCode === "trial_capacity_unavailable") {
+            assert.equal(error.code, machineCode);
+            assert.match(error.message, /problem on our side/);
+            assert.match(error.message, /Try again in a minute, or contact support\.$/);
+            // Never the customer's plan, and never a capacity or availability story.
+            assert.doesNotMatch(error.message, /upgrade|plan|allowance|capacity|unavailable|first/i);
+          } else {
+            assert.equal(error.code, "request-failed");
+            assert.equal(error.message, "Your plan does not cover this right now. Review your plan in Workspace.");
+          }
+          return true;
+        });
+        assert.equal(writes, 1);
+      } finally { services.dispose(); }
+    }
+  }
+});
+test("a plan refusal shows the server's plain message and next step, and keeps the plan pointer", async () => {
+  const cases: { body: Record<string, unknown>; message: string; code?: string; details?: Record<string, unknown> }[] = [
+    // The server's sentence, then where a plan is changed.
+    { body: { code: "quota_exceeded", error: "You have used all the AI included in your plan this month. It resets on your next billing date.", next_step: "upgrade_plan" },
+      message: "You have used all the AI included in your plan this month. It resets on your next billing date. Review your plan in Workspace." },
+    // A technical `error` with the server's plain `user_message`: the plain one is shown.
+    { body: { code: "plan_required", error: "The included trial photo edits are exhausted", user_message: "You have used all the photo edits included in your free trial. Choose a plan to keep editing.", next_step: "upgrade_plan", charge: "not_charged" },
+      message: "You have used all the photo edits included in your free trial. Choose a plan to keep editing. Review your plan in Workspace." },
+    { body: { code: "credit_balance_low", error: "Add credits before starting Photo motion.", next_step: "add_credits", operation_closed: false },
+      message: "Add credits before starting Photo motion. Review your plan in Workspace.", details: { operation_closed: false } },
+    // The pointer is not repeated, and is not added when the next step is not about the plan.
+    { body: { code: "quota_exceeded", error: "Every seat is in use. Open Workspace to free a seat or add one.", next_step: "upgrade_plan" }, message: "Every seat is in use. Open Workspace to free a seat or add one." },
+    { body: { code: "credit_quote_required", error: "This edit uses credits. Review the price shown, then confirm to start. You were not charged.", next_step: "review_price", charge: "not_charged" },
+      message: "This edit uses credits. Review the price shown, then confirm to start. You were not charged." },
+    { body: { code: "trial_capacity_unavailable", error: "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on.", next_step: "contact_support" },
+      message: "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on.", code: "trial_capacity_unavailable" },
+  ];
+  for (const expected of cases) {
+    const auth = mockAuth();
+    const services = createStudioServices(config, { auth: auth.auth, fetch: fakeFetch((url, options) => options.method === "POST" ? json(expected.body, 402) : fixtureResponse(url)) });
     try {
       await services.loadWorkspace();
       await assert.rejects(services.api("/functions/v1/ai-photo", { orgId: ORG, method: "POST", body: { listing_id: LISTING } }), (error) => {
         assert(error instanceof StudioError);
         assert.equal(error.status, 402);
-        assert.doesNotMatch(error.message, /private|token=/);
-        if (machineCode === "trial_capacity_unavailable") {
-          assert.equal(error.code, machineCode);
-          assert.match(error.message, /try again later/i);
-          assert.doesNotMatch(error.message, /upgrade|plan|allowance/i);
-        } else {
-          assert.equal(error.code, "request-failed");
-          assert.match(error.message, /current plan/);
-        }
+        assert.equal(error.message, expected.message);
+        assert.equal(error.code, expected.code ?? "request-failed");
+        if (expected.details) assert.deepEqual(error.details, expected.details);
         return true;
       });
-      assert.equal(writes, 1);
     } finally { services.dispose(); }
   }
 });
@@ -1161,10 +1205,53 @@ test("API rejects foreign origins, traversals, missing membership and read bodie
   await assert.rejects(services.api('/functions/v1/me',{orgId:FOREIGN_ORG}));
   await assert.rejects(services.api('/functions/v1/me',{orgId:ORG,body:{}}));assert.equal(calls,start);services.dispose();
 });
+test("every Edge Function request asks for the database region; nothing else does",async()=>{
+  assert.equal(EDGE_FUNCTION_REGION,"us-west-2");
+  const auth=mockAuth(),seen:{url:URL;region:string|null}[]=[];
+  const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
+    seen.push({url,region:new Headers(options.headers).get("x-region")});
+    if(options.method==="PUT")return new Response(null,{headers:{ETag:"confirmed"}});
+    if(url.pathname==="/functions/v1/studio/media")return json({org_id:ORG,listing_id:LISTING,photos:[],videos:[],next_offset:null,unavailable_count:0,has_more:false});
+    if(options.method==="POST")return json({ok:true});
+    return fixtureResponse(url);
+  })});
+  try{
+    await services.loadLibrary();
+    await services.listMedia(ORG,LISTING);
+    await services.api("/functions/v1/studio/listing-state?listing_id="+LISTING,{orgId:ORG});
+    await services.api("/functions/v1/renders",{orgId:ORG,method:"POST",body:{listing_id:LISTING},idempotencyKey:"region-check"});
+    const edge=seen.filter(call=>call.url.pathname.startsWith("/functions/v1/"));
+    assert.deepEqual([...new Set(edge.map(call=>call.url.pathname))].sort(),["/functions/v1/listings","/functions/v1/me","/functions/v1/me/workspaces","/functions/v1/renders","/functions/v1/studio/listing-state","/functions/v1/studio/media"]);
+    assert.equal(edge.length,seen.length);
+    assert(edge.every(call=>call.region===EDGE_FUNCTION_REGION&&call.url.origin===config.supabaseUrl));
+    // The region is a header only: it never becomes part of a path, query or body selector.
+    assert(seen.every(call=>!call.url.search.includes("region")));
+    await services.upload("https://uploads.rendprop.com/v2/"+LISTING+"?expires=1999999999&signature="+"a".repeat(64),new Blob(["photo"]),{orgId:ORG});
+    const put=seen.at(-1)!;
+    assert.equal(put.url.origin,"https://uploads.rendprop.com");assert.equal(put.region,null);
+  }finally{services.dispose();}
+});
+test("a Home card asks for one cover picture; an ordinary read is unchanged",async()=>{
+  const auth=mockAuth(),queries:string[]=[];
+  const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch(url=>{
+    if(url.pathname==="/functions/v1/studio/media"){queries.push(url.search);return json({org_id:ORG,listing_id:LISTING,photos:[],videos:[],next_offset:null,unavailable_count:0,...(url.searchParams.has("limit")?{has_more:true}:{})});}
+    return fixtureResponse(url);
+  })});
+  try{
+    await services.loadWorkspace();
+    const preview=await services.listMedia(ORG,LISTING,undefined,0,undefined,{limit:1,cover:true});
+    assert.equal(preview.hasMore,true);assert.equal(preview.nextOffset,null);
+    const full=await services.listMedia(ORG,LISTING);
+    assert.equal(Object.hasOwn(full,"hasMore"),false);
+    await services.listMedia(ORG,LISTING,undefined,0,undefined,{limit:3});
+    assert.deepEqual(queries,[`?org_id=${ORG}&listing_id=${LISTING}&offset=0&limit=1&cover=1`,`?org_id=${ORG}&listing_id=${LISTING}&offset=0`,`?org_id=${ORG}&listing_id=${LISTING}&offset=0&limit=3`]);
+    assert.equal(queries.length,3);
+  }finally{services.dispose();}
+});
 test("upload sends only media content to exact capability gateway and fences session changes",async()=>{
   const auth=mockAuth();let puts=0;
   const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
-    if(options.method==='PUT'){puts++;const h=new Headers(options.headers);assert.equal(h.get('Authorization'),null);assert.equal(h.get('apikey'),null);assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');return new Response(null,{headers:{ETag:'confirmed'}});}return fixtureResponse(url);
+    if(options.method==='PUT'){puts++;const h=new Headers(options.headers);assert.equal(h.get('Authorization'),null);assert.equal(h.get('apikey'),null);assert.equal(h.get('x-region'),null,'the upload gateway is not an Edge Function');assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');return new Response(null,{headers:{ETag:'confirmed'}});}return fixtureResponse(url);
   })});
   await services.loadWorkspace();const path='/v2/'+LISTING+'?expires=1999999999&signature='+'a'.repeat(64);
   await assert.rejects(services.upload('https://other.invalid'+path,new Blob(['photo']),{orgId:ORG}));

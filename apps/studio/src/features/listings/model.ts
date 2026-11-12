@@ -34,20 +34,20 @@ export function decodeListingState(raw: unknown, orgId: string, listingId: strin
   const rows = <T,>(key: string): T[] => {
     if (!Array.isArray(row[key]) || row[key].length > 100) throw new Error("Property activity is incomplete. Refresh to try again.");
     return row[key].map((value: Record<string, unknown>) => {
-      if (!value || value.listing_id !== listingId) throw new Error("The server returned activity from another property.");
+      if (!value || value.listing_id !== listingId) throw new Error("We got activity for a different property. Refresh this property.");
       uuid(value.id);
       return value as T;
     });
   };
   const assets = rows<Asset>("assets");
   for (const asset of assets) {
-    if (!["uploads", "renders"].includes(asset.bucket) || !["photo", "video"].includes(asset.kind) || typeof asset.storage_key !== "string" || !asset.storage_key.startsWith(`${asset.bucket}/${orgId}/${listingId}/`) || asset.storage_key.includes("..")) throw new Error("A media item could not be verified.");
-    if (asset.qc_required !== undefined && typeof asset.qc_required !== "boolean" || asset.qc_publishable !== undefined && typeof asset.qc_publishable !== "boolean" || asset.qc_message != null && (typeof asset.qc_message !== "string" || asset.qc_message.length > 1000)) throw new Error("This video’s accuracy review could not be verified.");
+    if (!["uploads", "renders"].includes(asset.bucket) || !["photo", "video"].includes(asset.kind) || typeof asset.storage_key !== "string" || !asset.storage_key.startsWith(`${asset.bucket}/${orgId}/${listingId}/`) || asset.storage_key.includes("..")) throw new Error("One photo or video could not be read. Refresh this property.");
+    if (asset.qc_required !== undefined && typeof asset.qc_required !== "boolean" || asset.qc_publishable !== undefined && typeof asset.qc_publishable !== "boolean" || asset.qc_message != null && (typeof asset.qc_message !== "string" || asset.qc_message.length > 1000)) throw new Error("We could not read this video’s accuracy check. Refresh this property.");
   }
   const photos = row.photos === undefined ? [] : rows<GalleryPhoto>("photos");
   for (const photo of photos) {
-    if (photo.caption !== null && (typeof photo.caption !== "string" || photo.caption.length > 4000) || typeof photo.is_staged !== "boolean" || typeof photo.is_main !== "boolean" || !Number.isInteger(photo.sort) || photo.sort < -32768 || photo.sort > 32767) throw new Error("Gallery details could not be verified.");
-    for (const key of [photo.original_key, photo.enhanced_key]) if (key !== null && (typeof key !== "string" || !["uploads", "renders"].some(bucket => key.startsWith(`${bucket}/${orgId}/${listingId}/`)) || key.length > 1024 || key.includes("..") || /[?#\\]/.test(key))) throw new Error("A gallery photo could not be verified.");
+    if (photo.caption !== null && (typeof photo.caption !== "string" || photo.caption.length > 4000) || typeof photo.is_staged !== "boolean" || typeof photo.is_main !== "boolean" || !Number.isInteger(photo.sort) || photo.sort < -32768 || photo.sort > 32767) throw new Error("The photo gallery could not be read. Refresh this property.");
+    for (const key of [photo.original_key, photo.enhanced_key]) if (key !== null && (typeof key !== "string" || !["uploads", "renders"].some(bucket => key.startsWith(`${bucket}/${orgId}/${listingId}/`)) || key.length > 1024 || key.includes("..") || /[?#\\]/.test(key))) throw new Error("One gallery photo could not be read. Refresh this property.");
   }
   const nextOffset = row.next_offset;
   if (nextOffset !== null && (!Number.isSafeInteger(nextOffset) || nextOffset !== offset + 100)) throw new Error("Property activity pagination changed. Refresh to try again.");

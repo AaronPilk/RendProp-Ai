@@ -683,11 +683,10 @@ function ListingCreative(
   },[services,orgId,listingId,workspace.user.id,workspace.libraryOrgId]);
   async function savePhoto() {
     if (!photoResult) return;
-    if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare the preview with its original and confirm the fixed features before saving it.");
     assertPhotoScope();
     if (!photoResult.provenanceId) {
       throw new Error(
-        "This edit needs its disclosure record before it can be saved to the gallery.",
+        "The AI-edit label for this edit was not saved, so it cannot be added to the gallery. Download it, or make the edit again.",
       );
     }
     const caption = [room, ...photoResult.disclosures.slice(0, -1)].filter(Boolean).join(" · ");
@@ -914,7 +913,7 @@ function ListingCreative(
     );
     if (!signed.url || !signed.sourceUrl || !signed.requestId) {
       throw new Error(
-        "This clip needs its saved source photo before quality review.",
+        "We could not find the photo this clip was made from, so it cannot be checked. Refresh and try again.",
       );
     }
     const [sampled, original] = await Promise.all([
@@ -942,7 +941,7 @@ function ListingCreative(
       [result.id]: {
         pass: verdict.status === "pass" && verdict.publishable === true,
         message: text(verdict.message, 1000) ||
-          "Quality review could not confirm this clip for publishing.",
+          "The accuracy check did not pass this clip. Make a new version before publishing.",
       },
     }));
     await refreshResults();
@@ -1128,7 +1127,7 @@ function ListingCreative(
             <figcaption>{source.file.name} · {originalEditing ? "original editing image" : "chosen saved photo"}</figcaption>
             {!source.originalVerified && source.original && <details open><summary>Check the paired original</summary>
               <img src={source.original.preview} alt="Paired source to verify" />
-              <p>This photo predates verified source history. Confirm the original before a new edit.</p>
+              <p>This photo was saved before Rendprop kept track of originals. Confirm this is the original before making a new edit.</p>
               <label><input type="checkbox" disabled={isBusy} onChange={event => setSource({ ...source, originalVerified: event.target.checked })} />This is the actual unedited original.</label>
             </details>}
             {savedPhotoReview && source.original && <button disabled={isBusy} onClick={() => { setPhotoTab("original"); void chooseSource({ ...importedPhoto(source.original!), originalVerified: source.originalVerified, originalAssetId: source.originalAssetId }); }}>Edit original with AI</button>}
@@ -1447,26 +1446,28 @@ function ListingCreative(
                 </figure>
               </div>
               <p>{photoResult.disclosure}</p>
-              {photoResult.edit === "custom" && <label className="creative-review-confirmation"><input type="checkbox" checked={photoResult.reviewed} disabled={isBusy} onChange={event => setPhotoResult(current => current ? { ...current, reviewed: event.target.checked } : null)} />I compared the preview with the original: paint and garage/trim finishes, fixed features, layout and property condition are unchanged.</label>}
+              {/* Owner decision, 12 Nov 2026: this comparison is the agent's own
+                  call. The tick is optional feedback; it never blocks Save,
+                  Download or another edit. */}
+              {photoResult.edit === "custom" && <><p>Compare the preview with the original before you save or share it. You are responsible for what you post.</p><label className="creative-review-confirmation"><input type="checkbox" checked={photoResult.reviewed} disabled={isBusy} onChange={event => setPhotoResult(current => current ? { ...current, reviewed: event.target.checked } : null)} />I compared the preview with the original and the home looks the same: paint, fixed features, layout and condition. (Optional. It helps us improve edits.)</label></>}
               <div className="creative-actions">
                 <button
                   className="creative-primary"
                   disabled={isBusy || photoResult.saved ||
-                    !photoResult.provenanceId || photoResult.edit === "custom" && !photoResult.reviewed}
+                    !photoResult.provenanceId}
                   onClick={() => run("Saving photo and original", savePhoto)}
                 >
                   {photoResult.saved
                     ? "Version saved"
                     : "Save version"}
                 </button>
-                <button disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} onClick={() => void run("Opening original", async () => {
-                  if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare and confirm this custom edit before continuing.");
+                <button disabled={isBusy} onClick={() => void run("Opening original", async () => {
                   if(photoRequestRow.current){await finishPhotoRequest(photoRequestRow.current);photoRequestRow.current=null;}
                   const next = { ...importedPhoto(photoResult.source.original!), originalAssetId: photoResult.originalAssetId };
                   setPhotoTab("original");
                   await chooseSource(next);
                 })}>Edit original again</button>
-                <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed}
+                <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy}
                   onDownloaded={reviewedOutput ? () => feedback.signal(reviewedOutput, "export") : undefined} />
               </div>
               {reviewedOutput && <PhotoFeedbackControl key={reviewedOutput} queue={feedback} provenanceId={reviewedOutput} file={photoResult.file} />}
@@ -2097,7 +2098,7 @@ function ListingCreative(
                   )}
                   {result.assetId && (
                     <small>
-                      Saved to this property's video library. Open the listing
+                      Saved with this property's videos. Open the listing
                       to edit or publish it.
                     </small>
                   )}

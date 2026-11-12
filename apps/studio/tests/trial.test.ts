@@ -50,7 +50,7 @@ test("present service activation refuses wrong workspace, malformed fields and e
     { org_id: ORG, authority, available, funded: !funded },
     { org_id: ORG, authority, available: String(available), funded },
     { org_id: ORG, authority, available, funded: Number(funded) },
-  ]) assert.throws(() => decodeServingActivation(bad, ORG), /activation could not be verified/);
+  ]) assert.throws(() => decodeServingActivation(bad, ORG), /could not check that your plan is switched on/);
   for (const bad of [null, [], true, {}, { org_id: ORG, available: true, funded: true, authority: "unrecognized" },
     { org_id: ORG, available: true, funded: true, authority: "__proto__" }]) {
     assert.throws(() => decodeServingActivation(bad, ORG));
@@ -114,7 +114,10 @@ test("funded five-edit intro stays visible with a paid SKU name and ceiling enve
   assert.equal(currentTrialAllowance(current), true);
   const html = renderToStaticMarkup(createElement(TrialAllowance, { trial: current.trialUsage! }));
   assert.match(html, /5 AI photo edit|AI photo edit credits/);
-  assert.match(html, /decluttering or staging/);
+  assert.match(html, /staging, declutter, twilight, sky, lawn or custom change uses one AI photo edit/);
+  // Trial terms in plain words: how many edits, in how many days.
+  assert.match(html, /Your free trial includes 5 AI photo edits to use within 7 days/);
+  assert.doesNotMatch(html, /unavailable|capacity|temporarily|limited AI/i);
   assert.match(html, /website publishing begin with a paid plan/);
   assert.doesNotMatch(html, /Hosted walkthrough<|Published listing<|1 remaining/);
   assert.equal(currentTrialAllowance({ ...current, servingActivation: null, plan: "pro" }), false,
@@ -157,7 +160,7 @@ test("malformed trial counters and windows are refused instead of offering addit
     { ...trial(), walkthroughs: { used: 0, cap: 0, remaining: 0 } },
     { ...trial(), published_listings: { used: 0, cap: 0, remaining: 0 } },
     { ...trial(), upload_budget_bytes: 1_073_741_825 },
-  ]) assert.throws(() => decodeTrialUsage(value, ORG), /allowance could not be verified/);
+  ]) assert.throws(() => decodeTrialUsage(value, ORG), /could not check your free trial/);
 });
 test("refreshing the account uses fresh trial usage rather than the workspace's earlier snapshot", () => {
   const selected = decodeWorkspace({ ...workspace(), trial_usage: trial() }, USER, memberships);
@@ -189,10 +192,10 @@ test("dormant offer never displays proposed caps; enabled offers require verifie
   }
   for (const edits of [4, 21]) {
     assert.throws(() => decodeTrialOffer({ ...offer, walkthroughs: 0, published_listings: 0, max_video_seconds: 0, photo_edits: edits }),
-      /allowance could not be verified/);
+      /could not check your free trial/);
   }
   for (const value of [{ ...offer, enabled: "true" }, { ...offer, max_days: 8 }, { ...offer, walkthroughs: 0 }, { ...offer, photo_edits: -1 }, { ...offer, max_video_seconds: undefined }, { ...offer, walkthroughs: 2 }, { ...offer, photo_edits: 21 }, { ...offer, photo_edits: 20.5 }, { ...offer, photo_edits: "20" }, { ...offer, published_listings: 2 }, { ...offer, max_video_seconds: 91 }, { ...offer, upload_budget_bytes: 1_073_741_825 }]) {
-    assert.throws(() => decodeTrialOffer(value), /allowance could not be verified/);
+    assert.throws(() => decodeTrialOffer(value), /could not check your free trial/);
   }
 });
 test("active trial view preserves remaining photo and publication steps after walkthrough is used", () => {
@@ -212,7 +215,7 @@ test("exhausted and expired views keep saved-work access and explicit subscripti
     const html = renderToStaticMarkup(createElement(TrialAllowance, { trial: decoded }));
     assert.match(html, /saved photos and downloads remain accessible/);
     assert.match(html, /apps.apple.com\/account\/subscriptions/);
-    assert.match(html, status === "expired" ? /creation window has ended/ : /included trial allowance/);
+    assert.match(html, status === "expired" ? /Your free trial has ended/ : /used all \d+ AI photo edits? in your free trial/);
     assert.doesNotMatch(html, /charged now|delete your/);
   }
 });
@@ -222,5 +225,5 @@ test("full upload allowance leaves photo and publication counters visible for ex
   assert.match(html, /0 MB remaining/);
   assert.match(html, /3 remaining/);
   assert.match(html, /1 remaining/);
-  assert.doesNotMatch(html, /creation window has ended|used your included trial allowance/);
+  assert.doesNotMatch(html, /free trial has ended|used all \d+ AI photo edit/);
 });

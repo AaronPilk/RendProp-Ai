@@ -63,7 +63,7 @@ function originalExtension(bytes: Uint8Array) {
   if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "jpg";
   if ([137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte)) return "png";
   if (new TextDecoder().decode(bytes.slice(0, 4)) === "RIFF" && new TextDecoder().decode(bytes.slice(8, 12)) === "WEBP") return "webp";
-  throw new Error("The original photo format could not be verified.");
+  throw new Error("We could not tell what kind of file the original photo is, so it was not added. Download the original from the property instead.");
 }
 export async function buildPhotoDownload(photos: readonly PhotoDelivery[], options: PhotoExportOptions,
   signal: AbortSignal, assertScope: () => void, renderer = renderPhoto) {
@@ -79,7 +79,7 @@ export async function buildPhotoDownload(photos: readonly PhotoDelivery[], optio
     entries.push({ path: editedPath, bytes });
     let original: { path: string; sha256: string } | null = null;
     if (photo.originalVerified) {
-      if (!photo.original) throw new Error("This photo has no verified original to include.");
+      if (!photo.original) throw new Error("This photo has no confirmed original to include.");
       const originalBytes = new Uint8Array(await photo.original.arrayBuffer()); check();
       // Source preparation decoded this file; the ZIP retains its exact bytes.
       const path = `photos/${stem}-01-original.${originalExtension(originalBytes)}`;

@@ -137,7 +137,7 @@ test("creative results reject unapproved media hosts and do not decode arbitrary
   assert.ok(!JSON.stringify(result).includes("private-job"));
   assert.throws(
     () => decodeResult({ ...raw, url: "https://unknown.invalid/video.mp4" }),
-    /invalid media/,
+    /link to this result is not valid/,
   );
   assert.throws(
     () =>
@@ -146,7 +146,7 @@ test("creative results reject unapproved media hosts and do not decode arbitrary
         source_url:
           "https://evil012345678901234567890123456789ab.r2.cloudflarestorage.com/file",
       }),
-    /invalid media/,
+    /link to this result is not valid/,
   );
 });
 test("caption export uses service timing and removes embedded line breaks", () => {

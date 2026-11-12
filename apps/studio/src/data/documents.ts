@@ -2,13 +2,13 @@ import { StudioError } from "./config";
 import type { StudioServices } from "./services";
 export type CloudDocument = { key: string; kind: string; listing_id: string | null; revision: number; payload: Record<string, unknown>; updated_at: string };
 export function decodeDocument(raw: unknown, key: string): CloudDocument | null {
-  if (!raw || typeof raw !== "object" || !("document" in raw)) throw new Error("Saved work could not be read.");
+  if (!raw || typeof raw !== "object" || !("document" in raw)) throw new Error("We could not open your saved work. Refresh and try again.");
   const value = (raw as {document: unknown}).document;
   if (value === null) return null;
   const doc = value as CloudDocument;
   if (doc.key !== key || !Number.isSafeInteger(doc.revision) || doc.revision < 1 ||
     !doc.payload || typeof doc.payload !== "object" || Array.isArray(doc.payload) || !Number.isFinite(Date.parse(doc.updated_at)))
-    throw new Error("Saved work could not be read.");
+    throw new Error("We could not open your saved work. Refresh and try again.");
   return doc;
 }
 export type SyncState = "loading" | "saved" | "saving" | "offline" | "conflict";
@@ -74,8 +74,8 @@ export class DocumentSync {
         orgId:this.orgId,method:"POST",signal:this.controller.signal,
         body:{key:this.key,kind,...(this.binding ? {listing_id:this.binding.listingId} : this.key.includes(":") ? {listing_id:this.key.split(":")[1]} : {}),expected_revision:this.revision,payload},
       }),this.key);
-      if (!doc) throw new Error("Save confirmation was missing.");
-      if (doc.revision !== attempt.revision + 1 || canonicalDocument(doc.payload) !== attempt.payload) throw new Error("Save confirmation did not match this draft.");
+      if (!doc) throw new Error("We could not confirm your work was saved. Refresh to check before saving again.");
+      if (doc.revision !== attempt.revision + 1 || canonicalDocument(doc.payload) !== attempt.payload) throw new Error("The save we got back was for a different draft. Refresh to check before saving again.");
       this.uncertain = null;
       this.revision = doc.revision; this.saved=canonicalDocument(doc.payload);
       if (this.pending && canonicalDocument(this.pending) === this.saved) this.pending = null;

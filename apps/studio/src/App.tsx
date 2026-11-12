@@ -824,7 +824,7 @@ export default function App({ servicesFactory }: {
       });
       if (!response.ok || !response.body)
         throw new Error(
-          "Media could not be downloaded. Refresh the library to renew its link.",
+          "This could not be downloaded. Refresh, then try again.",
         );
       const declared = Number(response.headers.get("content-length"));
       if (declared > EDIT_LIMITS.fileBytes)
@@ -869,7 +869,7 @@ export default function App({ servicesFactory }: {
     } catch (error) {
       if (timedOut && currentScope())
         setNotice(
-          "Media download timed out. Check your connection, refresh the library, and try again.",
+          "The download took too long. Check your connection, refresh, and try again.",
         );
       else if (!controller.signal.aborted && currentScope())
         setNotice(errorMessage(error));
@@ -915,7 +915,7 @@ export default function App({ servicesFactory }: {
           </span>
           <div>
             {workspace?.canSwitchAgentLibraries && workspace.memberships.length > 1 ? <><label className="sr-only" htmlFor="switch-workspace">Switch agent</label><select id="switch-workspace" value={workspace.org.id} onChange={e=>{transfer.current?.abort();setRequestedOrg(e.target.value);}}>{workspace.memberships.map(m=><option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}</select></> : <strong>{workspace?.org.name || "Your creative space"}</strong>}
-            <small>{workspace ? "Your listing library" : "Local projects"}</small>
+            <small>{workspace ? "Your listings" : "Local projects"}</small>
           </div>
         </div>
         <p className="nav-label">YOUR STUDIO</p>
@@ -1078,7 +1078,7 @@ export default function App({ servicesFactory }: {
                       ? "The spaces and content from your Rendprop account."
                       : page === "planner"
                         ? "A clear plan for what comes next."
-                        : "One identity. Your existing Rendprop workspace."}
+                        : "One sign-in. Your existing Rendprop workspace."}
               </p>
             </div>
           </div>}
@@ -1367,7 +1367,7 @@ export default function App({ servicesFactory }: {
                     </dl>
                     <p className="muted small">
                       Choose or change your plan in the iPhone app under Settings → Plan &amp; usage.
-                      A 7-day trial starts only after you confirm an eligible Apple subscription offer.
+                      {workspace.trialOffer ? `New subscribers get a ${workspace.trialOffer.maxDays}-day free trial with ${workspace.trialOffer.photoEdits} AI photo edits when they choose a monthly plan there.` : "A free trial starts only after you confirm it with Apple there."}{" "}
                       Signing in does not start a trial; Studio uses that same subscription.
                     </p>
                     <button onClick={() => void signOut()} disabled={authBusy}>

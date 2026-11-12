@@ -75,8 +75,8 @@ test("direct video URLs reject wrong path, transport, expiry and result bucket b
   privateURL("uploads",asset),
  ];
  for(const preview of badPreviews)assert.throws(()=>decodeSources({...raw,sources:[{...photo(1),preview_url:preview}]},scope),preview);
- assert.throws(()=>decodeJob({...ready(),result:{...ready().result,download_url:directURL("uploads")}},scope),/render storage/);
- assert.throws(()=>decodeJob({...ready(),result:{...ready().result,download_url:privateURL("uploads")}},scope),/private download address/);
+ assert.throws(()=>decodeJob({...ready(),result:{...ready().result,download_url:directURL("uploads")}},scope),/points to the wrong place/);
+ assert.throws(()=>decodeJob({...ready(),result:{...ready().result,download_url:privateURL("uploads")}},scope),/does not belong to this account or home/);
 });
 
 test("all100 photos keep exact input order across20-photo plans, even with reversed responses and a legacy reorder preference",async()=>{
@@ -87,8 +87,8 @@ test("all100 photos keep exact input order across20-photo plans, even with rever
  assert.deepEqual(batches,[20,20,20,20,20]);assert.equal(planned.length,100);assert.deepEqual(planned.map(s=>s.photo_id),frozen.map(s=>s.photo_id));assert.equal(new Set(planned.map(s=>s.photo_asset_id)).size,100);
  assert.deepEqual(planned.map(s=>[s.photo_asset_id,s.photo_version_id,s.photo_provenance_id]),frozen.map(s=>[s.photo_asset_id,s.photo_version_id,s.photo_provenance_id]));assert.equal(planned[0]!.motion,"side_glide");
  const ordered=await planVideoSources(api,scope,frozen,operation,false);assert.deepEqual(ordered.map(s=>s.photo_id),frozen.map(s=>s.photo_id));
- await assert.rejects(()=>planVideoSources(service(async()=>({listing_id:listing,org_id:library,photos:[]})),scope,frozen,operation,true),/omitted/);
- for(const fault of ["duplicate","wrong-asset"]){await assert.rejects(()=>planVideoSources(service(async(_path,options)=>({listing_id:listing,org_id:library,photos:options.body.photos.map((p:any,index:number)=>({...p,...(index===1?(fault==="duplicate"?{photo_id:options.body.photos[0].photo_id}:{asset_id:poster}):{}),scene:"living",confidence:.9,motion:"push_in"}))})),scope,frozen,operation,true),/repeats|changed/);}
+ await assert.rejects(()=>planVideoSources(service(async()=>({listing_id:listing,org_id:library,photos:[]})),scope,frozen,operation,true),/left out one of your photos/);
+ for(const fault of ["duplicate","wrong-asset"]){await assert.rejects(()=>planVideoSources(service(async(_path,options)=>({listing_id:listing,org_id:library,photos:options.body.photos.map((p:any,index:number)=>({...p,...(index===1?(fault==="duplicate"?{photo_id:options.body.photos[0].photo_id}:{asset_id:poster}):{}),scene:"living",confidence:.9,motion:"push_in"}))})),scope,frozen,operation,true),/used one photo twice|swapped one of your photos/);}
  assert.deepEqual(frozen,selectedSources(photos,photos.map(s=>s.photo_id)),"planning cannot mutate selected source/version identity");
 });
 
@@ -204,7 +204,7 @@ test("only exact durable refusal proof permits a new operation; unknown or accep
  assert.deepEqual(await inspectVideoOperation(service(async()=>proof),scope,journal),{job:null,closed:true});
  assert.deepEqual(await inspectVideoOperation(service(async()=>({job:null})),scope,journal),{job:null,closed:false});
  assert.deepEqual(await inspectVideoOperation(service(async()=>({job:queued()})),scope,journal),{job:decodeJob(queued(),scope),closed:false});
- for(const bad of [{...proof,operation_id:poster},{...proof,listing_id:asset},{...proof,selected_library_org_id:org},{...proof,job:queued()}])await assert.rejects(()=>inspectVideoOperation(service(async()=>bad),scope,journal),/proof/);
+ for(const bad of [{...proof,operation_id:poster},{...proof,listing_id:asset},{...proof,selected_library_org_id:org},{...proof,job:queued()}])await assert.rejects(()=>inspectVideoOperation(service(async()=>bad),scope,journal),/for a different video request/);
  await assert.rejects(()=>inspectVideoOperation(service(async()=>{throw Error('unknown network outcome');}),scope,journal),/unknown/);
  const saved=storage();saveVideoJournal(saved,scope,journal);retainRejectedVideo(saved,scope,journal);
  const archive=`${videoScopeKey(scope)}:capacity-refused:${operation}`;
@@ -225,7 +225,7 @@ test("website selection is explicit, scoped and repeats the same publication ide
  assert.equal((await publishVideo(svc,scope,job,pub,undefined,async()=>false)).url,null,'an authoritative 404 withholds the link after a publish reply');
  assert.equal((await publishVideo(svc,scope,job,pub,undefined,async()=>({links:{branded:"https://rendprop.com/property/10-oak-street/20261027.other",unbranded:"https://rendprop.com/u/owned123"},verified:true,addressOnly:false}))).url,"https://rendprop.com/f/owned123",'a different publication is never opened');
  await assert.rejects(()=>publishVideo(service(async()=>{throw Error("must not publish social");}),scope,decodeJob({...ready(),result:{...ready().result,width:1080,height:1920,branding_policy:"social"}},scope),pub));
- await assert.rejects(()=>publishVideo(service(async()=>({listing_id:asset})),scope,job,pub),/not confirmed/);
+ await assert.rejects(()=>publishVideo(service(async()=>({listing_id:asset})),scope,job,pub),/could not confirm this video was put on the website/);
 });
 
 test("reviewed Photo Motion publication carries the exact server profile and source receipts",async()=>{
@@ -274,7 +274,7 @@ test("optional catalog remains Off by default and pins licensed bytes/evidence",
  const paused=decodeJob({...queued(),consent_revision:"property-video-jobs-v1",processor_consent:null,quality_profile:"legacy",state:"failed",resume_available:true,completed_sources:1},scope);
  let calls=0;const resumed=await resumeVideo(service(async(path,options)=>{calls++;assert.equal(path,`/functions/v1/property-video-jobs/${jobID}/resume`);assert.equal(options.method,"POST");assert.equal(options.aiConsent,"property-video-jobs-v1");assert.deepEqual(options.body,{});return{...queued(),state:"queued",completed_sources:1};}),scope,paused);
  assert.equal(resumed.job_id,jobID);assert.equal(calls,1);
- await assert.rejects(()=>resumeVideo(service(async()=>{throw Error("must not send");}),scope,decodeJob({...queued(),state:"failed"},scope)),/not available/);
- await assert.rejects(()=>resumeVideo(service(async()=>({...queued(),completed_sources:0})),scope,paused),/same saved/);
- assert.throws(()=>decodeJob({...queued(),resume_available:true},scope),/resume state/);
+ await assert.rejects(()=>resumeVideo(service(async()=>{throw Error("must not send");}),scope,decodeJob({...queued(),state:"failed"},scope)),/cannot be resumed/);
+ await assert.rejects(()=>resumeVideo(service(async()=>({...queued(),completed_sources:0})),scope,paused),/right video was resumed/);
+ assert.throws(()=>decodeJob({...queued(),resume_available:true},scope),/could not tell whether this video can be resumed/);
 });

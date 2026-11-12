@@ -10,7 +10,7 @@ test("per-listing client decoding binds identity and retains private delivery se
   const parsed = decodeClientContact({ contact }, listing)!;
   assert.equal(parsed.recipient_email, "private@example.invalid"); assert.equal(parsed.public_card.email, "public@example.invalid");
   assert.equal(clientForm(parsed).separate_recipient, true); assert.equal(clientForm(null).enabled, false); assert.equal(clientForm(null).hide_rendprop_branding, true);
-  assert.throws(() => decodeClientContact({ contact }, org), /another property/);
+  assert.throws(() => decodeClientContact({ contact }, org), /belongs to a different property/);
 });
 test("incomplete or unreadable client responses block publishing", () => {
   for (const bad of [undefined, {}, { contact: { ...contact, enabled: "true" } }, { contact: { ...contact, revision: 0 } }, { contact: { ...contact, updated_at: "bad" } }, { contact: { ...contact, public_card: {} } }, { contact: { ...contact, recipient_email: "invalid" } }, { contact: { ...contact, public_card: { name: "Client", avatar_url: "javascript:alert(1)" } } }]) assert.throws(() => decodeClientContact(bad, listing));
@@ -67,7 +67,7 @@ test("typed client email stays publishable but forwarding authority requires exa
     { recipient_verified_email: contact.recipient_email, recipient_verified_at: "not-a-date" },
     { recipient_verified_email: contact.recipient_email, recipient_verified_at: null },
     { recipient_verified_email: null, recipient_verified_at: "2026-10-05T12:00:00Z" },
-  ]) assert.throws(() => decodeClientContact({ contact: { ...contact, ...fields } }, listing), /verification/);
+  ]) assert.throws(() => decodeClientContact({ contact: { ...contact, ...fields } }, listing), /client’s email is confirmed/);
   const payload = clientContactPayload(clientForm(verified), verified.revision);
   assert.equal("recipient_verified_email" in payload, false);
   assert.equal("recipient_verified_at" in payload, false);

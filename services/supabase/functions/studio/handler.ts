@@ -52,6 +52,9 @@ export type RenderRow = {
   duration_s: number | null;
   created_at: string;
 };
+/** A short first page. `limit` rows of each kind (plus one lookahead row);
+ * `cover` reads photos only and puts the listing's chosen cover first. */
+export type MediaPreview = { limit: number; cover: boolean };
 export interface StudioDependencies {
   authorize(
     req: Request,
@@ -62,6 +65,8 @@ export interface StudioDependencies {
   read(
     scope: MediaScope,
     offset: number,
+    /** Absent for an ordinary 50-item page, which reads exactly as before. */
+    preview?: MediaPreview,
   ): Promise<{ photos: PhotoRow[]; assets: AssetRow[]; renders: RenderRow[]; photoAssetAliases?: string[]; photoEdits?: Record<string, PhotoEditProof> }>;
   mediaVisibility(scope: MediaScope, refs: MediaSourceRefs): Promise<MediaVisibility>;
   sign(
@@ -168,6 +173,15 @@ export function createStudioHandler(deps: StudioDependencies) {
         400,
         "Invalid media page.",
       );
+      // Optional short first page for a caller that shows one picture (a Home
+      // card). Without `limit` or `cover` nothing below differs from before.
+      const rawLimit = url.searchParams.get("limit"), rawCover = url.searchParams.get("cover");
+      assert(rawLimit === null || /^(?:[1-9]|[1-4]\d|50)$/.test(rawLimit), 400, "Invalid media page size.");
+      assert(rawCover === null || rawCover === "1", 400, "Invalid media page.");
+      const limit = rawLimit === null ? PAGE_SIZE : Number(rawLimit);
+      const preview: MediaPreview | undefined = limit < PAGE_SIZE || rawCover === "1" ? { limit, cover: rawCover === "1" } : undefined;
+      // A preview is the start of a listing, never a paging position.
+      assert(!preview || offset === 0, 400, "Invalid media page.");
       const scope = await measured("authorize_initial_ms", () => deps.authorize(req, orgId, listingId));
       assert(
         scope.orgId === orgId && scope.listingId === listingId,
@@ -179,12 +193,12 @@ export function createStudioHandler(deps: StudioDependencies) {
         429,
         "Too many library refreshes. Please wait a minute.",
       );
-      const rows = await measured("read_ms", () => deps.read(scope, offset));
+      const rows = await measured("read_ms", () => preview ? deps.read(scope, offset, preview) : deps.read(scope, offset));
       // Validate the complete page (including its lookahead) before creating
       // even the first capability. A broken query must fail, not be truncated.
       for (const list of [rows.photos, rows.assets, rows.renders]) {
         assert(
-          Array.isArray(list) && list.length <= PAGE_SIZE + 1,
+          Array.isArray(list) && list.length <= limit + 1,
           500,
           "Media page exceeded its query bound.",
         );
@@ -202,14 +216,14 @@ export function createStudioHandler(deps: StudioDependencies) {
         (typeof photo.caption === "string" && photo.caption.length <= MAX_CAPTION_CHARS)),
         422, "A media caption is too large for Studio. Shorten it in the app and refresh.");
       const more = [rows.photos, rows.assets, rows.renders].some(
-        (list) => list.length > PAGE_SIZE,
+        (list) => list.length > limit,
       );
       assert(
         !(more && offset === 10000),
         422,
         "This space exceeds the Studio library paging limit. Contact support to access the remaining media.",
       );
-      const pagePhotos = rows.photos.slice(0, PAGE_SIZE), pageAssets = rows.assets.slice(0, PAGE_SIZE), pageRenders = rows.renders.slice(0, PAGE_SIZE);
+      const pagePhotos = rows.photos.slice(0, limit), pageAssets = rows.assets.slice(0, limit), pageRenders = rows.renders.slice(0, limit);
       const access = await measured("visibility_initial_ms", () => deps.mediaVisibility(scope, {
         assets: pageAssets.map(row => row.id), renders: pageRenders.map(row => row.id),
         keys: [...pagePhotos.flatMap(row => [row.original_key, row.enhanced_key]), ...pageAssets.map(row => row.storage_key), ...pageRenders.map(row => row.video_key)]
@@ -386,16 +400,27 @@ export function createStudioHandler(deps: StudioDependencies) {
       // Membership/deletion can change while the page is being read or signed.
       // Recheck live state before releasing any capabilities, never reuse JWT
       // metadata or the initial lookup as a revocation cache.
-      const finalScope = await measured("authorize_final_ms", () => deps.authorize(req, orgId, listingId));
+      // The three final checks read independent live state and all three must
+      // pass before a link is released, so they run together. Each still starts
+      // in the old order, every one is drained, and a failure is reported in
+      // the old order: membership first, then media access, then signing policy.
+      const [finalAuthorize, finalVisibility, finalPolicy] = await Promise.allSettled([
+        measured("authorize_final_ms", () => deps.authorize(req, orgId, listingId)),
+        measured("visibility_final_ms", () => deps.mediaVisibility(scope, { assets: usedAssets, renders: usedRenders, keys: [...exposedKeys] })),
+        measured("signing_policy_final_ms", () => deps.assertSigningPolicyFresh()),
+      ]);
+      if (finalAuthorize.status === "rejected") throw finalAuthorize.reason;
+      const finalScope = finalAuthorize.value;
       assert(
         finalScope.userId === scope.userId && finalScope.orgId === orgId &&
           finalScope.listingId === listingId,
         403,
         "Workspace authorization failed.",
       );
-      const finalAccess = await measured("visibility_final_ms", () => deps.mediaVisibility(scope, { assets: usedAssets, renders: usedRenders, keys: [...exposedKeys] }));
+      if (finalVisibility.status === "rejected") throw finalVisibility.reason;
+      const finalAccess = finalVisibility.value;
       assert(usedAssets.every(id => finalAccess.assets[id] === true) && usedRenders.every(id => finalAccess.renders[id] === true) && [...exposedKeys].every(key => finalAccess.keys[key] === true), 404, "Media access changed. Refresh the library.");
-      await measured("signing_policy_final_ms", () => deps.assertSigningPolicyFresh());
+      if (finalPolicy.status === "rejected") throw finalPolicy.reason;
       assert(
         deps.now() < Date.parse(expires_at),
         503,
@@ -410,8 +435,10 @@ export function createStudioHandler(deps: StudioDependencies) {
           listing_id: listingId,
           photos,
           videos,
-          next_offset: more ? offset + PAGE_SIZE : null,
+          // A preview never pages: it reports only whether more exists.
+          next_offset: more && !preview ? offset + PAGE_SIZE : null,
           unavailable_count: unavailable,
+          ...(preview ? { has_more: more } : {}),
         },
         200,
         headers,

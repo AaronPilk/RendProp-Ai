@@ -4,7 +4,7 @@ export const clientCardFields = ["name", "title", "brokerage", "phone", "email",
 export type ClientCard = Partial<Record<typeof clientCardFields[number] | "avatar_url", string>>;
 export type ClientContact = { listing_id: string; enabled: boolean; public_card: ClientCard; recipient_email: string; recipient_verified_email?: string | null; recipient_verified_at?: string | null; hide_rendprop_branding: boolean; photo_asset_id?: string | null; revision: number; updated_at: string };
 export type ClientForm = { enabled: boolean; public_card: Record<typeof clientCardFields[number], string>; recipient_email: string; separate_recipient: boolean; hide_rendprop_branding: boolean; photo_asset_id: string | null; avatar_url: string | null };
-const row = (value: unknown): Record<string, unknown> => { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("The listing contact could not be verified. Refresh before publishing."); return value as Record<string, unknown>; };
+const row = (value: unknown): Record<string, unknown> => { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("We could not read the listing contact. Refresh before publishing."); return value as Record<string, unknown>; };
 const text = (value: unknown, max = 300): string => { if (value === undefined || value === null) return ""; if (typeof value !== "string" || value.length > max || /[\u0000-\u001f\u007f]/.test(value)) throw new Error("The listing contact contains an unreadable field."); return value; };
 export function contactHTTPS(value: string): string | null { try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password ? url.href : null; } catch { return null; } }
 export function contactEmail(value: string): boolean { return value.length <= 200 && /^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(value); }
@@ -12,17 +12,17 @@ export function decodeClientContact(raw: unknown, listingId: string): ClientCont
   const value = row(raw).contact;
   if (value === null) return null;
   const contact = row(value), card = row(contact.public_card);
-  if (uuid(contact.listing_id) !== uuid(listingId) || typeof contact.enabled !== "boolean" || typeof contact.hide_rendprop_branding !== "boolean" || !Number.isSafeInteger(contact.revision) || Number(contact.revision) < 1) throw new Error("This contact belongs to another property or an unreadable revision.");
+  if (uuid(contact.listing_id) !== uuid(listingId) || typeof contact.enabled !== "boolean" || typeof contact.hide_rendprop_branding !== "boolean" || !Number.isSafeInteger(contact.revision) || Number(contact.revision) < 1) throw new Error("This contact belongs to a different property or could not be read. Refresh and try again.");
   const public_card: ClientCard = {};
   for (const key of clientCardFields) { const value = text(card[key]); if (value) public_card[key] = value; }
   const avatar = text(card.avatar_url, 4096);
-  if (avatar && !contactHTTPS(avatar)) throw new Error("The contact photo could not be verified.");
+  if (avatar && !contactHTTPS(avatar)) throw new Error("We could not read the contact photo. Refresh and try again.");
   if (avatar) public_card.avatar_url = avatar;
   const recipient_email = text(contact.recipient_email, 200), updated_at = text(contact.updated_at);
   if (contact.enabled && (!public_card.name?.trim() || !contactEmail(recipient_email)) || !Number.isFinite(Date.parse(updated_at))) throw new Error("The client contact is incomplete. Refresh before publishing.");
   const verified_email = contact.recipient_verified_email == null ? null : text(contact.recipient_verified_email, 200);
   const verified_at = contact.recipient_verified_at == null ? null : text(contact.recipient_verified_at);
-  if ((verified_email === null) !== (verified_at === null) || (verified_at !== null && (!Number.isFinite(Date.parse(verified_at)) || verified_email !== recipient_email))) throw new Error("The recipient verification could not be confirmed. Refresh the saved contact.");
+  if ((verified_email === null) !== (verified_at === null) || (verified_at !== null && (!Number.isFinite(Date.parse(verified_at)) || verified_email !== recipient_email))) throw new Error("We could not tell whether the client’s email is confirmed. Refresh the saved contact.");
   return { listing_id: listingId, enabled: contact.enabled, public_card, recipient_email, recipient_verified_email: verified_email, recipient_verified_at: verified_at, hide_rendprop_branding: contact.hide_rendprop_branding, photo_asset_id: contact.photo_asset_id == null ? null : uuid(contact.photo_asset_id), revision: Number(contact.revision), updated_at };
 }
 export function clientRecipientVerified(contact: ClientContact | null): boolean {

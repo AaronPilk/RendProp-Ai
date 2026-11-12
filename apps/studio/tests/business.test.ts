@@ -49,12 +49,16 @@ test("workspace and user identity are checked on account hydration", () => {
   assert.match(envelopeResetLine({ ...decodeServingEnvelope(envelope)!, kind: "grace", window: "apple_grace" }, (iso) => iso.slice(0, 10))!, /^Billing grace ends 2026-11-01\./);
   assert.match(envelopeResetLine({ ...decodeServingEnvelope(envelope)!, kind: "trial", window: "intro_window" }, (iso) => iso.slice(0, 10))!, /^Introductory AI allowance ends 2026-11-01\./);
 });
-test("trial capacity copy handles unavailable and ended pools without promising more AI", () => {
+test("trial copy states the terms in plain words and never says trial AI is unavailable or rationed", () => {
   const now = Date.parse("2026-10-08T12:00:00Z"), format = (iso: string) => iso.slice(0, 10);
   const trial: ServingEnvelope = { kind: "trial", ceilingCents: 500, spentCents: 0, heldCents: 0, availableCents: 500, periodStart: null, periodEnd: null, window: "trial_window", pool: { capCents: 29000, spentCents: 0, startsAt: "2026-10-08T00:00:00Z", endsAt: "2026-11-08T00:00:00Z" } };
-  assert.match(envelopeTrialLine(trial, format, now)!, /subject to available capacity until 2026-11-08/);
+  const terms = envelopeTrialLine(trial, format, now)!;
+  assert.match(terms, /free trial lasts 7 days and includes AI photo edits/);
+  // Whatever the server's shared bookkeeping says (missing, not started, spent, ended), the line is the same.
   for (const pool of [null, { ...trial.pool!, startsAt: null }, { ...trial.pool!, startsAt: "2026-10-09T00:00:00Z" }, { ...trial.pool!, spentCents: 29000 }, { ...trial.pool!, endsAt: null }, { ...trial.pool!, endsAt: "2026-10-07T00:00:00Z" }]) {
-    assert.match(envelopeTrialLine({ ...trial, pool }, format, now)!, /temporarily unavailable/);
+    const line = envelopeTrialLine({ ...trial, pool }, format, now)!;
+    assert.equal(line, terms);
+    assert.doesNotMatch(line, /unavailable|capacity|temporarily|first \d|limited|pool|waitlist/i);
   }
   assert.equal(envelopeTrialLine({ ...trial, kind: "retail" }, format, now), null);
 });

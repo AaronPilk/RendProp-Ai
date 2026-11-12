@@ -6,10 +6,10 @@ export type PhotoPackage = {
 };
 export function decodePhotoPackage(value: unknown, orgId: string, now = Date.now()): PhotoPackage | null {
   if (value == null) return null;
-  const invalid = (): never => { throw new StudioError("invalid-response", "Your photo allowance could not be verified. Refresh before starting new work."); };
+  const invalid = (): never => { throw new StudioError("invalid-response", "We could not check how many photo edits you have left. Refresh before starting new work."); };
   if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
   const row = value as Record<string, unknown>;
-  if (row.org_id !== orgId) throw new StudioError("identity-mismatch", "This photo allowance belongs to a different workspace. Reload Studio.");
+  if (row.org_id !== orgId) throw new StudioError("identity-mismatch", "This photo edit count belongs to a different workspace. Reload Studio.");
   const integer = (v: unknown, max: number): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= max;
   const timestamp = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(v) && Number.isFinite(Date.parse(v));
   const p = row.photo_admissions as Record<string, unknown> | null, a = row.other_ai as Record<string, unknown> | null;

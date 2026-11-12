@@ -53,7 +53,13 @@ export async function gallerySelectionRequest(context:Context,listing:string,bod
    await context.authorizeListing(listing);
    return json({...value,ok:true,action:"remove",photo_id:body.photo_id,gallery_remove:removed.gallery_remove},200,{"cache-control":"private, no-store"});
   }
-  name="studio_gallery_selection_change";args={...args,p_action:action,p_photo:action==="reorder_selected"?null:body.photo_id,p_expected:expected,p_expected_order:action==="reorder_selected"?body.expected_order:null,p_order:action==="reorder_selected"?body.photo_ids:null,p_reviewed:body.reviewed===true};
+  name="studio_gallery_selection_change";args={...args,p_action:action,p_photo:action==="reorder_selected"?null:body.photo_id,p_expected:expected,p_expected_order:action==="reorder_selected"?body.expected_order:null,p_order:action==="reorder_selected"?body.photo_ids:null,
+   // Owner decision, 12 Nov 2026: comparing an AI edit with its original is the
+   // agent's responsibility and is shown as a note, never a tick that blocks.
+   // The database function still asks for this flag, so it is always set. Its
+   // own checks are unchanged: the photo's original, its AI-edit disclosure
+   // record and current visibility (`can_use`) must all still hold.
+   p_reviewed:true};
  }
  const {data,error}=await context.admin.rpc(name,args);rpcError(error);
  const value=checkedGallerySelection(data,{actor:context.userId,org:context.orgId,library:scope.library_org_id,listing});

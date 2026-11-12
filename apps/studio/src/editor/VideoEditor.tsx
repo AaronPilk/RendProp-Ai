@@ -119,7 +119,7 @@ export type VideoEditorProps = {
 function errorText(error: unknown): string {
   return error instanceof Error
     ? error.message
-    : "The browser could not complete that operation.";
+    : "The browser could not finish that. Try again.";
 }
 function inactiveExportError() {
   return new DOMException(
@@ -405,7 +405,7 @@ export function VideoEditor({
       const next = direction === "undo" ? undoHistory(current) : redoHistory(current);
       if (!replaceHistory(next)) return;
       const missingCount = draftMedia(next.present).filter((clip) => !media.current.has(clip.id)).length;
-      notice(`${direction === "undo" ? "Undid" : "Redid"} ${label}. ${missingCount ? "Reselect missing original media; its full SHA-256 hash must match." : "Your edit is ready."}`);
+      notice(`${direction === "undo" ? "Undid" : "Redid"} ${label}. ${missingCount ? "Choose the missing original file again. It must be the exact same file." : "Your edit is ready."}`);
     } catch (error) {
       notice(errorText(error));
     }
@@ -710,7 +710,7 @@ export function VideoEditor({
       if (!activeRef.current || !mounted.current) return;
       const same = snapshot.music?.source.sha256 === local.source.sha256;
       if (same && snapshot.music) {
-        if (snapshot.music.source.size !== local.source.size || Math.abs(snapshot.music.source.duration - local.source.duration) > .05) throw new Error("The original music metadata does not match the saved edit.");
+        if (snapshot.music.source.size !== local.source.size || Math.abs(snapshot.music.source.duration - local.source.duration) > .05) throw new Error("This is not the music file that was saved with this edit. Choose the original music file.");
         local.source = snapshot.music.source;
       }
       if (!same && !update({music: {source: local.source, start: 0, end: local.source.duration, offset: 0, volume: .3, fadeIn: Math.min(.5, local.source.duration), fadeOut: Math.min(1, local.source.duration), ducking: "original", licensed: true}}, "add licensed music")) return;
@@ -931,7 +931,7 @@ export function VideoEditor({
       setMediaVersion((version) => version + 1);
       scrubTo(0);
       notice(
-        "Edit plan opened. Undo history was reset. Reselect any missing original media; every file is verified by its full SHA-256 hash.",
+        "Edit plan opened. Undo history was reset. Choose any missing original files again; each one must be the exact same file.",
       );
     } catch (error) {
       if (!controller.signal.aborted) notice(errorText(error));

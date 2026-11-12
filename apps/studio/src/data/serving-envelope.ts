@@ -58,11 +58,11 @@ export function envelopeResetLine(e: ServingEnvelope, format: (iso: string) => s
     default: return `Resets ${when}.`;
   }
 }
-export function envelopeTrialLine(e: ServingEnvelope, format: (iso: string) => string, now = Date.now()): string | null {
+/** The free trial belongs to each new subscriber (owner decision, 12 Nov 2026):
+ * a set number of AI photo edits to use within 7 days. This line states those
+ * terms. It never says trial AI is unavailable, rationed or tied to a shared
+ * total, whatever the server reports about its own bookkeeping (`pool`). */
+export function envelopeTrialLine(e: ServingEnvelope, _format?: (iso: string) => string, _now?: number): string | null {
   if (e.kind !== "trial") return null;
-  if (!e.pool || !e.pool.startsAt || !e.pool.endsAt || Date.parse(e.pool.startsAt) > now
-    || Date.parse(e.pool.endsAt) <= now || e.pool.spentCents >= e.pool.capCents) {
-    return "Trial AI is temporarily unavailable. Your saved work remains available under your plan's access terms.";
-  }
-  return `Trial AI is subject to available capacity until ${format(e.pool.endsAt)}.`;
+  return "Your free trial lasts 7 days and includes AI photo edits.";
 }

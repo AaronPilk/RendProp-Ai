@@ -56,11 +56,11 @@ export default function CoordinatorPhotoExportPanel({ services, orgId, listingId
     <h2>Send photos to your listing coordinator</h2>
     <p>All uploaded saved versions, organized into Originals, Decluttered and Staged, with MLS, Zillow and Instagram copies. Full saved masters stay untouched.</p>
     <p>Delivery copies use 4:3, 4:5 and 9:16 center-crop presets at the available resolution. Review crops and add the included disclosures before advertising; platform requirements differ.</p>
-    <p>Large libraries use numbered ZIP parts to keep full quality. Download every part and extract them into the same folder. Phone-only files must be uploaded first.</p>
+    <p>Large sets of photos are split into numbered ZIP files to keep full quality. Download every file and unzip them into the same folder. Photos that are only on your phone must be uploaded first.</p>
     {busy && <p role="status">{status}</p>}
     {part && <div aria-live="polite">
       <p>Part {part.part}: {part.files} files · photos {part.from}–{part.through} of {part.total}. {part.more ? "More parts follow." : "Final part."}</p>
-      {part.notes.length > 0 && <p role="note">This browser could not create delivery copies for some HEIC/HEIF masters. Their exact files are included, with missing delivery copies identified in the manifest.</p>}
+      {part.notes.length > 0 && <p role="note">This browser could not create delivery copies for some HEIC/HEIF masters. Their exact files are included, and the list inside the ZIP shows which smaller copies are missing.</p>}
       <button className="creative-primary" disabled={busy || disabled} onClick={download}>Download coordinator ZIP · part {part.part}</button>
       {part.more && <button disabled={busy || disabled || downloaded !== part.part} onClick={() => void next()}>Prepare next part</button>}
       {!part.more && downloaded === part.part && <p role="status">Every part has been offered for download. Check your Downloads folder and keep all numbered parts together.</p>}

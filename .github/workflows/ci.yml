@@ -835,14 +835,14 @@ jobs:
           }
           NODE
           done
-      - name: Explicit listing selection requires original review and a fresh snapshot
+      - name: Explicit listing selection requires an eligible version and a fresh snapshot
         timeout-minutes: 5
         run: |
           set -euo pipefail
           evidence_root="$RUNNER_TEMP/rendprop-gallery-selection-browser"
           mkdir -p "$evidence_root"
           STUDIO_PROOF_ROOT="$evidence_root/positive" node tests/listing-selection-browser.mjs > "$evidence_root/positive.log" 2>&1
-          for control in review-omitted stale-snapshot-omitted; do
+          for control in eligibility-omitted stale-snapshot-omitted; do
             control_root="$evidence_root/$control"
             mkdir -p "$control_root"
             set +e
@@ -860,7 +860,7 @@ jobs:
           const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
           assert.equal(receipt.status,'failed');
           assert.equal(receipt.fault,control);
-          const expected={'review-omitted':'Expected: disabled','stale-snapshot-omitted':'changed on another device'};
+          const expected={'eligibility-omitted':'Expected: disabled','stale-snapshot-omitted':'changed on another device'};
           assert.ok(receipt.failure.includes(expected[control]));
           assert.deepEqual(receipt.errors,[]);
           assert.deepEqual(receipt.externalRequests,[]);
