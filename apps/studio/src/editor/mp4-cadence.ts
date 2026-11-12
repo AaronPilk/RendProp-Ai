@@ -5,6 +5,7 @@ type Box = {type: string; start: number; body: number; end: number};
 type VideoTrack = {id: number; timescale: number; defaultDuration?: number; flatFrames?: Frame[]};
 type Frame = {start: number; end: number};
 export type EncodedTransition = {startSeconds: number; durationSeconds: number};
+export type ExpectedMp4FramePlan = Readonly<{frames: number; durationMicroseconds: number}>;
 const MAX_METADATA_BOX_BYTES = 2 * 1024 * 1024;
 const MAX_TOP_LEVEL_BOXES = 2048;
 const MAX_VIDEO_FRAMES = 7200; // 180 seconds at 40 fps, above the 30 fps target.
@@ -14,6 +15,18 @@ const MIN_TRANSITION_FPS = 20;
 const DENSITY_WINDOW_SECONDS = .5;
 const MIN_FRAMES_PER_WINDOW = 11;
 const SKIPPED_FRAMES_MESSAGE = "Encoded video frames were skipped. No download was created. Close other busy tabs and retry.";
+const FRAME_PLAN_MESSAGE = "The encoded video did not match the requested frame timing. No download was created. Retry the export.";
+
+function requireExpectedPlan(plan: ExpectedMp4FramePlan): void {
+  if (!plan || !Number.isSafeInteger(plan.frames) || plan.frames < 1 || plan.frames > 5400 ||
+      !Number.isSafeInteger(plan.durationMicroseconds) || plan.durationMicroseconds < 1 ||
+      plan.durationMicroseconds > 180_000_000 ||
+      plan.frames !== Math.ceil(plan.durationMicroseconds * 30 / 1_000_000))
+    throw new Error("The requested MP4 frame plan is invalid. No download was created.");
+}
+function framePlanMismatch(rule: "frame-count" | "frame-start" | "frame-end", frameIndex: number): Error {
+  return new Error(FRAME_PLAN_MESSAGE, {cause: {kind: "encoded-frame-plan", rule, frameIndex}});
+}
 
 // Keep refusal evidence to a fixed set of numbers from MP4 timing metadata.
 // No frame bytes, media content or unbounded sample lists enter the error.
@@ -190,7 +203,9 @@ async function metadataBox(blob: Blob, offset: number): Promise<{type: string; e
   if (size > MAX_METADATA_BOX_BYTES) unreadable();
   return {type, end, data: new Uint8Array(await blob.slice(offset, end).arrayBuffer())};
 }
-export async function verifyMp4FrameCadence(blob: Blob, transitions: EncodedTransition[], signal?: AbortSignal): Promise<void> {
+export async function verifyMp4FrameCadence(blob: Blob, transitions: EncodedTransition[], signal?: AbortSignal,
+  expectedPlan?: ExpectedMp4FramePlan): Promise<void> {
+  if (expectedPlan !== undefined) requireExpectedPlan(expectedPlan);
   let track: VideoTrack | undefined, offset = 0, boxCount = 0;
   const frames: Frame[] = [];
   while (offset < blob.size) {
@@ -208,6 +223,22 @@ export async function verifyMp4FrameCadence(blob: Blob, transitions: EncodedTran
   if (!frames.length && track?.flatFrames) frames.push(...track.flatFrames);
   if (frames.length < 2) unreadable();
   frames.sort((a, b) => a.start - b.start);
+  if (expectedPlan) {
+    // The legacy recorder path tolerates zero-duration duplicates. The explicit
+    // WebCodecs path must also retain every planned positive frame, including
+    // the fractional final one that a coarse MP4 timescale can round to zero.
+    if (frames.length !== expectedPlan.frames)
+      throw framePlanMismatch("frame-count", Math.min(frames.length, expectedPlan.frames));
+    for (let index = 0; index < frames.length; index++) {
+      const expectedStart = Math.round(index * 1_000_000 / 30);
+      const expectedEnd = Math.min(expectedPlan.durationMicroseconds,
+        Math.round((index + 1) * 1_000_000 / 30));
+      if (Math.abs(frames[index].start * 1_000_000 - expectedStart) > 1000)
+        throw framePlanMismatch("frame-start", index);
+      if (Math.abs(frames[index].end * 1_000_000 - expectedEnd) > 1000)
+        throw framePlanMismatch("frame-end", index);
+    }
+  }
   let windowStart = 0;
   for (let index = 0; index < frames.length; index++) {
     const frame = frames[index];

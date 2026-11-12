@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile, readdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
 import { connectedProductionConfig, verifyConnectedBundle, releaseAssetGroups, DIST_BUDGETS } from "./dist-policy.mjs";
@@ -85,6 +86,42 @@ for (const name of ["img-src", "media-src", "connect-src"]) {
 }
 assert.equal(await read("robots.txt"), "User-agent: *\nDisallow: /\n");
 assert(!(await readdir(path.join(root, "dist"))).includes("tests"), "No test entrypoints may be deployed.");
+// The executable dependency and its exact unmodified source travel together.
+// Source archives are fetched only from the notices link, never by the app.
+const sourceManifest = JSON.parse(await read("licenses/mediabunny-source-manifest.json"));
+const dependencyRoot = path.join(root, "node_modules/mediabunny");
+const dependencyPackage = JSON.parse(await readFile(path.join(dependencyRoot, "package.json"), "utf8"));
+assert.equal(sourceManifest.name, dependencyPackage.name);
+assert.equal(sourceManifest.version, dependencyPackage.version);
+assert.equal(sourceManifest.license, "MPL-2.0");
+assert.equal(sourceManifest.sourceUnmodified, true);
+const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const sourceMembers = [];
+async function dependencyMembers(directory, prefix = "") {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    assert(!entry.isSymbolicLink(), "Dependency source cannot change through a symlink.");
+    const name = prefix + entry.name;
+    if (entry.isDirectory()) await dependencyMembers(path.join(directory, entry.name), name + "/");
+    else if (entry.isFile()) sourceMembers.push([name, digest(await readFile(path.join(directory, entry.name)))]);
+  }
+}
+await dependencyMembers(dependencyRoot);
+sourceMembers.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+assert.equal(sourceMembers.length, sourceManifest.packageFiles);
+assert.equal(digest(sourceMembers.map(([name, hash]) => `${name}\t${hash}\n`).join("")), sourceManifest.packageTreeSha256, "Distributed source must match the installed dependency.");
+for (const name of [sourceManifest.sourceArchive, sourceManifest.licenseFile])
+  assert(typeof name === "string" && /^[A-Za-z0-9_.-]+$/.test(name), "Unsafe source-distribution path.");
+const sourceArchive = await readFile(path.join(root, "dist/licenses", sourceManifest.sourceArchive));
+assert.equal(sourceArchive.length, sourceManifest.sourceArchiveBytes);
+assert.equal(digest(sourceArchive), sourceManifest.sourceArchiveSha256);
+const dependencyLicense = await readFile(path.join(dependencyRoot, "LICENSE"));
+assert.equal(await read(`licenses/${sourceManifest.licenseFile}`), dependencyLicense.toString("utf8"));
+assert.equal(digest(dependencyLicense), sourceManifest.licenseFileSha256);
+const thirdPartyNotice = await read("THIRD-PARTY-NOTICES.txt");
+assert(thirdPartyNotice.includes(`Mediabunny ${dependencyPackage.version}`));
+assert(thirdPartyNotice.includes(`/licenses/${sourceManifest.sourceArchive}`));
+assert(jsChunks.some((chunk) => chunk.includes("/THIRD-PARTY-NOTICES.txt")), "The source notice must be reachable from Studio.");
+
 console.log(
   JSON.stringify({
     gate: "studio-built-assets",

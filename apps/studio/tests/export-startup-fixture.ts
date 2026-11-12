@@ -1,6 +1,15 @@
 import {exportFormats, exportLocalVideo} from "../src/editor/export";
 import {inspectFile} from "../src/editor/media";
-import {newDraft, validateDraft} from "../src/editor/model";
+import {newDraft, validateDraft, type SourceRef} from "../src/editor/model";
+
+function startupClip(source: SourceRef, extension: string) {
+  // MP4 must exercise the pitch-preserving live path. Its doubled source
+  // intervals retain the same 1.5-second output and opening/middle/tail probes.
+  // WebM keeps the original normal-speed buffered recorder fixture.
+  const speed = extension === "mp4" ? 2 : 1;
+  return {id: "source", source, start: 0, end: 1.5 * speed,
+    caption: "", focusX: .5, focusY: .5, speed};
+}
 
 // Hold the first observed startup clock read independently of capture/recorder
 // construction. Native Web Audio, capture timestamps and encoded samples stay
@@ -17,6 +26,10 @@ document.querySelector("button")!.addEventListener("click", async () => {
   const nativeCapture = HTMLCanvasElement.prototype.captureStream;
   let audio: AudioContext | undefined, held = false, holdStarted = false, frozenTime = 0, revision = 1;
   const tracks = new Set<MediaStreamTrack>();
+  Object.assign(window, {exportTestControl: {afterWorkerInput: (row: {type?: string}) => {
+    if (row.type === "audio") event("user.pcm.submit");
+    if (row.type === "video") event("user.frame.submit");
+  }}});
   const observedTime = () => audio ? held ? frozenTime : nativeTime.call(audio) : undefined;
   const event = (kind: string) => fixture.events.push({kind, wall: performance.now(), held,
     audio: observedTime(), nativeAudio: audio ? nativeTime.call(audio) : undefined,
@@ -67,8 +80,8 @@ document.querySelector("button")!.addEventListener("click", async () => {
     HTMLMediaElement.prototype.play = function (...args) {
       event("user.video.play"); return Reflect.apply(nativePlay, this, args);
     };
-    const draft = validateDraft({...newDraft(), ratio: "16:9", clips: [{id: "source", source: local.source,
-      start: 0, end: 1.5, caption: "", focusX: .5, focusY: .5, speed: 1}]});
+    const draft = validateDraft({...newDraft(), ratio: "16:9",
+      clips: [startupClip(local.source, fixture.extension)]});
     revision = draft.revision;
     const format = exportFormats().find(value => value.extension === fixture.extension)!;
     const result = await exportLocalVideo({draft, media: new Map([["source", local]]), format,
@@ -84,6 +97,7 @@ document.querySelector("button")!.addEventListener("click", async () => {
     HTMLCanvasElement.prototype.captureStream = nativeCapture;
     if (local) URL.revokeObjectURL(local.url);
     controller.abort();
+    Object.assign(window, {exportTestControl: undefined});
     fixture.result = {...fixture.result as object, tracks: [...tracks].map(track => track.readyState), trackKinds: [...tracks].map(track => track.kind), audioState: audio?.state};
   }
 });

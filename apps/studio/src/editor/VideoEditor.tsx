@@ -12,6 +12,7 @@ import {appendConversation,decodeConversation,emptyConversation,type Conversatio
 import {enhancePromptLocally,decodePromptEnhancement,type PromptEnhancement} from "./prompt-enhancement";
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type ChangeEvent,
@@ -60,6 +61,7 @@ import {
   supportsOriginalAudio,
   type LocalExport,
 } from "./export";
+import {probeExplicitMp4} from "./export-webcodecs";
 import "./editor.css";
 import {
   HISTORY_LIMITS,
@@ -200,6 +202,8 @@ export function VideoEditor({
   const enhanceAbort=useRef<AbortController|null>(null),enhancementRevision=useRef<{id:string;revision:number}|null>(null);
   const historyRef = useRef(history);
   const draft = history.present;
+  const needsAudio = !!draft.narration || !!draft.music ||
+    draft.audio === "original" && draft.clips.some((clip) => clip.source.kind === "video");
   const activeRef = useRef(active);
   activeRef.current = active;
   const draftRef = useRef(draft);
@@ -238,8 +242,51 @@ export function VideoEditor({
   const consumedRequest = useRef(new Set<string>());
   const callbacks = useRef({ onNotice, onDraftChange });
   callbacks.current = { onNotice, onDraftChange };
-  const [formats] = useState(exportFormats);
-  const [formatMime, setFormatMime] = useState(formats[0]?.mime ?? "");
+  const [allFormats] = useState(exportFormats);
+  const [recorderFormats] = useState(() => exportFormats({recorderOnly: true}));
+  const [formatMime, setFormatMime] = useState<string | null>(null);
+  const exportFormatGroup = useId();
+  const [formatProbe, setFormatProbe] = useState<{
+    key: string; outcome: "supported" | "unsupported" | "error";
+  } | null>(null);
+  const formatCache = useRef(new Map<string, boolean>());
+  const formatKey = `${draft.ratio}:${needsAudio ? 1 : 0}`;
+  const canProbeMp4 = typeof Worker === "function" &&
+    typeof VideoEncoder === "function" && typeof VideoFrame === "function" &&
+    typeof HTMLCanvasElement !== "undefined";
+  useEffect(() => {
+    if (!canProbeMp4) return;
+    const cached = formatCache.current.get(formatKey);
+    if (cached !== undefined) {
+      setFormatProbe({key: formatKey,
+        outcome: cached ? "supported" : "unsupported"});
+      return;
+    }
+    const controller = new AbortController();
+    void probeExplicitMp4(draft.ratio, needsAudio, controller.signal).then(
+      supported => {
+        if (controller.signal.aborted) return;
+        formatCache.current.set(formatKey, supported);
+        setFormatProbe({key: formatKey,
+          outcome: supported ? "supported" : "unsupported"});
+      },
+      () => {
+        if (!controller.signal.aborted)
+          setFormatProbe({key: formatKey, outcome: "error"});
+      },
+    );
+    return () => controller.abort(new DOMException("Format check cancelled.", "AbortError"));
+  }, [canProbeMp4, draft.ratio, formatKey, needsAudio]);
+  const formatOutcome = !canProbeMp4 ? "unsupported" :
+    formatCache.current.get(formatKey) === true ? "supported" :
+    formatCache.current.get(formatKey) === false ? "unsupported" :
+    formatProbe?.key === formatKey ? formatProbe.outcome : "checking";
+  // A probe error is not an unsupported codec. Keep recorder WebM available
+  // while withholding an MP4 route that would fail in the worker transport.
+  const formats = formatOutcome === "supported" ? allFormats :
+    formatOutcome === "unsupported" ? recorderFormats :
+    recorderFormats.filter(format => format.extension === "webm");
+  const selectedFormat = formats.find(format => format.mime === formatMime) ?? formats[0];
   const total = timelineDuration(draft.clips);
   useEffect(() => {
     onSwitchBlockChange?.(importing || exporting || savingOutput || chatBusy || enhancing || musicBusy || soundBusy || proxyBusy ? "Finish or stop the current creation task before switching." : prompt.trim() ? "Send or clear your unsent editing request before switching." : pendingBrief ? "Add media to finish your request, or clear the request before switching." : output && !outputKept ? "Download or save this finished video before switching properties. Your export is kept here." : null);
@@ -248,7 +295,6 @@ export function VideoEditor({
     draft.clips.find((clip) => clip.id === selectedId) ?? draft.clips[0];
   const selectedIndex = selected ? draft.clips.indexOf(selected) : -1;
   const missing = draftMedia(draft).filter((clip) => !media.current.has(clip.id));
-  const needsAudio = !!draft.narration || !!draft.music || draft.audio === "original" && draft.clips.some((clip) => clip.source.kind === "video");
   const voiceReady = !draft.narration || voice?.id === draft.narration.resultId;
   const musicReady = !draft.music || localMusic?.source.sha256 === draft.music.source.sha256;
   const audioUnavailable = needsAudio && !supportsOriginalAudio();
@@ -935,7 +981,7 @@ export function VideoEditor({
   };
   const startExport = async () => {
     if (readOnly || musicBusy || soundBusy || proxyBusy || !musicReady || !voiceReady) return;
-    const format = formats.find((item) => item.mime === formatMime);
+    const format = selectedFormat;
     if (!activeRef.current || !format || exportAbort.current) return;
     invalidateExport();
     setPlaying(false);
@@ -998,25 +1044,34 @@ export function VideoEditor({
             <h3>Ready when you are.</h3>
             <p>A local video file, made in this browser.</p>
             {formats.length > 0 ? (
-              <label>
-                Export format
-                <select
-                  value={formatMime}
-                  disabled={exporting}
-                  onChange={(event) => setFormatMime(event.target.value)}
-                >
+              <fieldset className="rp-editor-format-options" disabled={exporting}
+                aria-busy={formatOutcome === "checking"}>
+                <legend>Export format</legend>
+                <div className="rp-editor-format-choices">
                   {formats.map((format) => (
-                    <option key={format.mime} value={format.mime}>
-                      {format.label} · Browser encoder
-                    </option>
+                    <label className="rp-editor-format-choice" key={format.mime}>
+                      <input
+                        type="radio"
+                        name={exportFormatGroup}
+                        value={format.mime}
+                        checked={selectedFormat?.mime === format.mime}
+                        onChange={() => setFormatMime(format.mime)}
+                      />
+                      <span>{format.label}</span>
+                    </label>
                   ))}
-                </select>
-              </label>
+                </div>
+              </fieldset>
             ) : (
               <p role="status">
-                Local recording is unavailable in this browser. You can still
-                save the edit plan and open it in a browser with canvas
-                recording support.
+                {formatOutcome === "checking"
+                  ? "Checking available video formats…"
+                  : "Video export is unavailable in this browser. You can still save the edit plan and open it in another browser."}
+              </p>
+            )}
+            {formatOutcome === "error" && (
+              <p role="status">
+                MP4 availability could not be checked. Reload to try again.
               </p>
             )}
             {audioUnavailable && (
@@ -1065,15 +1120,14 @@ export function VideoEditor({
                 onClick={() => void startExport()}
               >
                 Export{" "}
-                {formats.find((format) => format.mime === formatMime)?.label ??
-                  "video"}
+                {selectedFormat?.label ?? "video"}
               </button>
             )}
             <p className="rp-editor-export-note">
               {draft.narration ? "Includes saved narration and timed captions when enabled; original sound is lowered beneath it." : draft.audio === "muted"
                 ? "Original clip audio will be muted."
                 : draft.overlays?.length ? "Original video audio continues through every photo cutaway." : "Keeps original audio within each video trim; photos are silent."}{" "}
-              Export takes about the length of your edit. Keep this tab visible.{" "}
+              Export time depends on your clips. Keep this tab visible.{" "}
               {formats.some((format) => format.extension === "mp4")
                 ? "Choose the format supported by your destination."
                 : "This browser offers WebM, not MP4."}{" "}

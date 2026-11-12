@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Integrated Studio MP4 test</title></head>
+<body>
+  <p>Synthetic local media only. This fixture calls the shipping exportLocalVideo.</p>
+  <label>Purple opening <input id="opening" type="file"></label>
+  <label>Blue speed source <input id="sourceOne" type="file"></label>
+  <label>Red middle <input id="middle" type="file"></label>
+  <label>Moving normal source <input id="sourceTwo" type="file"></label>
+  <label>120 fps exact seek source <input id="sourceSeek" type="file"></label>
+  <label>Closing photo <input id="closing" type="file"></label>
+  <label>Green cutaway <input id="cutaway" type="file"></label>
+  <label>Photo motion marker <input id="motion" type="file"></label>
+  <label>Narration <input id="narration" type="file"></label>
+  <label>Music <input id="music" type="file"></label>
+  <button id="prepare" type="button">Prepare integrated files</button>
+  <button id="export" type="button" disabled>Export integrated video</button>
+  <a id="download" download="integrated-export.mp4" hidden>Download integrated video</a>
+  <p id="status" role="status">Choose synthetic files.</p>
+  <script type="module" src="/tests/export-webcodecs-fixture.ts"></script>
+</body></html>

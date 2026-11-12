@@ -1,0 +1,13 @@
+{
+  "name": "mediabunny",
+  "version": "1.65.2",
+  "license": "MPL-2.0",
+  "sourceUnmodified": true,
+  "packageFiles": 293,
+  "packageTreeSha256": "b68f9bb6b4ffb438935e12e684c7b1a989d1ad592afef166ad1ef1d1792ebe64",
+  "sourceArchive": "mediabunny-1.65.2-source.tar.gz",
+  "sourceArchiveSha256": "b3db93a5e30eea9dc40cbf53cbf4e727717339943e134ecdab0622816357a85a",
+  "sourceArchiveBytes": 2336068,
+  "licenseFile": "MPL-2.0.txt",
+  "licenseFileSha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04"
+}

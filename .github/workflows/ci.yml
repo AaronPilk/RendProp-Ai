@@ -1422,6 +1422,22 @@ jobs:
       - name: Require bounded recorded media runner readiness
         timeout-minutes: 12
         run: node tools/ci/media-runner-ready.mjs --output "$RUNNER_TEMP/studio-media-export-readiness.json"
+      - name: Studio shipping MP4 entry, exact PTS, optional audio and owned worker cleanup
+        working-directory: apps/studio
+        timeout-minutes: 10
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          node --test tests/export-browser-controls.test.mjs
+          node tests/export-webcodecs-browser.mjs
+          node tests/export-webcodecs-browser.mjs --simulated-unsupported
+          node tests/export-webcodecs-browser.mjs --finalize-cancel-control
+          node tests/export-webcodecs-browser.mjs --output-limit-control
+          node tests/export-webcodecs-browser.mjs --seek-only
+          node tests/export-webcodecs-browser.mjs --hybrid-reuse-only
+          node tests/export-webcodecs-browser.mjs --long-only
       # Run the real editor export while the admitted runner is still fresh.
       # The later historical fault controls deliberately consume encoder and
       # virtual-audio capacity; they retain all of their existing assertions.
@@ -1467,12 +1483,12 @@ jobs:
           assert receipt['sourceBoundAtEnd'] is True
           assert receipt['errors'] == [] and receipt['externalRequests'] == []
           assert receipt['failure'].startswith('AssertionError [ERR_ASSERTION]: Content and recording must not start while startup clock is frozen')
-          forbidden = {'recorder.start', 'user.buffer.start', 'user.video.play'}
+          forbidden = {'recorder.start', 'user.buffer.start', 'user.video.play', 'user.pcm.submit', 'user.frame.submit'}
           assert any(event.get('held') is True and event['kind'] in forbidden
                      for event in receipt['failureSnapshot']['events'])
           print('Omitted readiness reaches the intended pre-content timing assertion')
           PY
-      - name: Studio original audio and timing controls
+      - name: Studio recorder-fallback original audio and historical timing controls
         working-directory: apps/studio
         timeout-minutes: 10
         shell: bash
@@ -1525,8 +1541,10 @@ jobs:
           assert case['pcm']['voiceEarly'] <= case['pcm']['voiceRef'] * .7
           assert abs(float(case['probe']['format']['duration']) - 2) < .18
           assert sum(x['codec_type'] == 'audio' and x['codec_name'] == 'aac' for x in case['probe']['streams']) == 1
-          expected = {'tests/export-audio-fixture.ts', 'tests/export-audio-browser.mjs'}
-          expected.update(f'src/editor/{name}.ts' for name in ('export', 'recording-clock', 'media', 'model', 'music', 'finishing'))
+          import subprocess
+          expected = {'tests/export-audio-fixture.ts', 'tests/export-audio-browser.mjs', 'tests/export-backend-observer.mjs'}
+          expected.update(json.loads(subprocess.check_output(['node', '--input-type=module', '-e',
+              'import {EXPORT_SOURCE_PATHS} from "./tests/export-source-binding.mjs"; console.log(JSON.stringify(EXPORT_SOURCE_PATHS));'], text=True)))
           assert set(receipt['sourceHashes']) == expected
           for path, digest in receipt['sourceHashes'].items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
@@ -1542,6 +1560,7 @@ jobs:
               'helperSha256': hashlib.sha256(Path('tests/export-audio-output.mjs').read_bytes()).hexdigest(),
           }
           groups = (
+              ('integrated MP4 entry', 'rendprop-export-webcodecs-*/receipt.json', 7),
               ('startup healthy', 'rendprop-export-startup-*/receipt.json', 1),
               ('startup omission', 'rendprop-export-startup-control.*/rendprop-export-startup-*/receipt.json', 1),
               ('original audio healthy and faults', 'rendprop-export-original-audio-*/receipt.json', 4),
@@ -1558,6 +1577,14 @@ jobs:
                   paths = [path for path in paths
                            if not path.parent.name.startswith('rendprop-finishing-audio-probe-')]
               assert len(paths) == count, (name, len(paths), count)
+              if name == 'integrated MP4 entry':
+                  integrated = [json.loads(path.read_text()) for path in paths]
+                  assert {row['mode'] for row in integrated} == {'actual', '--long-only', '--simulated-unsupported', '--finalize-cancel-control', '--output-limit-control', '--seek-only', '--hybrid-reuse-only'}
+                  for row in integrated:
+                      assert row['status'] == 'passed' and row['sourceBoundAtEnd'] is True
+                      assert row['sourceHashesBefore'] == row['sourceHashesAfter']
+                      for source, digest in row['sourceHashesBefore'].items():
+                          assert hashlib.sha256(Path(source).read_bytes()).hexdigest() == digest, source
               for path in paths:
                   raw = path.read_bytes()
                   receipt = json.loads(raw)
@@ -1565,10 +1592,10 @@ jobs:
                   assert receipt['audioOutput'] == expected_audio, (name, path)
                   bindings.append({'suite': name, 'receipt': str(path.relative_to(base)),
                                    'receiptSha256': hashlib.sha256(raw).hexdigest()})
-          assert len(bindings) == len({row['receipt'] for row in bindings}) == 10
+          assert len(bindings) == len({row['receipt'] for row in bindings}) == 17
           with (base / 'studio-audio-output-bindings.json').open('x') as output:
-              json.dump({'audioOutput': expected_audio, 'invocationCount': 10, 'receipts': bindings}, output, indent=2)
-          print('All10 media export invocation receipts use the production default-device transport')
+              json.dump({'audioOutput': expected_audio, 'invocationCount': 17, 'receipts': bindings}, output, indent=2)
+          print('All17 media export invocation receipts use the production default-device transport')
           PYAUDIOOUTPUT
       - name: Retain media export receipts and browser evidence
         if: always()
@@ -1577,6 +1604,12 @@ jobs:
           name: studio-isolated-media-export-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/studio-audio-output-bindings.json
+            ${{ runner.temp }}/rendprop-export-webcodecs-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-webcodecs-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-webcodecs-*/*.png
+            ${{ runner.temp }}/rendprop-export-webcodecs-*/*.source-probe.json
+            ${{ runner.temp }}/rendprop-export-webcodecs-*/*.seek-probe.json
+            ${{ runner.temp }}/rendprop-export-webcodecs-*/*.h264-vui.log
             ${{ runner.temp }}/rendprop-export-original-audio-*/receipt.json
             ${{ runner.temp }}/rendprop-export-original-audio-*/*.mp4
             ${{ runner.temp }}/export-original-audio-defect.log
@@ -1684,7 +1717,7 @@ jobs:
       - name: Require bounded recorded media runner readiness for MP4 timing
         timeout-minutes: 12
         run: node tools/ci/media-runner-ready.mjs --output "$RUNNER_TEMP/studio-media-resume-readiness.json"
-      - name: Studio MP4 resume, AAC narration and timing controls
+      - name: Studio recorder-fallback MP4 resume, AAC narration and historical controls
         working-directory: apps/studio
         timeout-minutes: 10
         shell: bash
@@ -1726,9 +1759,11 @@ jobs:
           assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
           assert Path(run['output']).resolve() == outputs[0].resolve()
           expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
-                              'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs'}
-          expected_sources.update(f'src/editor/{name}.ts' for name in
-                                  ('export', 'recording-clock', 'mp4-cadence', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
+                              'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs',
+                              'tests/export-backend-observer.mjs'}
+          import subprocess
+          expected_sources.update(json.loads(subprocess.check_output(['node', '--input-type=module', '-e',
+              'import {EXPORT_SOURCE_PATHS} from "./tests/export-source-binding.mjs"; console.log(JSON.stringify(EXPORT_SOURCE_PATHS));'], text=True)))
           assert set(receipt['sourceHashes']) == expected_sources
           for path, digest in receipt['sourceHashes'].items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path

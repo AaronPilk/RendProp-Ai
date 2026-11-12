@@ -8,15 +8,17 @@ import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium,expect} from "@playwright/test";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
+import {exportSourceHashes} from "./export-source-binding.mjs";
+import {installExportBackendObserver, exportBackendSnapshot, simulatedUnsupportedEncoderPlugin} from "./export-backend-observer.mjs";
 const {audioOutput} = testAudioOutputOption(process.argv.slice(2));
 const alignmentOnly=process.argv.includes("--alignment-only"),originalOnly=process.argv.includes("--original-only");assert(!(alignmentOnly&&originalOnly));const fault=process.argv.find(x=>x.startsWith("--fault="))??null;assert(fault===null||["--fault=live-original-audio","--fault=late-buffered-wall-origin","--fault=omit-bucket-pacing","--fault=late-optional-track-schedule"].includes(fault));
 const root=resolve(import.meta.dirname,".."), artifacts=await mkdtemp(join(tmpdir(),"rendprop-export-original-audio-")),dist=join(artifacts,"dist");
 const paths=["src/editor/export.ts","src/editor/recording-clock.ts","src/editor/media.ts","src/editor/model.ts","src/editor/music.ts","src/editor/finishing.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
-const hashes=async()=>Object.fromEntries(await Promise.all(paths.map(async path=>[path,createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
-const receipt={status:"running",fault,audioOutput,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source, real100ms video pause and a transient waiting notification without loss. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
+const hashes=()=>exportSourceHashes(root,[...paths,"tests/export-backend-observer.mjs"]);
+const receipt={coverage:"Legacy recorder under simulated unsupported worker capability; no worker media coverage claim",capabilityOverride:"Test-only false capability response, not evidence browser actually lacks support",status:"running",fault,audioOutput,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source, real100ms video pause and a transient waiting notification without loss. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
 let browser,server,page,mutated=false;
 try{
- await build({configFile:false,root,publicDir:false,logLevel:"error",plugins:[{name:"passive-gain-preparation-budget",enforce:"pre",transform(code,id){if(!id.endsWith("/src/editor/export.ts"))return;const a="      const musicEnvelope = musicGain ? (() => {",b="      // Gain preparation is complete before capture starts or resumes.";if(!code.includes(a))return;assert.equal(code.split(a).length,2);assert.equal(code.split(b).length,2);return code.replace(a,"      const gainPreparationBegan = performance.now();\n"+a).replace(b,"      globalThis.audioGainPreparationEvidence = {costMs: performance.now() - gainPreparationBegan, points: musicEnvelope?.length ?? 0, recorderState: recorder?.state ?? null};\n"+b);}},...(fault?[{name:"live-original-audio-regression",enforce:"pre",transform(code,id){
+ await build({configFile:false,root,publicDir:false,logLevel:"error",worker:{plugins:()=>[simulatedUnsupportedEncoderPlugin()]},plugins:[{name:"passive-gain-preparation-budget",enforce:"pre",transform(code,id){if(!id.endsWith("/src/editor/export.ts"))return;const a="      const musicEnvelope = musicGain ? (() => {",b="      // Gain preparation is complete before capture starts or resumes.";if(!code.includes(a))return;assert.equal(code.split(a).length,2);assert.equal(code.split(b).length,2);return code.replace(a,"      const gainPreparationBegan = performance.now();\n"+a).replace(b,"      globalThis.audioGainPreparationEvidence = {costMs: performance.now() - gainPreparationBegan, points: musicEnvelope?.length ?? 0, recorderState: recorder?.state ?? null};\n"+b);}},...(fault?[{name:"live-original-audio-regression",enforce:"pre",transform(code,id){
   if(!id.endsWith("/src/editor/export.ts"))return;
   if(fault==="--fault=late-optional-track-schedule"){
     const begin="      // BEGIN optional buffered tracks at the fixed segment origin\n",end="      // END optional buffered tracks\n",after="      // PLAYBACK confirmed; all buffered sources are already scheduled.\n";
@@ -51,6 +53,7 @@ try{
  execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=blue:s=640x360:r=30:d=3","-an","-c:v","libx264","-pix_fmt","yuv420p",silent]);
  browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});const context=await browser.newContext({viewport:{width:1000,height:800},serviceWorkers:"block"});
  await installTestAudioOutput(context,audioOutput);
+ await installExportBackendObserver(context);
  await context.route("**/*",route=>{const u=new URL(route.request().url());if(u.origin===origin&&route.request().method()==="GET"||u.protocol==="blob:")return route.continue();receipt.externalRequests.push(u.href);return route.abort();});
  // Test-only, passive lifecycle evidence. Native nodes/promises and their
  // return values remain unchanged; bounded facts are retained only on failure.
@@ -112,11 +115,40 @@ try{
   await page?.close();
   page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
  };
+ const waitForFixtureResult=async(name)=>{
+  try{await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result),{timeout:45000}).not.toBeNull();}
+  catch(error){
+   let timer;
+   try{
+    receipt.failureSnapshot=await Promise.race([page.evaluate(name=>{
+     // Failure evidence only: never retain an encoded base64 payload here.
+     let remaining=0;
+     const bounded=(value,depth=0)=>{
+      if(remaining--<=0)return "[entry limit]";
+      if(value===null||typeof value==="boolean"||typeof value==="number")return value;
+      if(typeof value==="string")return value.slice(0,2048);
+      if(typeof value!=="object")return String(value).slice(0,2048);
+      if(depth>=6)return "[depth limit]";
+      if(Array.isArray(value))return value.slice(0,32).map(item=>bounded(item,depth+1));
+      return Object.fromEntries(Object.keys(value).slice(0,32).map(key=>[key,key==="base64"?{omitted:true,characters:typeof value[key]==="string"?value[key].length:null}:bounded(value[key],depth+1)]));
+     };
+     const observe=read=>{remaining=512;try{return bounded(read());}catch(failure){return {observationError:String(failure).slice(0,2048)};}};
+     return {name,result:observe(()=>window.audioExportFixture.result),
+      backend:observe(()=>({...window.exportBackendObservation,
+       contextStates:window.exportBackendOwners.contexts.map(value=>value.state),
+       trackStates:window.exportBackendOwners.tracks.map(value=>value.readyState)})),
+      diagnostics:observe(()=>window.audioExportDiagnostics()),passive:observe(()=>window.audioExportPassive())};
+    },name),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("Failure snapshot exceeded five seconds")),5000);})]);
+   }catch(snapshotError){receipt.failureSnapshot={name,observationError:String(snapshotError).slice(0,2048)};}
+   finally{clearTimeout(timer);}
+   throw error;
+  }
+ };
  const run=async(name,config,{refused=false,silentAudio=false,cancelled=false}={})=>{
   await freshPage();await page.goto(`${origin}/tests/export-audio-fixture.html`);await verifyTestAudioOutput(page,audioOutput);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
   await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:0,...config},config);
-  await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
-  const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,audioOutput:await verifyTestAudioOutput(page,audioOutput),ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);record.passive=await page.evaluate(()=>window.audioExportPassive());
+  await page.getByRole("button",{name:"Export fixture",exact:true}).click();await waitForFixtureResult(name);
+  const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,audioOutput:await verifyTestAudioOutput(page,audioOutput),ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);record.backend=await exportBackendSnapshot(page);assert(record.backend.unsupportedReplies>0&&record.backend.recorderConstructions===1,"Legacy audio controls require actual simulated-unsupported recorder fallback");assert.equal(record.backend.postedVideoInputs,0);assert.equal(record.backend.postedAudioInputs,0);record.passive=await page.evaluate(()=>window.audioExportPassive());
   if(!result.ok)record.lifecycle=await page.evaluate(()=>window.audioExportDiagnostics());
   if(config.stall||config.hiccup||config.playResolutionDelayMs)assert(result.injected,"Forced playback fixture not injected");
   if(cancelled){assert.equal(result.ok,false);assert.match(result.error,/Synthetic export cancelled/);assert.equal(result.base64,undefined);return;}
@@ -178,8 +210,8 @@ try{
   for(const mix of ["opening","offset-fade"]){
    await freshPage();await page.goto(`${origin}/tests/export-audio-fixture.html`);await verifyTestAudioOutput(page,audioOutput);await page.getByLabel("Synthetic source").setInputFiles(marker);
    await page.evaluate(mix=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:250,mix},mix);
-   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
-   const result=await page.evaluate(()=>window.audioExportFixture.result),row={name:"alignment-"+mix,ok:result.ok,error:result.error,cause:result.cause,playEvidence:result.playEvidence,playHoldEvidence:result.playHoldEvidence,gainEvidence:result.gainEvidence,sourceEvidence:result.sourceEvidence,gainPreparation:await page.evaluate(()=>globalThis.audioGainPreparationEvidence??null)};receipt.cases.push(row);
+   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await waitForFixtureResult("alignment-"+mix);
+   const result=await page.evaluate(()=>window.audioExportFixture.result),row={name:"alignment-"+mix,ok:result.ok,error:result.error,cause:result.cause,playEvidence:result.playEvidence,playHoldEvidence:result.playHoldEvidence,gainEvidence:result.gainEvidence,sourceEvidence:result.sourceEvidence,gainPreparation:await page.evaluate(()=>globalThis.audioGainPreparationEvidence??null)};receipt.cases.push(row);row.backend=await exportBackendSnapshot(page);assert(row.backend.unsupportedReplies>0&&row.backend.recorderConstructions===1,"Legacy alignment controls require actual simulated-unsupported recorder fallback");assert.equal(row.backend.postedVideoInputs,0);assert.equal(row.backend.postedAudioInputs,0);
    assert.equal(result.ok,true,result.error);assert(result.injected);assert.equal(result.playEvidence.length,2);assert(result.playEvidence[1].media-result.playEvidence[0].media>.15,"Native video must actually run while only promise delivery is held");
    const path=join(artifacts,`alignment-${mix}.mp4`);await writeFile(path,Buffer.from(result.base64,"base64"));row.path=path;
    const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",path],{encoding:"utf8"}));row.probe=probe;assert(Math.abs(Number(probe.format.duration)-2)<.18,"Existing trim/duration bound");assert.equal(probe.streams.filter(x=>x.codec_type==="audio"&&x.codec_name==="aac").length,1);
