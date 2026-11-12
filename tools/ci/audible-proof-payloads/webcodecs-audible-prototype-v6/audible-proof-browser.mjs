@@ -21,6 +21,7 @@ const packageRoot = entry && resolve(dirname(entry), "../../..");
 const expectedTree = "b68f9bb6b4ffb438935e12e684c7b1a989d1ad592afef166ad1ef1d1792ebe64";
 const sourcePaths = [
   "src/editor/experimental-webcodecs.ts", "src/editor/audible-pcm.ts",
+  "src/editor/silent-output-bootstrap.ts",
   "src/editor/audible-pcm-worklet.js", "tests/audible-proof-fixture.ts",
   "tests/audible-proof-fixture.html", "tests/audible-proof-browser.mjs",
   ...["export", "model", "media", "recording-clock", "overlay-renderer", "mp4-cadence"]
@@ -241,7 +242,8 @@ try {
   const result = await page.evaluate(() => window.audibleProofFixture.result);
   const webCodecs = await page.evaluate(() => window.webCodecsAudibleProof ?? null);
   const pcmTrace = await page.evaluate(() => window.audiblePCMProof ?? null);
-  receipt.cases.push({name: "audible-original", result, webCodecs, pcmTrace});
+  const bootstrap = await page.evaluate(() => window.audibleSilentStreamBootstrap ?? null);
+  receipt.cases.push({name: "audible-original", result, webCodecs, pcmTrace, bootstrap});
   assert.equal(result.ok, true, result.error);
   assert.equal(downloads, 0, "Proof may not auto-download");
   assert.equal(webCodecs.kind, "webcodecs-audible-original-proof");
@@ -253,6 +255,13 @@ try {
   assert.equal(pcmTrace.phase, "closed");
   assert.equal(pcmTrace.audioStateAfterClose, "closed");
   assert.equal(pcmTrace.ownedTracksAfterClose, 0);
+  assert.equal(bootstrap?.kind, "early-silent-stream-bootstrap");
+  assert.equal(bootstrap.connectedToStreamSink, true);
+  assert.equal(bootstrap.started, true);
+  assert.equal(bootstrap.liveTracksAfterStop, 0);
+  assert.equal(bootstrap.disconnected, true);
+  assert(bootstrap.startedWallMs <= pcmTrace.startupClock.startedWallMs,
+    "The silent stream sink must start before startup admission");
   assert.equal(webCodecs.requested, 90);
   assert.equal(webCodecs.encoded.length, 90);
   assert.equal(webCodecs.finalized, true);
@@ -305,12 +314,14 @@ try {
   const delayed = await page.evaluate(() => ({result: window.audibleProofFixture.result,
     injected: window.audibleProofFixture.injected,
     pcm: window.audiblePCMProof, webCodecs: window.webCodecsAudibleProof,
+    bootstrap: window.audibleSilentStreamBootstrap ?? null,
     outerAudioState: window.audibleProofOuterAudioState}));
   receipt.cases.push({name: "late-promise-with-native-playback", ...delayed});
   assert.equal(delayed.injected, true);
   assert.equal(delayed.result.ok, true, delayed.result.error);
   assert.equal(delayed.pcm.phase, "closed");
   assert.equal(delayed.outerAudioState, "closed");
+  assert.equal(delayed.bootstrap?.liveTracksAfterStop, 0);
   assert.equal(positiveDownloads, 0);
   const secondDownload = page.waitForEvent("download");
   await page.locator("#download").click();
@@ -343,6 +354,7 @@ try {
       injected: window.audibleProofFixture.injected,
       pcm: window.audiblePCMProof ?? null,
       webCodecs: window.webCodecsAudibleProof ?? null,
+      bootstrap: window.audibleSilentStreamBootstrap ?? null,
       outerAudioState: window.audibleProofOuterAudioState ?? null}));
     receipt.cases.push({name: fault, ...refused});
     assert.equal(refused.result.ok, false, `${fault} must refuse`);
@@ -352,6 +364,7 @@ try {
     assert.equal(await page.locator("a[download][href]").count(), 0);
     assert.equal(faultDownloads, 0);
     assert.equal(refused.outerAudioState, "closed");
+    assert.equal(refused.bootstrap?.liveTracksAfterStop, 0);
     if (refused.pcm) {
       assert.equal(refused.pcm.audioStateAfterClose, "closed");
       assert.equal(refused.pcm.ownedTracksAfterClose, 0);
@@ -367,7 +380,9 @@ try {
 } finally {
   if (page && !page.isClosed()) {
     receipt.lastPage = await page.evaluate(() => ({result: window.audibleProofFixture?.result ?? null,
-      pcm: window.audiblePCMProof ?? null, webCodecs: window.webCodecsAudibleProof ?? null}))
+      pcm: window.audiblePCMProof ?? null, webCodecs: window.webCodecsAudibleProof ?? null,
+      bootstrap: window.audibleSilentStreamBootstrap ?? null,
+      setupClose: window.audibleProofSetupClose ?? null}))
       .catch(() => null);
     await page.screenshot({path: join(artifacts, "last-page.png"), fullPage: true}).catch(() => undefined);
   }

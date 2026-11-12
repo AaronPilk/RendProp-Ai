@@ -1,0 +1,9 @@
+# External v6 early stream sink experiment
+
+The immutable v5 three-second WebCodecs proof passed its two real-media positives locally and in hosted CI, but one later hosted fault case stopped before its requested injection. The unchanged pre-content `AudioStartupClock` saw one advancing quantum followed by a stall and correctly refused. This v6 copy tests one narrow lifecycle difference: shipping `export.ts` creates `MediaStreamAudioDestinationNode` and a zero-valued `ConstantSourceNode` connected to it before asynchronous preparation, while v5 created its sink later.
+
+During the original Export gesture, v6 creates one sink and starts zero into it. The later captured graph reuses the same sink (`source -> originalGain -> bus -> PCM tap -> sink`). The early zero enters the sink directly, downstream of the tap, so it contributes no captured PCM and no content prefix. There is no separate `audio.destination` branch or hardware activation claim. Chromium's exact behavior remains an experimental hypothesis.
+
+The fixed `AudioStartupClock`, active `RecordingClock`, two-second startup deadline, 8-credit/1024-frame worklet transport, 144000-frame window, WebCodecs video loop, media assertions, fault controls, and refusal policy remain unchanged. The browser receipt records finite wall and AudioContext readings at early creation/start, the start relative to startup admission, whether its track ended, and whether setup-close completed within two seconds. A setup failure or pre-capture refusal stops/disconnects the owned zero, stops the sink track, and observes the AudioContext close. Captured-window cleanup stops the same owner before closing the context; outer cleanup is idempotent.
+
+This is a partial diagnostic, not a shipping fix. A browser pass would support only this exact three-second original-audio fixture and would not establish narrated music, general video motion, or cross-browser parity. No production source or dependency is modified.

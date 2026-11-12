@@ -8,6 +8,7 @@ import {AudioStartupClock, RecordingClock} from "./recording-clock";
 import {nextExportFrame, MAX_ORIGINAL_AUDIO_LOSS_SECONDS} from "./export";
 import {assertCurrentRevision, type EditDraft} from "./model";
 import {awaitMediaOperation, decodeMedia, seekMedia, throwIfAborted, type LocalMedia} from "./media";
+import {startSilentStreamBootstrap} from "./silent-output-bootstrap";
 
 const RATE = 48_000;
 const CHANNELS = 2;
@@ -91,7 +92,13 @@ export type AudibleTrace = {
   mediaLossReadings: number; queueOverflow: boolean;
 };
 
-export type BegunAudio = {context: AudioContext; resumeStarted: Promise<void>};
+export type BegunAudio = {context: AudioContext; resumeStarted: Promise<void>;
+  bootstrap: ReturnType<typeof startSilentStreamBootstrap>};
+export class AudioBootstrapSetupError extends Error {
+  constructor(readonly closeStarted: Promise<void>, cause: unknown) {
+    super("The early stream bootstrap failed before proof capture.", {cause});
+  }
+}
 type DiagnosticFault = "none" | "drop-first-block" | "withhold-credits";
 const diagnosticFault = (): DiagnosticFault => {
   const raw = (window as typeof window & {audibleProofFault?: unknown}).audibleProofFault;
@@ -103,11 +110,31 @@ const diagnosticFault = (): DiagnosticFault => {
 /** Call synchronously from the user's Export gesture, before codec/decode awaits. */
 export function beginAudibleProofAudio(): BegunAudio {
   const context = new AudioContext({sampleRate: RATE});
-  const resumeStarted = context.resume();
+  // V6 experiment: create shipping's silent stream sink in the gesture.
+  // The later tap reuses that sink; the early zero never enters the tap.
+  // The fixed AudioStartupClock and active PCM origin remain unchanged.
+  let bootstrap!: ReturnType<typeof startSilentStreamBootstrap>;
+  let resumeStarted: Promise<void>;
+  try {
+    bootstrap = startSilentStreamBootstrap(context);
+    resumeStarted = context.resume();
+  } catch (error) {
+    try {bootstrap?.stop();} catch { /* preserve setup error */ }
+    // The exporter awaits this observed close even though setup itself must
+    // stay synchronous in the original click gesture.
+    let closeStarted: Promise<void>;
+    try {closeStarted = context.close();}
+    catch (closeError) {closeStarted = Promise.reject(closeError);}
+    void closeStarted.catch(() => undefined);
+    throw new AudioBootstrapSetupError(closeStarted, error);
+  }
+  (window as typeof window & {
+    audibleSilentStreamBootstrap?: typeof bootstrap.trace
+  }).audibleSilentStreamBootstrap = bootstrap.trace;
   // Capability and file checks run after the gesture. Keep the same rejection
   // for the eventual await without an early unhandled-rejection report.
   void resumeStarted.catch(() => undefined);
-  return {context, resumeStarted};
+  return {context, resumeStarted, bootstrap};
 }
 
 async function readyAudioClock(audio: AudioContext, signal: AbortSignal,
@@ -358,7 +385,7 @@ export async function captureAudibleOriginalProof(options: {
     video.volume = 1;
     await awaitMediaOperation(begun.resumeStarted, signal, "Starting proof audio");
     await awaitMediaOperation(audio.audioWorklet.addModule(workletURL), signal, "Loading proof PCM tap");
-    sink = audio.createMediaStreamDestination();
+    sink = begun.bootstrap.sink;
     bus = audio.createGain();
     bus.gain.value = 1;
     bus.channelCount = CHANNELS;
@@ -553,14 +580,17 @@ export async function captureAudibleOriginalProof(options: {
     bus?.disconnect();
     if (zeroStarted) zero?.stop();
     zero?.disconnect();
-    sink?.stream.getTracks().forEach(track => track.stop());
     decoded?.dispose();
+    let bootstrapError: unknown;
+    try {begun.bootstrap.stop();} catch (error) {bootstrapError = error;}
     try {await closeAudio(audio);} finally {
       observation.audioStateAfterClose = audio.state;
-      observation.ownedTracksAfterClose = sink?.stream.getTracks().filter(track => track.readyState !== "ended").length ?? 0;
+      observation.ownedTracksAfterClose = begun.bootstrap.sink.stream.getTracks()
+        .filter(track => track.readyState !== "ended").length;
       observation.phase = audio.state === "closed" && observation.ownedTracksAfterClose === 0
         ? "closed" : "cleanup-failed";
       delete (window as typeof window & {audibleProofAudioControl?: typeof diagnosticControl}).audibleProofAudioControl;
     }
+    if (bootstrapError) throw bootstrapError;
   }
 }

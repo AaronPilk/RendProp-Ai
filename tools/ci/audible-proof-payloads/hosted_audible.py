@@ -22,10 +22,10 @@ ARCHIVE_BYTES = 201492480
 SOURCE_FILES = 3340
 SOURCE_AGGREGATE = "d66a01ab8689ac9907b75ea8b678e5e59506406a4e933b89375b64d21daee88b"
 MODE_AGGREGATE = "7060984f4f3d27683c2b8a01d765b8a51ea123251d19c288537e1db7b09c4df9"
-V5 = "webcodecs-audible-prototype-v5"
+PAYLOAD_VERSION = "webcodecs-audible-prototype-v6"
 PRIOR = "webcodecs-narrated-prototype-v2"
 FROZEN = {
-    V5 + "/payload-hashes.json": "aab36c47db0ef066fa66d009dedaa8e6866e84b97f33bd1ec9afd66f5be347b4",
+    PAYLOAD_VERSION + "/payload-hashes.json": "daa96466fe149f03c8fd4e8fb5108a48d5ea3feb9d27f83308afb1cd5a7ae089",
     PRIOR + "/prepare-disposable-copy.py": "8468b413d7beb7eae24703cc3c6ae65d28a6671d253af8a9bfd66b7a809428b1",
     PRIOR + "/experimental-webcodecs.ts": "773e6860f48963746f4233c240292dca63092e288493c6bc43fbbb9c51b437a3",
     "dependencies/package-lock.json": "8877584e305eacab211161e8eb8564cbfcf32ef14c23864cbd5a61794020061b",
@@ -69,11 +69,11 @@ def load_generator(payload: Path):
     for name, expected in FROZEN.items():
         if sha(payload / name) != expected:
             raise RuntimeError(f"Frozen payload changed: {name}")
-    manifest = json.loads((payload / V5 / "payload-hashes.json").read_text())
-    if manifest["shippingCommit"] != SHIPPING_SHA or len(manifest["payloadSha256"]) != 10:
+    manifest = json.loads((payload / PAYLOAD_VERSION / "payload-hashes.json").read_text())
+    if manifest["shippingCommit"] != SHIPPING_SHA or len(manifest["payloadSha256"]) != 11:
         raise RuntimeError("Audible payload manifest identity changed")
     for name, expected in manifest["payloadSha256"].items():
-        if Path(name).name != name or sha(payload / V5 / name) != expected:
+        if Path(name).name != name or sha(payload / PAYLOAD_VERSION / name) != expected:
             raise RuntimeError(f"Audible payload changed: {name}")
     module = SimpleNamespace(**runpy.run_path(str(payload / PRIOR / "prepare-disposable-copy.py")))
     if module.SHIPPING_SHA != SHIPPING_SHA or len(module.PINNED) != 19:
@@ -203,7 +203,7 @@ def prepare(args) -> None:
         (source / "apps/studio/node_modules").symlink_to(locked, target_is_directory=True)
         dependency_check(base, module)
         manifest = base / "prepared-manifest.json"
-        subprocess.run([shutil.which("python3") or "python3", str(payload / V5 / "prepare-audible-copy.py"),
+        subprocess.run([shutil.which("python3") or "python3", str(payload / PAYLOAD_VERSION / "prepare-audible-copy.py"),
                         "--checkout", str(source), "--dependency-root", str(base / "dependencies"),
                         "--receipt", str(manifest)], check=True, timeout=60)
         prepared = json.loads(manifest.read_text())
@@ -376,6 +376,7 @@ def run(args) -> None:
         require(journal["runtimeVersions"] == VERSIONS, "Hosted runtime differs from pinned condition")
         expected_sources = {name: sha(source / "apps/studio" / name) for name in (
             "src/editor/experimental-webcodecs.ts", "src/editor/audible-pcm.ts",
+            "src/editor/silent-output-bootstrap.ts",
             "src/editor/audible-pcm-worklet.js", "tests/audible-proof-fixture.ts",
             "tests/audible-proof-fixture.html", "tests/audible-proof-browser.mjs",
             *["src/editor/" + name + ".ts" for name in

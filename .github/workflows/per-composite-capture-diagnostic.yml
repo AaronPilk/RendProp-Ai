@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   webcodecs-audible-proof:
-    name: Three-second audible original proof plus fault controls — NOT required CI
+    name: Early-stream audible proof plus fault controls — NOT required CI
     if: github.repository == 'AaronPilk/RendProp-Ai' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1
     runs-on: macos-26
     timeout-minutes: 30
@@ -224,7 +224,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: studio-webcodecs-audible-partial-proof-147-${{ github.run_attempt }}
+          name: studio-webcodecs-audible-v6-partial-proof-147-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/rendprop-webcodecs-audible-proof/context.json
             ${{ runner.temp }}/rendprop-webcodecs-audible-proof/runner-facts.json

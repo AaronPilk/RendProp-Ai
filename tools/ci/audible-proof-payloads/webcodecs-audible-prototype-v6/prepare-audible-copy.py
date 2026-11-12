@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an external, disposable 1c archive for the audible proof.
+"""Prepare an external, disposable 1c archive for the v6 stream proof.
 
 Static preparation only. It never builds, opens a browser, encodes, downloads,
 or modifies the shipping checkout. The prior frozen video loop is retained.
@@ -19,6 +19,7 @@ SHIPPING_SHA = "1c561d7b91d9b75bd7ba29aa081fcba959089fee"
 SOURCE = {
     "experimental-webcodecs-audible.ts": "apps/studio/src/editor/experimental-webcodecs.ts",
     "audible-pcm.ts": "apps/studio/src/editor/audible-pcm.ts",
+    "silent-output-bootstrap.ts": "apps/studio/src/editor/silent-output-bootstrap.ts",
     "audible-pcm-worklet.js": "apps/studio/src/editor/audible-pcm-worklet.js",
     "audible-proof-fixture.html": "apps/studio/tests/audible-proof-fixture.html",
     "audible-proof-fixture.ts": "apps/studio/tests/audible-proof-fixture.ts",
@@ -70,8 +71,8 @@ def main() -> None:
             "773e6860f48963746f4233c240292dca63092e288493c6bc43fbbb9c51b437a3":
         raise RuntimeError("Frozen narrated video-loop source changed")
     manifest = json.loads((HERE / "payload-hashes.json").read_text())
-    for name in [*SOURCE, "design.md", "README.md", "derive-audible-exporter.py",
-                 "prepare-audible-copy.py"]:
+    for name in [*SOURCE, "design.md", "README.md",
+                 "silent-output-bootstrap.test.ts", "prepare-audible-copy.py"]:
         if sha(HERE / name) != manifest["payloadSha256"].get(name):
             raise RuntimeError(f"Audible payload changed: {name}")
     outputs = {target: sha(HERE / name) for name, target in SOURCE.items()}
@@ -90,7 +91,7 @@ def main() -> None:
             raise RuntimeError(f"Prepared output changed: {target}")
     receipt.parent.mkdir(parents=True, exist_ok=True)
     receipt.write_text(json.dumps({
-        "kind": "audible-original-webcodecs-disposable-preparation",
+        "kind": "audible-original-early-stream-disposable-preparation",
         "status": "prepared-only", "shippingCommit": SHIPPING_SHA,
         "shippingPinsSha256": prior["PINNED"], "externalDependency": {
             "name": "mediabunny", "version": "1.65.2",

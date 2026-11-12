@@ -17,7 +17,8 @@ import {
   canEncodeAudio,
   canEncodeVideo,
 } from "mediabunny";
-import {captureAudibleOriginalProof, beginAudibleProofAudio, type AudibleTrace} from "./audible-pcm";
+import {captureAudibleOriginalProof, beginAudibleProofAudio,
+  AudioBootstrapSetupError, type AudibleTrace} from "./audible-pcm";
 import {OverlayPainter} from "./overlay-renderer";
 import {verifyMp4FrameCadence, type EncodedTransition} from "./mp4-cadence";
 import {
@@ -89,7 +90,27 @@ export async function exportAudibleWebCodecsProof(options: ProofOptions): Promis
   requireFixtureScope(draft, options);
   if (document.hidden) throw new Error("Keep this tab visible while exporting. No download was created.");
   assertCurrentRevision(draft, options.currentDraft(), options.signal);
-  const begunAudio = beginAudibleProofAudio();
+  let begunAudio: ReturnType<typeof beginAudibleProofAudio>;
+  try {begunAudio = beginAudibleProofAudio();}
+  catch (error) {
+    if (error instanceof AudioBootstrapSetupError) {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        error.closeStarted.then(() => "closed" as const, () => "rejected" as const),
+        new Promise<"timed-out">(resolve => {
+          timeout = setTimeout(() => resolve("timed-out"), 2000);
+        }),
+      ]);
+      if (timeout !== undefined) clearTimeout(timeout);
+      (window as typeof window & {audibleProofSetupClose?: typeof result})
+        .audibleProofSetupClose = result;
+      if (result !== "closed")
+        throw new Error("The proof AudioContext did not close after setup failure. No download was created.",
+          {cause: error.cause ?? error});
+      throw error.cause ?? error;
+    }
+    throw error;
+  }
   try {
   const dims = renderDimensions(draft.ratio);
   const videoQuality = new Quality({bitrate: 5_000_000});
@@ -255,6 +276,10 @@ export async function exportAudibleWebCodecsProof(options: ProofOptions): Promis
   }
   } finally {
     const audio = begunAudio.context;
+    // Capture cleanup stops this once. Also own the pre-capture capability,
+    // decode, cancellation and output-start failures where capture never ran.
+    let bootstrapError: unknown;
+    try {begunAudio.bootstrap.stop();} catch (error) {bootstrapError = error;}
     if (audio.state !== "closed") {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const closed = await Promise.race([
@@ -267,5 +292,6 @@ export async function exportAudibleWebCodecsProof(options: ProofOptions): Promis
         throw new Error("The proof AudioContext did not close. No download was created.");
     }
     (window as typeof window & {audibleProofOuterAudioState?: AudioContextState}).audibleProofOuterAudioState = audio.state;
+    if (bootstrapError) throw bootstrapError;
   }
 }
