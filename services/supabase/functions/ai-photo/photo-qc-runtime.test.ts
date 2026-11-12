@@ -4,7 +4,7 @@ import {HttpError} from "../_shared/http.ts";
 import {inputHash,resetServingModeCache} from "../_shared/funded-serving.ts";
 import {decodePhotoOutput} from "./input-policy.ts";
 import {PHOTO_QC_POLICY,PHOTO_QC_JSON_SCHEMA,unavailablePhotoQuality,parsePhotoQuality,type PhotoQualityVerdict} from "./photo-qc-verdict.ts";
-import {beginPhotoQuality,retainPhotoCandidate,statusPhotoQuality,photoQualityResponse,photoBytesHash,failPhotoQuality,throwPhotoQualityState,releasePhotoQuality,photoReleased,type PhotoQualityEnvelope,type PhotoEvidenceIO} from "./photo-qc-store.ts";
+import {beginPhotoQuality,retainPhotoCandidate,statusPhotoQuality,photoQualityResponse,photoBytesHash,failPhotoQuality,throwPhotoQualityState,releasePhotoQuality,photoReleased,settleStalePhotoQuality,type PhotoQualityEnvelope,type PhotoEvidenceIO} from "./photo-qc-store.ts";
 import {continuePhotoQuality,photoJudgeQuote,photoJudgeRubric,photoJudgeTimeout,PHOTO_QC_MAX_OUTPUT_TOKENS,PHOTO_QC_JUDGE_CONTRACT,PHOTO_QC_OUTPUT_FORMAT,photoDerivatives,type PhotoJudgeDependencies} from "./photo-qc-runner.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {photoResultKeys} from "./photo-result.ts";
@@ -56,6 +56,13 @@ async function fixture(){
    const e=state.row!.evidence;
    if(!e.output||!e.output_etag||!e.input_etag||!e.provenance_id||!["evidence_ready","checking","accept"].includes(e.state)||["hold","refuse"].includes(state.row!.check.state))return{data:null,error:{message:"RP409: This photo operation cannot be released for private review"}};
    state.row!.release??={released_at:new Date().toISOString(),output_sha256:e.output.sha256,facts:args.p_facts};return{data:view(),error:null};
+  }
+  if(name==="photo_quality_reap"){
+   // Mirrors SQL: a retained prospective check that can no longer report is
+   // closed as accepted with the review marked unavailable.
+   const e=state.row!.evidence,q=state.row!.check;
+   if(args.p_evidence===e.id&&e.output_etag&&e.provenance_id&&["evidence_ready","checking"].includes(e.state)){e.state="accept";e.failure={phase:"quality_check_stalled",facts:{quality_review:"unavailable",delivered:true}};q.state="accept";return{data:1,error:null};}
+   return{data:0,error:null};
   }
   if(name==="photo_quality_failure"){state.row!.evidence.state="hold";state.row!.evidence.failure={phase:args.p_phase,facts:args.p_facts};state.row!.check.state="hold";return{data:view(),error:null};}
   if(name==="photo_quality_claim"){
@@ -372,13 +379,14 @@ Deno.test("private release delivers the exact retained candidate with its honest
  const file=released.evidence.output!,inline={imageB64:b64(f.output),key:file.key,mime:file.mime,sha256:file.sha256,bytes:file.bytes};
  const first=await(await photoQualityResponse(f.admin,released,actor,org,{},f.io,inline)).json();
  assertEquals(first.image_b64,b64(f.output));assertEquals(first.provenance,{id:"ea100606-0000-4000-8000-000000000008",recorded:true});
- assertEquals(first.photo_quality,{policy:PHOTO_QC_POLICY,check_id:check,state:"pending",advisory:true,delivery:"private_review",publishable:false});
+ assertEquals(first.photo_quality,{policy:PHOTO_QC_POLICY,check_id:check,state:"pending",advisory:true,delivery:"private_review",publishable:false,review:"pending"});
  assertEquals(f.state.reads,0);assertEquals(f.state.calls,0,"Delivery never dispatches or waits for the judge");
  // A later saved-status read re-hashes the stored bytes, still without a verdict.
  const saved=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(saved.image_b64,b64(f.output));assertEquals(saved.photo_quality.publishable,false);
  f.state.corruptGet=true;await assertRejects(()=>photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),HttpError,"bytes changed");f.state.corruptGet=false;
  f.state.row!.evidence.state="accept";f.state.row!.check.state="accept";
- const accepted=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(accepted.photo_quality.state,"accept");assertEquals(accepted.photo_quality.publishable,true);
+ const accepted=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(accepted.photo_quality.state,"accept");assertEquals(accepted.photo_quality.publishable,true);assertEquals(accepted.photo_quality.review,"unavailable","accepted without a recorded verdict");
+ f.state.row!.check.result=pass;assertEquals((await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json()).photo_quality.review,"recorded");f.state.row!.check.result=undefined;
  // A check that later cannot produce a verdict no longer takes the image away;
  // it is reported as held and unpublishable instead of ending in an error.
  f.state.row!.evidence.state="hold";f.state.row!.check.state="hold";f.state.row!.evidence.failure={phase:"quality_check"};
@@ -400,4 +408,22 @@ Deno.test("an off-size released photo reports its real size beside the image",as
  const released=await releasePhotoQuality(f.admin,row,{geometry:{requested:"2K",width:1024,height:1024,meets_request:false}});assert(released);
  const body=await(await photoQualityResponse(f.admin,released,actor,org,{},f.io)).json();
  assertEquals(body.photo_quality.resolution,{requested:"2K",width:1024,height:1024,meets_request:false});
+});
+Deno.test("a check stuck in checking or never started cannot strand its edit: the status path settles it as review-unavailable",async()=>{
+ const f=await fixture();await f.retain();
+ // Fresh checks are left alone and cost no extra call.
+ f.state.row!.evidence.state="checking";f.state.row!.check.state="checking";f.state.row!.check.judge_started_at=new Date(Date.now()-60_000).toISOString();
+ const fresh=await settleStalePhotoQuality(f.admin,f.view(),actor,org);assertEquals(fresh.check.state,"checking");assert(!f.state.rpcs.includes("photo_quality_reap"));
+ const pending=await assertRejects(()=>photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),HttpError);assertEquals(pending.code,"photo_quality_hold");
+ // Six minutes after the judge started with no report, a status read delivers.
+ f.state.row!.check.judge_started_at=new Date(Date.now()-6*60_000).toISOString();
+ const body=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();
+ assertEquals(body.image_b64,b64(f.output));assertEquals(body.photo_quality.state,"accept");assertEquals(f.state.rpcs.filter(name=>name==="photo_quality_reap").length,1);
+ assertEquals(f.state.calls,0,"Settling never dispatches a judge");assertEquals(f.state.holds,0);
+ // A check that never got a comparison is settled the same way after ten minutes.
+ const g=await fixture();await g.retain();(g.state.row!.check as {created_at?:string}).created_at=new Date(Date.now()-11*60_000).toISOString();
+ assertEquals((await settleStalePhotoQuality(g.admin,g.view(),actor,org)).evidence.state,"accept");
+ // Calibration evidence and technical holds are never settled.
+ const h=await fixture();await h.retain();await failPhotoQuality(h.admin,h.view(),"photo_output_size",{provider_cost_incurred:true});(h.state.row!.check as {created_at?:string}).created_at=new Date(Date.now()-11*60_000).toISOString();
+ assertEquals((await settleStalePhotoQuality(h.admin,h.view(),actor,org)).evidence.state,"hold");assert(!h.state.rpcs.includes("photo_quality_reap"));
 });

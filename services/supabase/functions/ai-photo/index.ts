@@ -122,6 +122,7 @@ import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from ".
 import {DECLUTTER_ASSESSMENT_PROTOCOL,DECLUTTER_ASSESSMENT_INSTRUCTION,parseDeclutterAssessment,unavailableDeclutterAssessment,type DeclutterAssessment} from "./declutter-assessment.ts";
 import {decodeBase64Bytes} from "../_shared/base64-bytes.ts";
 import {lookupPhotoQuality,statusPhotoQuality,requestPhotoQualityStatus,photoUUID,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,releasePhotoQuality,photoReleased,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
+import * as photoComparisonClient from "../photo-quality-worker/client.ts";
 import {waitForPhotoQuality,continuePhotoQualityAfterResponse,PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from "./photo-qc-wait.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from "./protocol.ts";
@@ -1049,6 +1050,16 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space});
       }
     }catch(error){await refundEditCharge(charge);await abortFundingOperationBeforeDispatch(funding);throw error;}
+
+    // Boot the comparison process while the edit generates (qc-worker lane).
+    // Best effort and never awaited: it claims nothing, and a refusal, a
+    // timeout or an older worker changes nothing for this edit. The helper is
+    // read off the module namespace, so this is a no-op until that lane's
+    // prewarmPhotoComparison export is merged.
+    try{
+      const prewarm=(photoComparisonClient as unknown as {prewarmPhotoComparison?:(checkId:string,signal?:AbortSignal)=>Promise<unknown>}).prewarmPhotoComparison;
+      if(typeof prewarm==="function")void Promise.resolve(prewarm(quality.check.id,req.signal)).catch(()=>{});
+    }catch{/* warm-up is optional */}
 
     // Record this generation's immutable recipe identity (PHOTO_RECIPE_REVISION
     // and the SHA-256 of the exact final prompt handed to the provider adapter)

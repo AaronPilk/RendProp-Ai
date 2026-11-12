@@ -240,7 +240,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261106224718_access_chain_plpgsql_plan_cache_20261106.sql": ("e6d3d67c91154c015a7b92b02637fd737d9b77459152742e2ccaf3cf7219f3fd", "changed since 2026-11-06; review before converting"),
     "20261106230302_workspace_directory_candidate_orgs_20261107.sql": ("d2d72dd1028546161cad47fa338323fc66d8e956e5116bf19134f0a39dc99a62", "workspace_directory changed since 2026-11-06; review the candidate-org rewrite before applying"),
     "20261106231733_photo_quality_advisory_judge_20261107.sql": ("1bb3ed4fce70a51a2ba8909311994ecb8079968b806067624969eff7f766ec7f", "photo_quality_finish changed since 2026-11-06; review the advisory-judge rewrite before applying"),
-    "20261112193000_photo_quality_early_release.sql": ("9f8333d9f95178ca8b221a64f535be03e96b8e35a5dbfda375fb442a2fc32e7c", "changed since 2026-11-12; review the early-release rewrite before applying"),
+    "20261112193000_photo_quality_early_release.sql": ("eaf01ddca07e5ef8b9f4f8fd5815328e5b09a18b376a87eff4b50e36cf16db0e", "changed since 2026-11-12; review the early-release rewrite before applying"),
 }
 
 

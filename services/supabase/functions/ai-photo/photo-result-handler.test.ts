@@ -212,6 +212,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  // Early private release is off unless a test opts in, so every pre-existing
  // case keeps exercising the unchanged wait-for-the-check path. The opt-in
  // models SQL: only a retained candidate with its disclosure can be released.
+ const photoComparisonClient={}; // no warm-up helper in this harness; the hook must be a no-op
  const photoReleased=row=>!!row?.release;
  const releasePhotoQuality=async(_admin,row,facts)=>{
   state.releaseCalls=(state.releaseCalls??0)+1;state.releaseFacts=facts;
@@ -978,7 +979,7 @@ Deno.test("an off-size but complete paid photo is delivered with its real size o
   assertEquals(delivered.state.releaseFacts.geometry,{requested:"2K",width:1024,height:1024,meets_request:false});assertEquals(delivered.state.submits,1);assertEquals(delivered.state.waits??0,0);
  }finally{delivered.close();}
  const tiny=await fixture();try{
-  tiny.state.output=outputJPEG(640,480);tiny.state.earlyRelease=true;
-  assertEquals((await tiny.run(tiny.request())).status,409);assertEquals(tiny.state.releaseCalls??0,0,"A frame below a real 1K class is never released");
+  tiny.state.output=outputJPEG(200,150);tiny.state.earlyRelease=true;
+  assertEquals((await tiny.run(tiny.request())).status,409);assertEquals(tiny.state.releaseCalls??0,0,"A frame with no usable picture is never released");
  }finally{tiny.close();}
 });

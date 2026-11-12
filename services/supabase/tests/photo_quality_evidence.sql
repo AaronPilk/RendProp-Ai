@@ -100,7 +100,10 @@ select pg_temp.ok((select count(*)=1 from private_ai_outputs where storage_key=(
 select pg_temp.ok((select qc#>>'{preservation,openings}'='70' and qc#>>'{findings,0,category}'='openings' and qc->>'publishable'='true' from media_provenance where id=(select(x#>>'{evidence,provenance_id}')::uuid from bad)),'opening finding remains visible on the promoted provenance');
 create temporary table unpaid as select pg_temp.bind(pg_temp.prepared(pg_temp.candidate(pg_temp.seed('no-qc-ledger'))))x;grant select,update on unpaid to service_role;
 update unpaid set x=pg_temp.finish(x,pg_temp.verdict(),false);
-select pg_temp.ok((select x#>>'{check,state}'='hold'from unpaid),'passing text without settled paid QC receipt is held');
+-- Owner decision 12 Nov 2026: a check outcome never withholds the edit. A
+-- verdict without its settled paid receipt still is not a recorded review.
+select pg_temp.ok((select x#>>'{check,state}'='accept'and x#>>'{evidence,state}'='accept'from unpaid)and(select qc->>'review'='unavailable'and not(qc?'verdict')and not(qc?'findings')and qc->>'publishable'='true'from media_provenance where id=(select(x#>>'{evidence,provenance_id}')::uuid from unpaid)),'passing text without settled paid QC receipt is delivered but never recorded as a review');
+select pg_temp.ok((select count(*)=1 from private_ai_outputs where storage_key=(select x#>>'{evidence,output,key}'from unpaid)),'review-unavailable edit is exact ready media');
 create temporary table reject as select pg_temp.bind(pg_temp.prepared(pg_temp.candidate(pg_temp.seed('refused'))))x;grant select,update on reject to service_role;
 update reject set x=pg_temp.finish(x,jsonb_set(jsonb_set(pg_temp.verdict(),'{verdict}','"fail"'),'{action}','"refuse"'));
 select pg_temp.ok((select x#>>'{check,state}'='refuse'from reject),'paid terminal refusal retained without promotion');
@@ -113,7 +116,7 @@ create temporary table pano as select pg_temp.candidate(pg_temp.seed('four-k-pan
 select pg_temp.ok((select x#>>'{evidence,output,width}'='12288'from pano),'official4Kpanorama geometry retained without resize');
 create temporary table cpu as select pg_temp.candidate(pg_temp.seed('cpu-infra'))x;grant select,update on cpu to service_role;
 do $$declare c jsonb;begin for i in 1..3 loop c:=photo_quality_claim((select(x#>>'{check,id}')::uuid from cpu));perform photo_quality_cpu_failure((select(x#>>'{check,id}')::uuid from cpu),(c#>>'{check,lease_token}')::uuid,'cpu_photo_comparison_failed');end loop;end$$;
-select pg_temp.ok((photo_quality_status((select actor from f),(select(x#>>'{check,id}')::uuid from cpu))#>>'{check,state}')='hold','three CPU infrastructure failures hold exact candidate');
+select pg_temp.ok((photo_quality_status((select actor from f),(select(x#>>'{check,id}')::uuid from cpu))#>>'{check,state}')='accept'and(select qc->>'review'='unavailable'and qc->>'publishable'='true'from media_provenance where id=(select(x#>>'{evidence,provenance_id}')::uuid from cpu))and(select finished_at is not null from photo_quality_checks where id=(select(x#>>'{check,id}')::uuid from cpu)),'three CPU infrastructure failures deliver the exact candidate with review unavailable');
 select pg_temp.ok(photo_quality_claim((select(x#>>'{check,id}')::uuid from cpu))->>'action'='wait','exhausted CPU cannot restart generation/judge');
 select pg_temp.ok((select count(*)=0 from serving_cost_reservations where request_key='photo-qc:'||(select x#>>'{check,id}'from cpu)),'CPU failures never create paid judge');
 select pg_temp.ok(jsonb_array_length(photo_quality_media_targets(array[(select org from f)],(select listing from f)))>=10,'held evidence and derivative keys in erasure inventory');

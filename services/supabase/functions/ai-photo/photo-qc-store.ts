@@ -168,9 +168,31 @@ export function photoQualityFacts(row:PhotoQualityEnvelope):Record<string,unknow
  const e=row.evidence,accepted=row.check.state==="accept"&&e.state==="accept";
  if(!photoReleased(row))return{policy:e.policy,check_id:row.check.id,state:"accept"};
  const geometry=row.release?.facts?.geometry as Record<string,unknown>|undefined;
- return{policy:e.policy,check_id:row.check.id,state:row.check.state,advisory:true,delivery:"private_review",publishable:accepted,
+ // "unavailable": the edit is delivered and usable, but the automated review
+ // produced no recorded verdict (owner decision 12 Nov 2026).
+ const result=row.check.result as {action?:unknown}|null|undefined;
+ const review=!accepted?(["hold","refuse"].includes(row.check.state)?"closed":"pending"):result?.action==="accept"&&e.failure?.facts?.quality_review!=="unavailable"?"recorded":"unavailable";
+ return{policy:e.policy,check_id:row.check.id,state:row.check.state,advisory:true,delivery:"private_review",publishable:accepted,review,
   ...(e.failure?.phase&&!accepted?{failure_phase:e.failure.phase}:{}),
   ...(geometry&&geometry.meets_request===false?{resolution:{requested:geometry.requested??null,width:geometry.width??null,height:geometry.height??null,meets_request:false}}:{})};
+}
+export const PHOTO_CHECK_STALLED_MS=5*60_000;
+export const PHOTO_CHECK_UNSTARTED_MS=10*60_000;
+/** Status-path half of the reaper (the controller queue runs the other half
+ * every minute). A check whose judge started long ago without reporting, or
+ * that never got a comparison, must not strand its edit: SQL closes it as
+ * "review unavailable" and the edit becomes ordinary accepted media. The
+ * thresholds are re-checked in SQL; this only avoids a needless call. Never
+ * throws, never starts a comparison, a judge or a generation. */
+export async function settleStalePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope,actor:string,selected:string|null,now=Date.now()):Promise<PhotoQualityEnvelope>{
+ const e=row.evidence,q=row.check as PhotoQualityCheck&{created_at?:string|null};
+ if(e.purpose==="calibration"||!e.output_etag||!e.provenance_id||!["evidence_ready","checking"].includes(e.state))return row;
+ const started=typeof q.judge_started_at==="string"?Date.parse(q.judge_started_at):NaN,created=typeof q.created_at==="string"?Date.parse(q.created_at):NaN;
+ const stalled=q.state==="checking"&&Number.isFinite(started)&&now-started>PHOTO_CHECK_STALLED_MS;
+ const unstarted=["pending","preparing","derivative_ready"].includes(q.state)&&q.judge_started_at===null&&Number.isFinite(created)&&now-created>PHOTO_CHECK_UNSTARTED_MS;
+ if(!stalled&&!unstarted)return row;
+ try{await photoQualityRpc(admin,"photo_quality_reap",{p_evidence:e.id,p_limit:1});return await statusPhotoQuality(admin,actor,row.check.id,selected);}
+ catch{return row;}
 }
 /** Called only after fresh SQL/current-library authority and either atomic
  * acceptance or a recorded private release of these exact bytes.
@@ -181,6 +203,7 @@ export async function photoQualityResponse(admin:PhotoAdmin,row:PhotoQualityEnve
   if(!["accept","refuse","hold"].includes(row.check.state))throwPhotoQualityState(row,selected);
   return json({...photoQualityIdentity(row,selected),purpose:"calibration",publishable:false,photo_quality:{policy:row.evidence.policy,check_id:row.check.id,state:row.check.state},result:row.check.result??null});
  }
+ row=await settleStalePhotoQuality(admin,row,actor,selected);
  if((row.check.state!=="accept"||row.evidence.state!=="accept")&&!photoReleased(row))throwPhotoQualityState(row,selected);
  const e=row.evidence,file=e.output;assert(file&&e.provenance_id&&e.output_etag,503,"The accepted photo receipt is incomplete.");assertPhotoEvidenceFile(e,file,"output");
  const {data,error}=await admin.from("private_ai_outputs").select("org_id,user_id,listing_id,bucket,storage_key,bytes").eq("org_id",e.org_id).eq("user_id",actor).eq("bucket","renders").eq("storage_key",file.key).maybeSingle();
