@@ -170,7 +170,6 @@ try:
     variants = [
         ('actual', actual, None),
         ('negative-prepared-jpeg-refusal-ignored', actual.replace('        try VideoPreparedSourcePolicy.requireUsableJPEG(jpeg, aspect: aspect)', '        // omitted prepared JPEG refusal'), 'prepared JPEG refusal propagates before paid dispatch'),
-        ('negative-quality-gate-accepts-changed-property', actual.replace(block(actual, '        guard verdict.mayUse else {'), '// omitted property gate'), 'changed property must not be retained'),
         ('negative-refusal-keeps-marker', actual.replace('if Self.isDefinitiveRefusal(error) { submission.clear() }', '// marker kept on a definitive refusal'), 'a definitive refusal retires the unconfirmed marker'),
         ('negative-tmp-download-read-as-is', actual.replace('let tmp = Self.clipPath(forDownloaded: downloaded)', 'let tmp = downloaded'), 'frames are read from an .mp4 path, never the .tmp download'),
         ('negative-empty-frames-sent', actual.replace('guard !frames.isEmpty else {', 'guard frames.isEmpty || !frames.isEmpty else {'), 'a clip this phone cannot read is held locally without a drift call'),
@@ -203,20 +202,17 @@ try:
         ('negative-manifest-pre-dispatch', actual.replace('_ = try PendingReelClips.readRecord(for: recoveryContext.listingID)', '// omitted authoritative history preflight'), 'unreadable history prevents any new paid POST'),
     ]
     quality_variants = [
-        ('negative-selected-delivery-aspect-lost', actual.replace('let outputAspect = pending?.outputAspect ??', 'let outputAspect = nil as String? ??'), 'new request keeps selected portrait delivery for a landscape source'),
-        ('negative-quality-unbounded-retry', actual.replace('for attempt in 0...1 {', 'for attempt in 0...2 {').replace('refusal.mayRetry && attempt == 0', 'refusal.mayRetry && attempt < 2'), 'quality retry is bounded to two total provider generations'),
-        ('negative-quality-broad-retry', actual.replace('verdict.status == .fail && verdict.action == "retry"', '!verdict.mayUse'), 'ambiguous quality verdict must hold'),
-        ('negative-quality-retry-different-jpeg', actual.replace('api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),', 'api.aiVideoReelClip(imageBase64: (attempt == 0 ? jpeg : Data("changed retry JPEG".utf8)).base64EncodedString(),'), 'retry uses the exact same prepared and saved JPEG'),
-        ('negative-quality-lost-attempt', actual.replace('attempt: pending?.qualityAttempt ?? 1', 'attempt: 1'), 'retry attempts persist and reach the real drift request'),
+        ('negative-quality-check-error-holds', actual.replace('''        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // The check did not answer. The clip is used unchecked.
+        }
+        try await requireCurrent()
+        let dest = dir''', '''        }
+        try await requireCurrent()
+        let dest = dir'''), 'a check that could not run must not hold a finished clip'),
+        ('negative-quality-lost-attempt', actual.replace('attempt: pending?.qualityAttempt ?? 1', 'attempt: 1'), 'the saved attempt reaches the real drift request'),
         ('negative-quality-lost-provenance', actual.replace('provenanceID: job.provenanceID, sourceAssetID:', 'provenanceID: nil, sourceAssetID:'), 'each drift judgement carries its exact accepted provenance'),
-        ('negative-quality-refuse-without-fail', actual.replace('guard verdict.status == .fail, verdict.action == "refuse",', 'guard verdict.action == "refuse",'), 'ambiguous quality verdict must hold'),
-        ('negative-quality-fail-without-refuse', actual.replace('guard verdict.status == .fail, verdict.action == "refuse",', 'guard verdict.status == .fail,'), 'confirmed drift requests exactly one paid retry'),
-        ('negative-quality-original-wrong-jpeg', actual.replace('OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)', 'OriginalPhotoMotion.render(jpeg: Data("wrong source".utf8), renderSize: size, output: local)'), 'original motion renders only the exact accepted saved JPEG'),
-        ('negative-quality-original-wrong-shape', actual.replace('let size = outputAspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)', 'let size = CGSize(width: 1920, height: 1080)'), 'original portrait source selects the portrait renderer shape'),
-        ('negative-quality-original-invalid-shape', actual.replace('guard let shape, shape.width > 0, shape.height > 0 else {', 'guard let shape else {'), 'invalid saved image shape must hold'),
-        ('negative-quality-pre-local-fence', actual.replace('        try await requireCurrent()\n        guard verdict.mayUse else {', '        // omitted post-QC context fence\n        guard verdict.mayUse else {').replace('            try await requireCurrent()\n            let local = dir.appendingPathComponent("clip-photo-motion-', '            // omitted pre-local context fence\n            let local = dir.appendingPathComponent("clip-photo-motion-'), 'stale QC response never enters local fallback'),
-        ('negative-quality-post-render-fence', actual.replace('try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)\n            try await requireCurrent()', 'try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)\n            // omitted post-render context fence'), 'post-render identity change must stop'),
-        ('negative-quality-local-early-ack', actual.replace('            return local', '            pending?.clear()\n            return local'), 'local fallback keeps receipt until durable retention'),
         ('negative-quality-retention-early-ack', actual.replace('        let retained = try retainRecoveredClip(clip, for: request.context.listingID)', '        request.clear()\n        let retained = try retainRecoveredClip(clip, for: request.context.listingID)'), 'local fallback disk failure preserves its accepted receipt'),
         ('negative-quality-retention-lost-label', actual.replace('let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-recovered-"', 'let prefix = "clip-recovered-"'), 'durable retention preserves original-motion bytes and label'),
         ('negative-quality-park-lost-label', actual.replace('let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-"', 'let prefix = "clip-"'), 'batch parking preserves original-motion labels for every retained copy'),
@@ -224,10 +220,7 @@ try:
     choice_variants = [
         ('negative-framing-provider-flag-lost', actual.replace('aspect: aspect, framing: framing, presetVersion: 1,', 'aspect: aspect, framing: nil, presetVersion: 1,'), 'new whole-source framing survives provider admission'),
         ('negative-framing-saved-batch-lost', actual.replace('preparedJPEG: jpeg, framing: batch.framing,', 'preparedJPEG: jpeg, framing: nil,'), 'saved whole-scene batch resumes exact full sources and framing'),
-        ('negative-choice-generic-error-fallback', actual.replace('} catch let refusal as ReelQualityRefusal where refusal.mayRetry {', '} catch {'), 'unavailable recovery must remain held'),
-        ('negative-choice-wrong-source', actual.replace('api.aiVideoReelClip(imageBase64: source, mime:', 'api.aiVideoReelClip(imageBase64: Data("different choice JPEG".utf8).base64EncodedString(), mime:'), 'explicit safer retry uses exact saved JPEG'),
-        ('negative-choice-wrong-attempt', actual.replace('sourceSpaceType: spaceType, qualityAttempt: 1,', 'sourceSpaceType: spaceType, qualityAttempt: 2,'), 'explicit safer retry persists attempt one'),
-        ('negative-choice-original-wrong-source', actual.replace('OriginalPhotoMotion.render(jpeg: jpeg,\n                renderSize:', 'OriginalPhotoMotion.render(jpeg: Data("different original".utf8),\n                renderSize:'), 'explicit original choice renders exact saved JPEG'),
+        ('negative-choice-generic-error-fallback', actual.replace('} catch let refusal as ReelQualityRefusal where refusal.mayRetry {', '} catch {'), 'a cancelled recovery must stop without a new generation'),
         ('negative-choice-early-ack', actual.replace('        let retained = try retainRecoveredClip(clip, for: request.context.listingID)', '        request.clear()\n        let retained = try retainRecoveredClip(clip, for: request.context.listingID)'), 'explicit original disk failure keeps its paid receipt'),
         ('negative-batch-progress-not-durable', actual.replace('            try batch!.save()', '            // omitted durable batch progress'), 'batch progress is durable before receipt acknowledgement'),
         ('negative-batch-source-binding', actual.replace('saved.photos[request.photoNumber - 1].jpegBase64 == request.sourceJPEGBase64,', 'true,'), 'wrong source cannot advance progress'),

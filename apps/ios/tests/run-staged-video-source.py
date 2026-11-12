@@ -47,8 +47,7 @@ source+=aspect+'\n'+music+'\n'+metadata+'\n'+planner
 receipt={'passed':False,'sourceHashes':before,'runs':[],'limitations':['Actual local catalog, version review, batch save/load, source-metadata/fallback composition. UIImage decoding/resampling is a closed byte-preserving boundary; classifier is closed; no UI, paid model, actual upload or server publication executed. Existing real compositor and paid recovery gates provide separate coverage.']}
 variants=[('actual',source,None),
  ('editing-preview-substitution',source.replace('return index.orderedForLibrary(choices).map { version in','return index.orderedForLibrary(index.libraryVersions(.latest)).map { version in'),'video collection resolves the reviewed staged file instead of a newer preview'),
- ('original-source-substitution',source.replace('UIImage(contentsOfFile: photo.enhancedURL.path)','UIImage(contentsOfFile: photo.originalURL.path)'), 'actual video preparation reads the saved staged pixels without reverting to original'),
- ('lost-recovery-stage-review',source.replace('if version.needsStagingReview { throw Failure.reviewRequired }','// omitted staged review'),'unreviewed newer stage stays held during recovery')]
+ ('original-source-substitution',source.replace('UIImage(contentsOfFile: photo.enhancedURL.path)','UIImage(contentsOfFile: photo.originalURL.path)'), 'actual video preparation reads the saved staged pixels without reverting to original')]
 try:
  for name,code,expected in variants:
   assert expected is None or code!=source,name

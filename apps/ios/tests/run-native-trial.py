@@ -57,8 +57,8 @@ assert 'hasFreeIntroductoryOffer(for: product)' in purchase_body and '!hasSevenD
 assert 'await product.subscription?.isEligibleForIntroOffer' in purchase_body
 assert purchase_body.index('try await validateTrialPurchase(') < purchase_body.index('try await product.purchase(')
 assert '!purchases.canStartNewPurchase(for: product) && !purchases.canCheckTrialAvailability(for: product)' in block(paywall, 'private func buyButton(')
-assert 'Trial unavailable' in block(paywall, 'private func buyTitle(')
-assert 'Check trial availability' in block(paywall, 'private func buyTitle(')
+assert "Free trial can't start yet" in block(paywall, 'private func buyTitle(')
+assert 'Set up my free trial' in block(paywall, 'private func buyTitle(')
 assert 'purchases.heldTrialOffer(for: product)' in details
 assert 'state = PlanBanner.boundedTrialState(trial)' in banner
 assert 'trial.checked(org: billingOrg)' in banner and banner.count('WorkspaceContext.selectedOrgID == org') == 2

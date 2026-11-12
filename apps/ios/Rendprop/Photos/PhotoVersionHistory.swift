@@ -124,9 +124,15 @@ enum PhotoVersionHistory {
         var stagingBrief: String? = nil
         /// nil belongs to older saved versions; it is never recorded as a new
         /// review. New custom outputs and their descendants explicitly start false.
+        /// Stored and still decoded, but no longer read as a condition of use.
         var customReviewed: Bool? = nil
 
-        var needsCustomReview: Bool { customReviewed == false }
+        /// Owner decision, 12 Nov 2026: the agent is responsible for what they
+        /// post, so no saved edit waits for a review before it can be saved,
+        /// put on the listing, made the cover, exported or used in a video.
+        /// Always false. Kept so every caller compiles unchanged; the stored
+        /// `customReviewed` and `stagingReviewed` markers remain on disk.
+        var needsCustomReview: Bool { false }
         var isRetainedOriginalSource: Bool {
             parentID == nil && effects.isEmpty && imageFile == originalFile
         }
@@ -137,8 +143,13 @@ enum PhotoVersionHistory {
                 && effects.isEmpty && originalVerified && sourceHistoryKnown
                 && originalFile != nil && imageFile != originalFile
         }
-        var needsStagingReview: Bool { effects.contains("stage") && stagingReviewed != true }
-        var canAutomaticallySelectForListing: Bool { !effects.contains("stage") && !needsCustomReview }
+        /// Always false, for the same reason as `needsCustomReview`. A staged
+        /// photo can be used as soon as it is saved.
+        var needsStagingReview: Bool { false }
+        /// Unchanged rule: a staged or custom edit (and anything made from a
+        /// custom edit) does not replace the listing photo by itself. The agent
+        /// puts it on the listing with one tap; no review comes first.
+        var canAutomaticallySelectForListing: Bool { !effects.contains("stage") && customReviewed != false }
 
         var visibleLabel: String? {
             var parts: [String] = []
@@ -332,9 +343,9 @@ enum PhotoVersionHistory {
             case .missingImage: return "A source photo is missing from this phone. Import it again before editing."
             case .duplicate: return "That photo version is already saved. Reopen Photos to see it."
             case .changedVersion: return "This photo changed while the edit was running. Reopen Photos before editing again."
-            case .reviewRequired: return "Review this staged photo against its original before using it in a reel, on the listing or as the cover. A saved staging preview is not approved for publication."
-            case .customReviewRequired: return "Compare this edit with its source and check the paint colors, materials and fixed features before downloading it, using it on the listing or choosing it as the cover."
-            case .coverNotSelected: return "The cover isn't among the photos selected for this listing. Open Photos and choose a cover from a reviewed version. Your published gallery has been kept."
+            case .reviewRequired: return "This photo changed before we could finish, so we stopped. Open Photos and try again."
+            case .customReviewRequired: return "This edit changed before we could finish, so we stopped. Open Photos and try again."
+            case .coverNotSelected: return "The cover photo isn't one of the photos on this listing. Open Photos and pick a cover from the photos on the listing. Your published photos have not changed."
             }
         }
     }
@@ -837,8 +848,8 @@ enum PhotoVersionHistory {
             throw Failure.changedVersion
         }
         try requireImage(version.imageFile, directory: directory)
-        guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
-        guard customReviewed || !version.needsCustomReview else { throw Failure.customReviewRequired }
+        // No review is required (12 Nov 2026). `reviewed` and `customReviewed`
+        // only record a marker when a caller still passes them.
         if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
         if customReviewed, version.customReviewed != nil { index.versions[id]?.customReviewed = true }
         index.current[version.familyID] = id
@@ -858,8 +869,8 @@ enum PhotoVersionHistory {
             throw Failure.changedVersion
         }
         try requireImage(version.imageFile, directory: directory)
-        guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
-        guard customReviewed || !version.needsCustomReview else { throw Failure.customReviewRequired }
+        // No review is required (12 Nov 2026). `reviewed` and `customReviewed`
+        // only record a marker when a caller still passes them.
         if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
         if customReviewed, version.customReviewed != nil { index.versions[id]?.customReviewed = true }
         if index.listingSelections == nil { index.listingSelections = index.current }

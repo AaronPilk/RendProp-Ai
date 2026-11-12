@@ -28,6 +28,12 @@ import UIKit
 // `.unavailable` is NOT a pass. The caller holds the clip rather than
 // publishing it, because "we could not tell whether the AI changed the house"
 // and "the AI did not change the house" are not the same sentence to a broker.
+//
+// SINCE 12 NOV 2026 (owner decision) THE VERDICT IS ADVISORY. The app still
+// asks, and the server still records the answer, but no caller refuses, retries
+// or swaps in a still photo because of it: the agent is responsible for what
+// they post. `mayUse` and `refusal` remain for the wire contract and for saved
+// requests written by earlier builds.
 
 /// Three frames of a finished clip, as the drift route wants them.
 enum ClipFrames {

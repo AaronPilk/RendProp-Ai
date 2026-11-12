@@ -6067,7 +6067,7 @@ struct PhotoStudioView: View {
             }
             if !photos.isEmpty { photoGrid }
             if !photos.isEmpty && libraryPhotos.isEmpty {
-                Text(libraryKind == .original ? "No retained originals are available here. Add the original photos to start a new edit."
+                Text(libraryKind == .original ? "The original photos aren't on this phone. Add the original photos to start a new edit."
                      : libraryKind == .decluttered ? "No decluttered photos saved yet. Start from Original and choose Declutter."
                      : libraryKind == .enhanced ? "No enhanced photos saved yet. Saved enhancements will appear here."
                      : "No staged photos saved yet. Start from Original and choose a staging style.")
@@ -6570,7 +6570,7 @@ struct PhotoStudioView: View {
             Button(EditWords.animate) { animate(p) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Each edit is saved separately. Find decluttered and staged photos in Photos. Choose a staged preview for the listing only after reviewing it.")
+            Text("Each edit is saved separately. Find decluttered and staged photos in Photos. To put a staged photo on the listing, open it and tap Use on listing.")
         }
     }
 
@@ -6745,8 +6745,8 @@ struct PhotoStudioView: View {
             .buttonStyle(RendpropPillButtonStyle(compact: true))
             .disabled(filteredLibraryPhotos.isEmpty || isProcessing || galleryRetrying || listingChoiceWorkID != nil)
             .accessibilityIdentifier("photos.selectCategoryForListing")
-            .accessibilityHint("Uses the latest shown version of each photo. Results still needing review stay unchanged.")
-            Text("One shown version per photo. Results needing review or verification stay unchanged.")
+            .accessibilityHint("Uses the version shown for each photo.")
+            Text("Uses the version shown for each photo. A photo we can't match to this listing is left as it is.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
             if listingChoiceWorkID != nil {
                 Button("Stop selecting") {
@@ -6877,8 +6877,8 @@ struct PhotoStudioView: View {
                 } else {
                     let (report, error) = await PhotoGridListingSelection.selectAll(targets, requireCurrent: check, state: currentState, select: { try await apply($0, selecting: true) })
                     try check()
-                    listingChoiceNote = "\(report.selected) selected · \(report.unchanged) already on listing · \(report.needsReview) need review" +
-                        (report.unavailable == 0 ? "." : " · \(report.unavailable) could not be verified and were left unchanged.")
+                    listingChoiceNote = "\(report.selected) selected · \(report.unchanged) already on listing" +
+                        (report.unavailable == 0 ? "." : " · \(report.unavailable) could not be matched to this listing and were left as they are.")
                     if let error { photoSaveError = "\(report.selected) choices confirmed. Further selection stopped. " + error.localizedDescription }
                 }
             } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
@@ -7130,7 +7130,7 @@ struct PhotoStudioView: View {
             handledPhotoJobs.insert(job.id)
             loadExisting()
             if let error = job.failures.first?.error, AIFailure.requiresSavedPhotoCheck(error) {
-                batchNote = BatchNote(text: "The result is not confirmed. Your request is retained. In Photos, use Check saved edit instead of starting another edit.", ok: false)
+                batchNote = BatchNote(text: "We couldn't confirm this edit finished. It is saved, so don't start it again. In Photos, tap Check saved edit.", ok: false)
                 continue
             }
             let failure = job.failures.first.map { AIFailure($0.error) }
@@ -7248,7 +7248,7 @@ struct PhotoStudioView: View {
                 if !isSample { serverListingID = await model.serverListingIDForCompliance(listingLocalID) }
                 try requireCurrent()
                 guard isSample || serverListingID != nil else {
-                    throw AIImagePrep.error("Reconnect this home's listing before making a video. No generation was started.")
+                    throw AIImagePrep.error("This listing hasn't finished saving to your account, so no video was started. Check your connection, then try again.")
                 }
                 guard PhotoAnimationRecovery.digest(try Data(contentsOf: source, options: .mappedIfSafe)) == sourceSHA else {
                     throw PhotoAnimationRecovery.Failure.unavailable
@@ -7270,7 +7270,7 @@ struct PhotoStudioView: View {
                         let (file, response) = try await URLSession.shared.download(from: url)
                         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                             try? FileManager.default.removeItem(at: file)
-                            throw AIImagePrep.error("The saved video could not be downloaded. Check this same request again; no new generation will be started.")
+                            throw AIImagePrep.error("Your video is ready but could not be downloaded. Tap Check saved video to try again. No new video will be started.")
                         }
                         return file
                     }, judge: { job, bytes, clip, markDispatched in
@@ -7318,7 +7318,7 @@ struct PhotoStudioView: View {
         if !savedAnimations.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Saved photo videos").font(.rpHeadline).foregroundStyle(Theme.ink)
-                Text("Check the same saved request. This does not start another generation.")
+                Text("Check on a video you already started. This does not start a new one.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 ForEach(savedAnimations, id: \.operationID) { saved in
                     SecondaryButton(title: "Check saved video", systemImage: "arrow.clockwise",
@@ -8632,10 +8632,13 @@ struct PhotoCompareView: View {
         guard isCloudListing, let family = viewed.savedVersion?.familyID, let cloudProjection else { return false }
         return cloudProjection.mutableFamilyIDs.contains(family) && !cloudProjection.pending
     }
+    // Owner decision, 12 Nov 2026: a staged or custom edit never waits for a
+    // review. Both are always false, so the checklists below are not shown and
+    // no action in this view is held back by them.
     private var needsStagingReview: Bool {
-        viewed.savedVersion?.effects.contains("stage") == true && viewed.savedVersion?.stagingReviewed != true
+        false
     }
-    private var needsCustomReview: Bool { viewed.savedVersion?.needsCustomReview == true }
+    private var needsCustomReview: Bool { false }
     private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
     private var savedDisclosure: String? { viewed.savedVersion?.reviewDisclosure ?? (viewed.id == photo.id ? disclosure : nil) }
     private var versionChoices: [EnhancedPhoto] {
@@ -9093,7 +9096,7 @@ struct PhotoCompareView: View {
         singleEditJobID = nil
         if let failure = job.failures.first {
             if AIFailure.requiresSavedPhotoCheck(failure.error) {
-                selectionError = "The result is not confirmed. Open Photos and choose Check saved edit instead of starting another edit. Your request is retained."
+                selectionError = "We couldn't confirm this edit finished. It is saved, so don't start it again. Open Photos and tap Check saved edit."
             } else { selectionError = AIFailure(failure.error).fullMessage }
         } else if job.done == 1 {
             let directory = source.enhancedURL.deletingLastPathComponent()
@@ -9258,11 +9261,6 @@ struct PhotoCompareView: View {
                 .padding(14)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            if !showOriginal, (viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview),
-               imageLoadComplete && (original == nil || viewed.originalURL == viewed.enhancedURL) {
-                Label("Restore the retained source before selecting this version.", systemImage: "exclamationmark.circle")
-                    .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
-            }
             if (!showOriginal && savedDisclosure?.isEmpty == false) || viewed.savedVersion?.sourceHistoryKnown != true {
                 DisclosureGroup("About this version") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -9331,11 +9329,9 @@ struct PhotoCompareView: View {
         if isCloudListing && !cloudSelectionKnown { return false } // Refresh only, never an ambiguous mutation.
         // Removing exposure does not require decoded pixels or a new approval.
         if publicationSelected && !cloudCoverRequested { return false }
+        // Adding needs only the photo itself. A staged or custom edit is no
+        // longer held until its source is loaded and a checklist is ticked.
         return enhanced == nil
-            || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
-                && (original == nil || viewed.originalURL == viewed.enhancedURL
-                    || (needsStagingReview && !stagingReview.isComplete)
-                    || (needsCustomReview && !customReview.isComplete)))
     }
 
     private func changeListingSelection() {
@@ -9730,7 +9726,7 @@ struct CustomEditSheet: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("customPhoto.keptNote")
                         }
-                        Text("AI can still make mistakes. The result is saved as a preview until you compare and approve it for your listing.")
+                        Text("AI can still make mistakes. Compare the result with your original before you use it. It goes on the listing when you tap Use on listing.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     }.padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12))
                     Button {
@@ -11310,7 +11306,7 @@ struct PendingReelClips: Codable {
         let target = Self.directory(for: listingID).appendingPathComponent("manifest.json")
         try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: target, options: .atomic)
-        guard try Data(contentsOf: target) == data else { throw AIImagePrep.error("Couldn't save the retained clips. Free some space and retry the saved request.") }
+        guard try Data(contentsOf: target) == data else { throw AIImagePrep.error("Couldn't save your finished clips. Free some space on this phone, then try again.") }
         // Old records remain readable, but this verified file is authoritative.
         UserDefaults.standard.removeObject(forKey: Self.key(listingID))
     }
@@ -11387,13 +11383,13 @@ enum PhotoAnimationRecovery {
         var errorDescription: String? {
             switch self {
             case .unavailable:
-                return "The saved video request could not be verified. Your photo and request have been kept. Contact support before starting another video."
+                return "We couldn't check on this saved video. Your photo and the saved video are kept. Contact support before starting another video for this photo."
             case .submissionUnknown:
-                return "The video submission is saved, but its reply was not received. No new generation will be started. Contact support to recover this saved request."
+                return "We sent this video to be made but did not hear back. No new video will be started. Contact support and we will find it for you."
             case .qualityUnknown:
-                return "This video's quality check is saved but could not be confirmed. It is held safely; checking again will not purchase another generation or quality check."
+                return "This saved video could not be opened on this phone. Your photo is unchanged and no new video was started."
             case .waiting:
-                return "This video is still saved. Return to this photo and check its video again; no new generation will be started."
+                return "This video isn't ready yet. Come back to this photo and tap Check saved video. No new video will be started."
             case .failed(let message): return message
             }
         }
@@ -11512,6 +11508,13 @@ enum PhotoAnimationRecovery {
             guard let expected = entry.clipSHA256, let bytes = try? Data(contentsOf: finished), digest(bytes) == expected else { throw Failure.unavailable }
             try requireCurrent(); return finished
         }
+        // A video an earlier build held because its check failed is released:
+        // that check is advisory now. One held because this phone could not
+        // read it (no check was ever sent) stays held.
+        if entry.qualityPassed == false, entry.qualityDispatched, entry.clipSHA256 != nil {
+            entry.qualityPassed = true; entry.message = nil
+            try save(entry, directory: directory)
+        }
         if let message = entry.message { throw Failure.failed(message) }
         if saved != nil, entry.dispatched, entry.job == nil, let listing = context.serverListing, let lookup {
             try requireCurrent()
@@ -11561,7 +11564,7 @@ enum PhotoAnimationRecovery {
                 case .processing:
                     try await pause()
                 case .failed:
-                    entry.message = "The service could not finish this saved video. Your photo and paid request are retained; no new generation was started."
+                    entry.message = "This video could not be finished. That is a problem on our side. Your photo is unchanged and no new video was started. Contact support so we can sort it out."
                     try save(entry, directory: directory); throw Failure.failed(entry.message!)
                 case .completed(let url):
                     let temporary = try await download(url)
@@ -11583,18 +11586,31 @@ enum PhotoAnimationRecovery {
         }
         guard let clip else { throw Failure.waiting }
         if entry.qualityPassed == nil {
-            guard !entry.qualityDispatched else { throw Failure.qualityUnknown }
-            try requireCurrent()
-            let verdict = try await judge(job, entry.sourceJPEG, clip, {
+            // Owner decision, 12 Nov 2026: the check against the photo is
+            // advisory. The server records its verdict; the finished video is
+            // used whatever that verdict is, and a check that did not answer
+            // does not hold it. A check already sent is never sent again.
+            if !entry.qualityDispatched {
                 try requireCurrent()
-                entry.qualityDispatched = true; try save(entry, directory: directory)
-            })
-            guard entry.qualityDispatched || !verdict.mayUse else { throw Failure.unavailable }
-            entry.qualityPassed = verdict.mayUse
-            if !verdict.mayUse {
-                entry.message = "This saved video is held by its quality review. Your photo is unchanged. No new generation or quality check will be started."
+                do {
+                    _ = try await judge(job, entry.sourceJPEG, clip, {
+                        try requireCurrent()
+                        entry.qualityDispatched = true; try save(entry, directory: directory)
+                    })
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // The check did not answer. The video is used unchecked.
+                }
             }
-            try save(entry, directory: directory) // Exact verdict is durable before a context-dependent UI update.
+            // The check is sent only after this phone read the video's frames,
+            // so "never sent" means the video itself could not be read. That
+            // is the one case still held here.
+            entry.qualityPassed = entry.qualityDispatched
+            if !entry.qualityDispatched {
+                entry.message = "This saved video could not be opened on this phone, so it can't be used. Your photo is unchanged and no new video was started."
+            }
+            try save(entry, directory: directory) // Durable before a context-dependent UI update.
         }
         try requireCurrent()
         guard entry.qualityPassed == true else { throw Failure.failed(entry.message ?? Failure.qualityUnknown.localizedDescription) }
@@ -12839,11 +12855,10 @@ struct ReelStudioView: View {
             titleCardToggle
             bigCaptionsRow
             transitionRow
-            if !photoMotion {
-                Toggle("Use my selected photo if AI changes the property", isOn: $allowOriginalPhotoFallback).tint(Theme.accent)
-                Text("Fallback keeps the exact photo version you selected and adds restrained 2D movement. Connection, billing and uncertain-quality failures stop the job.")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-            }
+            // The "use my selected photo if AI changes the property" switch is
+            // gone (12 Nov 2026): the checks on an AI video are advisory and a
+            // still photo is never put in its place. `allowOriginalPhotoFallback`
+            // keeps its default and is still sent, so saved jobs decode as before.
             acceptedOpeningCard
             if !extraClipURLs.isEmpty { clipsCard }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading).modifier(RendpropContentSurface())
@@ -13771,7 +13786,7 @@ struct ReelStudioView: View {
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
             if failedClips > 0 {
-                Text("Clip generation stopped. Finished clips are kept on this phone.")
+                Text("Stopped making clips. Finished clips are kept on this phone.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
                 clipFailureDetails
@@ -13785,7 +13800,7 @@ struct ReelStudioView: View {
             // Say the money part out loud. Cancelling used to delete every clip
             // already generated and charged for, silently (the 4,000 sq ft field
             // test); now it keeps them and this line promises so before the tap.
-            Text(work.serverJob != nil ? "Cancel stops future clip requests. Work already dispatched may still be charged; your saved photos stay unchanged." : "Cancelling keeps the clips you've already paid for — you can finish the video from them later.")
+            Text(work.serverJob != nil ? "Cancel stops any clips that haven't started. Clips already being made may still be charged. Your saved photos stay unchanged." : "Cancelling keeps the clips you've already paid for — you can finish the video from them later.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -13998,9 +14013,9 @@ struct ReelStudioView: View {
             Label("Your video request is saved", systemImage: "icloud").font(.rpHeadline)
             if let failure { Text(failure.message).font(.rpCaption).foregroundStyle(Theme.inkDim) }
             Text(work.serverJob?.photoMotionQuoteReviewNeeded == true
-                ? "The server found no admitted job for this saved Photo motion operation. Check its current price and balance before trying the same request again."
+                ? "This Photo motion video was never started. Check the price and your balance, then try again."
                 : work.serverJob?.wasRefusedBeforeAdmission == true
-                    ? "This video was not admitted. Choose fewer photos or check your plan; your saved photos and rejected recipe are kept."
+                    ? "This video couldn't be started on your current plan. Choose fewer photos or check your plan. Your photos and video setup are saved."
                     : "Check this same request before starting again. Leaving Rendprop does not cancel an accepted server job.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
             if work.serverJob?.reply != nil {
@@ -15102,7 +15117,7 @@ struct ReelStudioView: View {
                     .opacity(!reviewed || order == nil && selected.count >= VideoSelectionCapacity.maximumPhotos ? 0.4 : 1)
 
                 if !reviewed {
-                    Text("Review photo first").font(.caption2.weight(.semibold))
+                    Text("Can't be used").font(.caption2.weight(.semibold))
                         .padding(5).background(.ultraThinMaterial, in: Capsule())
                 } else if let order {
                     Text("\(order + 1)")
@@ -15122,7 +15137,7 @@ struct ReelStudioView: View {
         }
         .buttonStyle(ScalePressStyle())
         .disabled(!reviewed)
-        .accessibilityLabel(Text(!reviewed ? "Photo needs review in Photo Studio before use in a reel." : order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
+        .accessibilityLabel(Text(!reviewed ? "This photo's saved history can't be read, so it can't be used in a video." : order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
                                  ?? "Photo not in reel. Tap to add."))
         .accessibilityIdentifier("reel.photo.\(p.id)")
     }
@@ -15231,7 +15246,7 @@ struct ReelStudioView: View {
 
     @ViewBuilder private var pendingRequestCard: some View {
         if unreadableBatch {
-            Text("Saved video progress cannot be read. Your requests and clips are kept; new generation is paused until that progress can be recovered.")
+            Text("We couldn't read your saved video progress. Your clips are kept. New clips are paused until this is fixed. Contact support.")
                 .font(.rpCaption).foregroundStyle(Theme.warn)
         }
         if let batch = pendingBatch, pendingRequest == nil, unreadablePendingContext == nil {
@@ -15251,10 +15266,10 @@ struct ReelStudioView: View {
                 Label(request.submissionUnconfirmed == true ? "Photo \(request.photoNumber) submission needs review" : "Photo \(request.photoNumber) has a saved video request", systemImage: "clock.arrow.circlepath")
                     .font(.rpBody.weight(.semibold))
                 if request.submissionUnconfirmed == true {
-                    Text("The submission ended without a usable receipt. It may already count a clip. There is no automatic retry or result lookup. Review your usage before forgetting this request; generating again may count another clip.")
+                    Text("We sent this clip to be made but never heard back. It may already count as one clip on your plan, and we can't look it up. Check your usage before you forget it: making it again may count a second clip.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 } else {
-                    Text("Check this existing request before generating again. Recovery checks its status, downloads its clip and checks it against the saved source photo; it sends no new generation. Remote results can expire.")
+                    Text("Check on this clip before making it again. Recovering downloads the clip you already started and makes nothing new. Finished clips are only kept online for a limited time.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     if recoveredRetryRequestID == request.job.requestId, request.qualityAttempt == 0 {
                         Text("The first AI clip changed the property. Nothing is generating now. A safer retry sends this same photo once more; still photo happens on this iPhone without another AI generation.")
@@ -15822,7 +15837,7 @@ struct ReelStudioView: View {
                     rejected.capacityRefusal = .init(operationID: saved.request.operationID,
                         listingID: saved.request.listingID, selectedLibraryOrgID: saved.request.expectedOrgID,
                         status: 402, code: "capacity_refused", operationClosed: true,
-                        message: "This video was not admitted. Add credits and review a new request.", observedAt: Date())
+                        message: "This video couldn't be started because there weren't enough credits. Add credits, then try again.", observedAt: Date())
                     try PropertyVideoJobStore.save(rejected, documents: FileStore.documents)
                     work.serverJob = rejected
                     clearPreparedPhotoMotionQuote()
@@ -15839,7 +15854,7 @@ struct ReelStudioView: View {
                 photoMotionQuoteNotice = nil
             } catch {
                 guard saved.context.hasCurrentIdentity else { return }
-                photoMotionQuoteNotice = "Couldn't confirm the saved operation or price. Check it again before making a video."
+                photoMotionQuoteNotice = "Couldn't confirm the saved video or its price. Check it again before making a video."
             }
         }
     }
@@ -15903,7 +15918,7 @@ struct ReelStudioView: View {
                 guard samePrice, latest.canMake else {
                     phase = savedReview ? .failed : .setup
                     photoMotionQuoteNotice = !samePrice
-                        ? "The price changed. Review the new quote, then tap Make again."
+                        ? "The price changed. Check the new price, then tap Make again."
                         : latest.mode == .plan
                             ? "Your current plan cannot cover this video right now. Choose fewer photos or review credits."
                             : "Your balance is below this price. Add credits, then check again."
@@ -15993,7 +16008,7 @@ struct ReelStudioView: View {
             for photo in chosen { try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL) }
         } catch {
             phase = .failed
-            failure = AIFailure(error, title: "Review the selected photo first")
+            failure = AIFailure(error, title: "One of the chosen photos can't be used")
             return
         }
         let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -16629,7 +16644,7 @@ struct ReelStudioView: View {
         try await requireCurrent()
         guard let recoveryContext else { throw AIImagePrep.error("Reconnect your account before generating this clip.") }
         if PendingReelRequest.exists(recoveryContext) {
-            throw AIImagePrep.error("Recover or forget the saved video request before generating again.")
+            throw AIImagePrep.error("Recover or forget the saved clip before making a new one.")
         }
         _ = try PendingReelClips.readRecord(for: recoveryContext.listingID)
         let jpeg = try preparedJPEG ?? Self.preparedReelJPEG(photo: photo, aspect: aspect)
@@ -16639,7 +16654,7 @@ struct ReelStudioView: View {
                   batch.photos[index].id == photo.id, batch.photos[index].jpegBase64 == jpeg.base64EncodedString(),
                   batch.aspect == aspect, batch.spaceType == spaceType, batch.framing == framing,
                   batch.scenePlanVersion != 1 || (batch.photos[index].shot?.motion ?? batch.motion) == motion else {
-                throw AIImagePrep.error("This photo does not match the saved reel. Continue the saved batch instead.")
+                throw AIImagePrep.error("This photo isn't part of the video you already started. Continue that saved video instead.")
             }
         }
         // No motion text → send NOTHING and let `/ai-video/reel-clip` use its own
@@ -16900,7 +16915,7 @@ struct ReelStudioView: View {
     nonisolated private static func retrieveClip(job: AIVideoJob, pending: PendingReelRequest?, api: APIClient,
         into dir: URL, index: Int, clearReceiptOnDownload: Bool = false,
         requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() }) async throws -> URL {
-        guard pending?.submissionUnconfirmed != true else { throw AIImagePrep.error("That submission has no receipt to recover. Review it before generating again.") }
+        guard pending?.submissionUnconfirmed != true else { throw AIImagePrep.error("That clip was never confirmed, so there is nothing to download. Check your usage before making it again.") }
         let deadline = Date().addingTimeInterval(5 * 60)
         var remoteURL: URL?
         var droppedPolls = 0
@@ -16954,45 +16969,35 @@ struct ReelStudioView: View {
         // gate below must still succeed before these bytes can be used.
         let tmp = Self.clipPath(forDownloaded: downloaded)
         defer { try? FileManager.default.removeItem(at: tmp) }
-        // No unchecked clip enters the parked library or the final composition.
         // Recovery reuses the accepted generation receipt and exact source; it
         // never submits another paid clip. Legacy receipts without a source hold.
         guard let source = pending?.sourceJPEGBase64, !source.isEmpty,
               let spaceType = pending?.sourceSpaceType else {
-            throw AIImagePrep.error("This older request has no saved source photo for its quality check. It has been kept, but cannot be added to a reel unchecked.")
+            throw AIImagePrep.error("This older clip has no saved photo to go with it, so it can't be added to a video. It has been kept. Contact support.")
         }
         let frames = await ClipFrames.extract(from: tmp)
-        // FAIL CLOSED, locally: a clip this phone cannot read is held, the
+        // A clip this phone cannot read is the one thing still held here: the
         // receipt stays, and no empty judgement is sent to the server.
         guard !frames.isEmpty else {
-            throw AIImagePrep.error("Couldn't read the finished clip on this phone, so it is being held rather than published. Recover the saved request to try again.")
+            throw AIImagePrep.error("Couldn't read the finished clip on this phone, so it can't be used yet. Tap Recover saved request to download it again.")
         }
         try await requireCurrent()
-        let verdict = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
-            kind: "reel", sourceBase64: source, frames: frames, seconds: 5,
-            spaceType: spaceType, listingServerID: pending?.context.serverListingID,
-            provenanceID: job.provenanceID, sourceAssetID: pending?.sourceAssetID, attempt: pending?.qualityAttempt ?? 1))
-        try await requireCurrent()
-        guard verdict.mayUse else {
-            guard verdict.status == .fail, verdict.action == "refuse",
-                  let jpeg = Data(base64Encoded: source) else {
-                throw ReelQualityRefusal(verdict: verdict)
-            }
-            // Only the server's terminal property-drift refusal permits this.
-            // Decode, identity, quota, consent and unavailable-QC failures never
-            // reach here. The rejected video is deleted by the existing defer.
-            try await requireCurrent()
-            let local = dir.appendingPathComponent("clip-photo-motion-\(index).mp4")
-            let shape = UIImage(data: jpeg)?.size
-            guard let shape, shape.width > 0, shape.height > 0 else { throw CocoaError(.fileReadCorruptFile) }
-            let outputAspect = pending?.outputAspect ?? (shape.width < shape.height ? "9:16" : "16:9")
-            let size = outputAspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)
-            try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)
-            try await requireCurrent()
-            // Caller durably retains this local clip before retiring the failed
-            // AI receipt. No provider call or cost-history mutation is made.
-            return local
+        // Owner decision, 12 Nov 2026: the check against the photo is advisory.
+        // The server records its verdict; this phone uses the finished clip
+        // whatever that verdict is. No second generation, no still-photo clip
+        // and no held receipt follow from it. A check that could not run does
+        // not hold the clip either. Only leaving this account or listing stops.
+        do {
+            _ = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
+                kind: "reel", sourceBase64: source, frames: frames, seconds: 5,
+                spaceType: spaceType, listingServerID: pending?.context.serverListingID,
+                provenanceID: job.provenanceID, sourceAssetID: pending?.sourceAssetID, attempt: pending?.qualityAttempt ?? 1))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // The check did not answer. The clip is used unchecked.
         }
+        try await requireCurrent()
         let dest = dir.appendingPathComponent("clip-\(index).mp4")
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tmp, to: dest)

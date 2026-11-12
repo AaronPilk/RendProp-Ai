@@ -51,40 +51,42 @@ import ImageIO
             disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: root)
         let customPhoto = EnhancedPhoto(id: custom.id, originalURL: root.appendingPathComponent("orig-custom-capture.jpg"),
             enhancedURL: root.appendingPathComponent(custom.imageFile))
-        func rejectsCustom(_ input: [EnhancedPhoto], _ message: String, options: PhotoExportRenderer.Options = .init()) throws {
+        // Owner decision, 12 Nov 2026: a custom edit no longer waits for a
+        // review before it can be saved or exported.
+        func exportsCustom(_ input: [EnhancedPhoto], _ message: String, options: PhotoExportRenderer.Options = .init()) {
             do {
                 let output = try PhotoExportRenderer.prepare(input, options: options)
                 try? FileManager.default.removeItem(at: output.directory)
-                check(false, message)
-            } catch PhotoVersionHistory.Failure.customReviewRequired { checks += 1 }
+                checks += 1
+            } catch { check(false, message) }
         }
-        try rejectsCustom([customPhoto], "unreviewed custom cannot be exported by the actual renderer")
+        exportsCustom([customPhoto], "an unreviewed custom edit is exported by the actual renderer")
         let tempBefore = Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
             .filter { $0.hasPrefix("Rendprop-photos-") })
-        try rejectsCustom([photo, customPhoto], "bulk export cannot include an unreviewed custom after an approved photo")
+        exportsCustom([photo, customPhoto], "bulk export includes an unreviewed custom edit after a staged photo")
         let tempAfter = Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
             .filter { $0.hasPrefix("Rendprop-photos-") })
-        check(tempBefore == tempAfter, "a rejected bulk export removes all partial prepared output")
+        check(tempBefore == tempAfter, "removing a finished bulk export leaves no prepared output behind")
         let alias = EnhancedPhoto(id: "unknown-alias", originalURL: customPhoto.originalURL, enhancedURL: customPhoto.enhancedURL)
-        try rejectsCustom([alias], "filename lookup still fences custom output when the view has an older alias")
+        exportsCustom([alias], "a custom file is exported by its file name when the view has an older alias")
         let forgedID = EnhancedPhoto(id: "capture", originalURL: customPhoto.originalURL, enhancedURL: customPhoto.enhancedURL)
         do {
             let output = try PhotoExportRenderer.prepare([forgedID], options: .init())
             try? FileManager.default.removeItem(at: output.directory)
-            preconditionFailure("an approved capture id cannot hide a different unreviewed custom file")
+            preconditionFailure("a capture id cannot stand in for a different saved file")
         } catch PhotoVersionHistory.Failure.changedVersion { checks += 1 }
         let rawCustom = try PhotoExportRenderer.prepare([customPhoto], options: .init(original: true))
         defer { try? FileManager.default.removeItem(at: rawCustom.directory) }
-        check((try? Data(contentsOf: rawCustom.images[0])) == original, "unreviewed custom still allows exact original download")
+        check((try? Data(contentsOf: rawCustom.images[0])) == original, "a custom edit's exact original can be downloaded")
         check((try? PhotoVersionHistory.load(directory: root).versions[custom.id]?.customReviewed) == false,
-              "original download does not approve the edited custom image")
+              "an export records no review on the custom image")
         let descendant = try PhotoVersionHistory.saveEdit(jpeg: original, id: "custom-sky", parentID: custom.id, sourceID: custom.id, edit: "sky", style: nil,
             disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: root)
         let descendantPhoto = EnhancedPhoto(id: descendant.id, originalURL: customPhoto.originalURL, enhancedURL: root.appendingPathComponent(descendant.imageFile))
-        try rejectsCustom([descendantPhoto], "a preset descendant cannot bypass custom download review")
+        exportsCustom([descendantPhoto], "an edit made from an unreviewed custom edit is exported")
         let earlierUnreviewedCustom = EnhancedPhoto(id: photo.id, originalURL: customPhoto.enhancedURL, enhancedURL: photo.enhancedURL)
-        try rejectsCustom([earlierUnreviewedCustom], "earlier-source export cannot expose an unreviewed custom ancestor", options: .init(original: true))
-        try rejectsCustom([earlierUnreviewedCustom], "paired-original export cannot expose an unreviewed custom ancestor")
+        exportsCustom([earlierUnreviewedCustom], "a photo whose earlier source is an unreviewed custom file exports that source", options: .init(original: true))
+        exportsCustom([earlierUnreviewedCustom], "a photo paired with an unreviewed custom file as its source still exports")
         let beforeReview = try PhotoVersionHistory.load(directory: root)
         try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: custom.imageFile, sourceFile: "orig-custom-capture.jpg",
             review: .init(comparedSource: true, fixedFeaturesMatch: true, colorsAndMaterialsMatch: true, onlyRequestedChange: true), directory: root)
@@ -94,18 +96,19 @@ import ImageIO
         let customPack = try PhotoExportRenderer.prepare([customPhoto], options: .init())
         defer { try? FileManager.default.removeItem(at: customPack.directory) }
         // Build 61: every saved version of the photo rides along, named by what
-        // it is; a descendant that was never reviewed is withheld and noted.
-        check(!customPack.files.contains { $0.lastPathComponent.contains("-version-3-") }, "an unreviewed custom descendant is withheld from the package")
-        check(customPack.images.count == 4 && customPack.files.count == 7, "reviewed custom exports with its original, every stored version and each disclosure")
-        check(customPack.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-version-2-ai-edit.jpg", "01-edited.jpg"], "other versions sit between the original and the current edit")
+        // it is. Since 12 Nov 2026 that includes a descendant that was never
+        // reviewed (here the sky edit made from the custom edit).
+        check(customPack.images.count == 5 && customPack.files.count == 9, "reviewed custom exports with its original, every stored version and each disclosure")
+        check(customPack.files.contains { $0.lastPathComponent == "01-version-3-blue-sky.jpg" }, "an unreviewed custom descendant is included in the package")
+        check(customPack.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-version-2-ai-edit.jpg", "01-version-3-blue-sky.jpg", "01-edited.jpg"], "other versions sit between the original and the current edit")
         let customNote = try String(contentsOf: customPack.directory.appendingPathComponent("01-disclosure.txt"), encoding: .utf8)
-        check(customNote.contains("1 saved version of this photo was not included"), "the photo's note says a version was withheld")
+        check(!customNote.contains("not included"), "the photo's note reports no version left out")
         let enhancedCopy = try Data(contentsOf: customPack.directory.appendingPathComponent("01-version-1-enhanced.jpg"))
         check(enhancedCopy == original, "an exported version is the exact stored bytes")
         check((try? Data(contentsOf: customPack.directory.appendingPathComponent("01-version-2-ai-edit.jpg"))) == original, "current stored JPEG version is byte exact beside its rendered delivery copy")
         let enhancedNote = try String(contentsOf: customPack.directory.appendingPathComponent("01-version-1-enhanced-disclosure.txt"), encoding: .utf8)
         check(enhancedNote.hasPrefix("Original enhancement.") && enhancedNote.contains("enhanced on this phone"), "each exported version carries its own disclosure note")
-        try rejectsCustom([descendantPhoto], "review of one custom output cannot approve a different descendant download")
+        exportsCustom([descendantPhoto], "a descendant exports whether or not its custom ancestor was reviewed")
         let mls = try PhotoExportRenderer.prepare([photo], options: .init())
         defer { try? FileManager.default.removeItem(at: mls.directory) }
         check(mls.images.count == 4 && mls.files.count == 7, "MLS package includes current delivery, original, every saved version and their disclosures")
@@ -212,7 +215,7 @@ import ImageIO
         check(bundle.files.allSatisfy { names.contains($0.lastPathComponent) }, "every disclosure note, original and JPEG is in the archive")
         let readme = String(decoding: zipBytes[(30 + "README.txt".utf8.count)..<(30 + "README.txt".utf8.count + Int(le32(18)))], as: UTF8.self)
         check(readme.contains("disclosure") && readme.contains("2 photos"), "README explains the numbering and the disclosure notes")
-        check(readme.contains("2 saved versions (same number, '-version-<n>-<what it is>'") && readme.contains("Unreviewed custom edits are withheld"), "README explains the version labels without promising withheld images")
+        check(readme.contains("2 saved versions (same number, '-version-<n>-<what it is>'") && !readme.contains("withheld"), "README explains the version labels and says nothing is withheld")
         check(directoryOffset == storedBytes + names.reduce(0) { $0 + 30 + $1.utf8.count }, "local headers and stored bytes fill the archive up to the central directory")
         check(bundle.files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }, "packaging leaves the prepared files in place")
         // Build 60: parse the actual listing package back through its headers,
@@ -334,9 +337,9 @@ import ImageIO
         check(justCurrent.images.count == 1 && justCurrent.files.count == 2, "current-only export remains available when an original was lost")
         let customArchive = try PhotoExportRenderer.package(customPack, archiveName: "Reviewed custom")
         let customEntries = try storedEntries(customArchive)
-        check(!customEntries.keys.contains { $0.contains("-version-3-") }, "the ZIP never contains an unreviewed custom ancestor or descendant")
+        check(customEntries.keys.contains { $0.contains("-version-3-blue-sky") }, "the ZIP contains every saved version, including an unreviewed custom descendant")
         let customReadme = String(decoding: customEntries["README.txt"]!, as: UTF8.self)
-        check(customReadme.contains("Unreviewed custom edits are withheld") && !customReadme.contains("Every image Rendprop holds"), "README explicitly admits unreviewed versions are withheld")
+        check(!customReadme.contains("withheld") && !customReadme.contains("Every image Rendprop holds"), "README no longer says any version is withheld")
         // A file may disappear or history may change after initial admission.
         // The default reader still reads real immutable source files; the seam
         // injects that exact filesystem timing deterministically, not a fake export.

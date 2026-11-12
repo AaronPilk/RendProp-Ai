@@ -43,7 +43,7 @@ assert 'continuingHeldTrial: continuingHeldTrial' in button
 assert button.index('let continuingHeldTrial =') < button.index('Task {')
 assert 'await purchases.checkTrialAvailability(' in button
 assert '!purchases.canStartNewPurchase(for: product) && !purchases.canCheckTrialAvailability(for: product)' in button
-assert 'Check trial availability' in block(paywall, 'private func buyTitle(')
+assert 'Set up my free trial' in block(paywall, 'private func buyTitle(')
 assert 'Paid subscriptions unavailable' in block(paywall, 'private func buyTitle(')
 assert 'PurchaseDispatchAdmission.paidUnavailableMessage' in block(paywall, 'private func disclosure(')
 assert 'purchases.heldTrialOffer(for: product)' in block(paywall, '@ViewBuilder private var trialDetails:')

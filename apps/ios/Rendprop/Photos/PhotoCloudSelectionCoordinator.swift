@@ -346,8 +346,12 @@ enum PhotoGridListingSelection {
             guard selecting, projection.selectedVersionIDs.contains(versionID),
                   family.filter({ projection.selectedVersionIDs.contains($0.id) }).count == 1 else { throw PhotoCloudSelectionFailure.changed }
         } else { guard !selecting || !familyHasCover || followFamilyCover else { throw PhotoCloudSelectionFailure.coverUnavailable } }
+        // Owner decision, 12 Nov 2026: the agent is responsible for what they
+        // post, so choosing a version is the whole acknowledgement. The server
+        // still asks for `reviewed` on every AI edit put on a listing; send it
+        // with every selection. A removal has no target and must send false.
         let request = PhotoCloudSelectionRequest(familyAssetIDs: footprint, target: target, expectedSelection: snapshot.raw,
-            followFamilyCover: followFamilyCover, reviewed: selecting && reviewed, promoteCover: promoteCover)
+            followFamilyCover: followFamilyCover, reviewed: selecting, promoteCover: promoteCover)
         let operation = PhotoCloudSelectionOperation(operationID: UUID(), identity: identity, physicalOrgID: snapshot.orgID,
             familyID: version.familyID, versionID: version.id, imageFile: version.imageFile,
             sha256: version.deliverySHA256, bytes: version.deliveryBytes, request: request, deliverySource: version.deliverySource)

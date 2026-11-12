@@ -148,7 +148,7 @@ import Foundation
             "pool": ["cap_cents": 29000, "spent_cents": 1200.25, "starts_at": iso.string(from: clock.addingTimeInterval(-86_400)), "ends_at": iso.string(from: clock.addingTimeInterval(20 * 86_400))]]))).me()
         check(trial.servingEnvelope?.budgetTitle == "Free-trial AI budget" && trial.servingEnvelope?.resetLine?.hasPrefix("Trial budget ends ") == true, "Trial wording")
         check(trial.servingEnvelope?.poolLine?.hasPrefix("Trial AI is available until ") == true
-              && trial.servingEnvelope?.poolLine?.hasSuffix(", while trial capacity remains.") == true, "Trial capacity line")
+              && trial.servingEnvelope?.poolLine?.hasSuffix(".") == true && trial.servingEnvelope?.poolLine?.contains("capacity") == false, "Trial line names the end date and no shared capacity")
         check(trial.servingEnvelope?.poolLine?.contains("$") == false && trial.servingEnvelope?.poolLine?.contains("sponsor") == false, "Trial capacity hides internal funding")
         check(trial.servingEnvelope?.capacityLine(now: clock)?.hasPrefix("Trial AI is available until ") == true, "Active trial capacity uses a fixed clock")
         reset()
@@ -163,7 +163,7 @@ import Foundation
                      ["cap_cents": 29000, "spent_cents": 0, "starts_at": "bad-date", "ends_at": "bad-date"]] as [[String: Any]] {
             reset()
             let closed = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["window": "trial_window", "pool": pool], kind: "trial"))).me()
-            check(closed.servingEnvelope?.capacityLine(now: clock) == "Trial AI capacity is unavailable right now.", "Exhausted, ended, future or invalid trial capacity is clear")
+            check(closed.servingEnvelope?.capacityLine(now: clock) == "Trial AI is not available right now.", "Exhausted, ended, future or invalid trial capacity is clear")
         }
         reset()
         let exhaustedFree = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "free", "ceiling_cents": 300, "spent_cents": 396,
@@ -190,18 +190,18 @@ import Foundation
         reset()
         let brokenPool = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["ceiling_cents": 500, "available_cents": 371.14,
             "window": "trial_window", "pool": ["cap_cents": "x"]], kind: "trial"))).me()
-        check(brokenPool.servingEnvelope?.budgetTitle == "Free-trial AI budget" && brokenPool.servingEnvelope?.poolLine == "Trial AI capacity is unavailable right now.", "Malformed pool cannot advertise available trial capacity")
+        check(brokenPool.servingEnvelope?.budgetTitle == "Free-trial AI budget" && brokenPool.servingEnvelope?.poolLine == "Trial AI is not available right now.", "Malformed pool cannot advertise available trial capacity")
         for (pool, why) in [(["cap_cents": 1e20, "spent_cents": 0], "Overflowing pool cap"),
                             (["cap_cents": 29000, "spent_cents": 1e20], "Overflowing pool spend")] as [([String: Any], String)] {
             reset()
             let bad = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["ceiling_cents": 500, "available_cents": 371.14,
                 "window": "trial_window", "pool": pool], kind: "trial"))).me()
             check(bad.servingEnvelope?.budgetTitle == "Free-trial AI budget", why + " hid the customer's own budget")
-            check(bad.servingEnvelope?.pool == nil && bad.servingEnvelope?.poolLine == "Trial AI capacity is unavailable right now.", why + " advertised trial capacity")
+            check(bad.servingEnvelope?.pool == nil && bad.servingEnvelope?.poolLine == "Trial AI is not available right now.", why + " advertised trial capacity")
         }
         reset()
         let missingPool = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["window": "trial_window"], kind: "trial"))).me()
-        check(missingPool.servingEnvelope?.poolLine == "Trial AI capacity is unavailable right now.", "Missing pool cannot advertise available trial capacity")
+        check(missingPool.servingEnvelope?.poolLine == "Trial AI is not available right now.", "Missing pool cannot advertise available trial capacity")
         reset()
         let absent = try await LivePhotoPackageFixture(data: withEnvelope(nil)).me()
         check(absent.servingEnvelope == nil, "Funded-mode server invents an envelope")

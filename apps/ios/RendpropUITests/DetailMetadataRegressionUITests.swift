@@ -327,7 +327,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let masters = app.staticTexts.matching(NSPredicate(format:
             "label CONTAINS %@", "Full saved masters and retained sources keep their stored bytes.")).firstMatch
         XCTAssertTrue(masters.waitForExistence(timeout: 5), app.debugDescription)
-        let pending = app.staticTexts["Pending staging is preview-only, with no listing or social copies. Unreviewed custom edits are withheld."]
+        let pending = app.staticTexts["A staged or custom edit that is not selected for the listing is included as a full saved copy only, with no listing or social copies."]
         XCTAssertTrue(pending.waitForExistence(timeout: 5), app.debugDescription)
         revealCoordinatorContent(pending)
         attach("listing-package-disclosures")

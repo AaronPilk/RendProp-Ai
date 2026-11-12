@@ -494,7 +494,7 @@ final class PurchaseManager: ObservableObject {
             let finished = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
                 revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
             guard finished == captured else { return }
-            notice = "Trial availability is reserved for this plan and workspace. Review the included usage and Apple's confirmation before continuing. No Apple billing has started."
+            notice = "Your free trial is ready for this plan. Check what is included, then continue with Apple. Nothing has been charged."
         } catch {
             let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
                 revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
@@ -505,7 +505,7 @@ final class PurchaseManager: ObservableObject {
                 preparedTrialReservation = nil; preparedTrialSnapshot = nil
                 lastError = TrialPurchaseAdmission.capacityUnavailableMessage
             } else {
-                lastError = Self.message(for: error, fallback: "Trial availability could not be confirmed. A reservation may still be pending. No Apple billing has started. Restore or explicitly check this same plan again; no reservation is automatically released or restarted.")
+                lastError = Self.message(for: error, fallback: "We could not set up the free trial just now. Nothing has been charged. Tap Restore purchases, or set up the free trial for this same plan again.")
             }
         }
     }
@@ -710,7 +710,7 @@ final class PurchaseManager: ObservableObject {
                         if !retainTrialBinding, createdBinding, let binding = preparedBinding {
                             PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
                         }
-                        lastError = "Trial eligibility changed or the reservation is not confirmed. No Apple billing has started. Refresh or Restore, then explicitly check trial availability. Paid subscriptions are temporarily unavailable."
+                        lastError = "The free trial for this plan needs setting up again. Nothing has been charged. Tap Restore purchases, then set up the free trial again. Paying without a trial is not available right now."
                         return
                     }
                     guard await trialRegionSupported(for: product, captured: captured) else {
@@ -726,7 +726,7 @@ final class PurchaseManager: ObservableObject {
                     guard held == heldAtTap else { throw SubscriptionBillingContext.TrialPresentationError.invalidResponse }
                     let finalEligibility = await product.subscription?.isEligibleForIntroOffer
                     guard finalEligibility == true, hasSevenDayTrial(for: product) else {
-                        lastError = "Apple no longer confirms this trial. No purchase has started. Refresh or Restore before checking trial availability again. Your reservation is retained. Paid subscriptions are temporarily unavailable."
+                        lastError = "Apple says this Apple ID can no longer have this free trial. Nothing has been charged. Tap Restore purchases, then try again. Paying without a trial is not available right now."
                         return
                     }
                     guard await trialRegionSupported(for: product, captured: captured) else {

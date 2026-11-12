@@ -58,7 +58,7 @@ import ImageIO
                 items.append(Item(id: source.id, photo: EnhancedPhoto(id: source.id, originalURL: retained, enhancedURL: url)))
             } catch {
                 guard seen.insert(photo.id).inserted else { continue }
-                items.append(Item(id: photo.id, photo: photo, error: "The enhanced source could not be verified. No edit can start."))
+                items.append(Item(id: photo.id, photo: photo, error: "This photo's saved copy could not be opened, so it can't be edited. Add the photo again."))
             }
         }
     }

@@ -56,7 +56,8 @@ func check(_ condition: Bool, _ message: String) {
             "saved video recovery retains staged bytes and provenance while current preview differs")
         let unreviewed = PendingReelBatch(context: context, id: UUID(), photos: [.init(id: later.id, jpegBase64: laterBytes.base64EncodedString(), shot: nil)],
             motion: "push_in", aspect: "16:9", spaceType: "real_estate", completedPaths: [])
-        do { try SourcePreparation.requireSavedReelReview(unreviewed); check(false, "unreviewed newer stage stays held during recovery") } catch {}
+        // Owner decision, 12 Nov 2026: a staged photo no longer waits for a review.
+        do { try SourcePreparation.requireSavedReelReview(unreviewed) } catch { check(false, "an unreviewed newer stage is admitted during recovery") }
         let fallback = ListingVideoSource(photoVersionID: reloaded.photos[0].id, photoAssetID: reloaded.photos[0].sourceAssetID,
             photoProvenanceID: reloaded.photos[0].photoProvenanceID, generationRequestID: "rejected-motion", motionKind: "original_photo", sourceBound: false)
         let wire = ListingVideoComposition(sources: [fallback]).sources[0]

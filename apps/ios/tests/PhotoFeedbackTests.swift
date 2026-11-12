@@ -479,8 +479,8 @@ struct PhotoFeedbackTests {
         let custom = try PhotoVersionHistory.saveEdit(jpeg: Data("custom".utf8), id: "front-custom", parentID: "front",
             sourceID: "front", edit: "custom", style: nil, disclosure: nil,
             provenanceID: UUID().uuidString, provenanceRecorded: true, directory: review)
-        check(custom.needsCustomReview && PhotoFeedback.automaticallySelectedVersion(versionID: custom.id, directory: review) == nil,
-              "custom edits wait for review and are not selected automatically")
+        check(custom.customReviewed == false && !custom.needsCustomReview && PhotoFeedback.automaticallySelectedVersion(versionID: custom.id, directory: review) == nil,
+              "custom edits need no review and are not selected automatically")
         guard let customBefore = PhotoFeedback.localOutcome(versionID: custom.id, directory: review)?.outcome else {
             preconditionFailure("custom version readable")
         }

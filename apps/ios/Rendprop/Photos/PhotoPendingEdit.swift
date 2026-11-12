@@ -31,7 +31,7 @@ enum PhotoPendingEdit {
     enum Failure: Error, LocalizedError {
         case unavailable
         var errorDescription: String? {
-            "A saved photo request could not be verified. Your original is safe. Contact support before starting another paid edit."
+            "We couldn't check on a saved photo edit. Your original photo is safe. Contact support before starting another paid edit on this photo."
         }
     }
     private static func fingerprint(_ request: AIPhotoEditRequest, identity: Identity,

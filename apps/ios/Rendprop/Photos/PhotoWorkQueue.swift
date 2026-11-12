@@ -26,7 +26,7 @@ final class PhotoWorkQueue: ObservableObject {
         var detail: String {
             switch self {
             case .preparing: return "Your original and earlier edits stay unchanged."
-            case .uploading: return "Saving the retained source for this listing."
+            case .uploading: return "Saving the original photo for this listing."
             case .generatingAndChecking: return "The service does not report a percentage. Your saved versions are safe."
             case .checkingReturnedImage: return "Reading the returned image before saving it."
             case .saving: return "Keeping the new version and its disclosure together."

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actual filesystem review policy and extracted saved-reel settings, with classified controls."""
+"""Actual filesystem admission of saved edits to a video (no review is required since 12 Nov 2026) and extracted saved-reel settings, with classified controls."""
 import argparse, hashlib, json, subprocess, tempfile
 from pathlib import Path
 root = Path(__file__).resolve().parents[3]
@@ -44,8 +44,6 @@ consumed=[view,history,queue,fixture,Path(__file__).resolve(),root/'apps/ios/Ren
 receipt={'passed':False,'source_gates':source_gates,'source_sha256':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed},'runs':[], 'limitations':['Filesystem policy and saved-settings decision executed from production source. UIKit, SwiftUI and media fields are closed doubles; no app, provider, Photos or network calls. UI route enforcement is source-bound, not a UI-test result. Unknown legacy history does not grant or invent approval.']}
 variants={
  'actual':(h,closed,None),
- 'remove-custom-review':(h.replace('if version.needsCustomReview { throw Failure.customReviewRequired }','/* custom review removed */'),closed,'saved custom source remains held before reel continuation'),
- 'remove-staging-review':(h.replace('if version.needsStagingReview { throw Failure.reviewRequired }','/* stage review removed */'),closed,'saved staging source remains held before reel composition'),
  'replace-saved-configuration':(h,closed.replace('let settings = configuration ?? fallback','let settings = fallback'),'parked reel keeps saved extras title voice and caption transition choices'),
  'replace-saved-aspect':(h,closed.replace('batchAspect ?? settings.aspect ?? fallback.aspect','fallback.aspect'),'parked reel keeps saved wide shape despite reopened tall setup'),
 }
@@ -61,11 +59,11 @@ try:
     assert compile_run.returncode==0, f'{name} compile failure, not a valid control: {compile_run.stderr}'
     run=subprocess.run([str(executable)],capture_output=True,text=True,timeout=30)
     log=run.stdout+run.stderr; (directory/'run.log').write_text(log)
-    passed=(run.returncode==0 and 'Photo reel egress: 10 passed' in log) if expected is None else run.returncode!=0 and expected in log
+    passed=(run.returncode==0 and 'Photo reel egress: 11 passed' in log) if expected is None else run.returncode!=0 and expected in log
     receipt['runs'].append({'name':name,'compile_exit':compile_run.returncode,'runtime_exit':run.returncode,'expected_failure':expected,'passed':passed})
     assert passed,f'{name}: {log}'
  receipt['source_binding_matches']=all(hashlib.sha256(p.read_bytes()).hexdigest()==receipt['source_sha256'][str(p.relative_to(root))] for p in consumed)
  receipt['passed']=receipt['source_binding_matches']
 finally:
  (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
-print(json.dumps({'passed':receipt['passed'],'actual_assertions':10,'compiled_controls':4,'source_gates':len(source_gates),'receipt':str(out/'receipt.json')}))
+print(json.dumps({'passed':receipt['passed'],'actual_assertions':11,'compiled_controls':2,'source_gates':len(source_gates),'receipt':str(out/'receipt.json')}))
