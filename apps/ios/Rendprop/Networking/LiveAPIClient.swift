@@ -409,6 +409,11 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
     func cloudListings() async throws -> [Listing] {
         let fence = await MainActor.run { (AuthStore.shared.userID, AuthStore.shared.syncSessionRevision, WorkspaceContext.selectedOrgID) }
         guard let actor = fence.0.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        // The published-tour rows do not depend on the library directory or
+        // the listing pages, so that read runs beside them instead of adding
+        // a round trip after them. Its result is checked exactly as before.
+        struct PublishedDTO: Decodable { let id: UUID; let listingId: UUID; let slug: String; let publishedAt: String }
+        async let publishedRows: [PublishedDTO] = cloudRows(table: "renders", columns: "id,listing_id,slug,published_at", filters: [URLQueryItem(name: "published_at", value: "not.is.null")])
         var directoryRequest = makeRequest(url: url(["me", "workspaces"]))
         directoryRequest.setValue(nil, forHTTPHeaderField: "X-Org-Id")
         let data = try await execute(directoryRequest)
@@ -439,8 +444,7 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         guard rows.allSatisfy({ $0.id.flatMap(UUID.init(uuidString:)) != nil && $0.orgId.flatMap(UUID.init(uuidString:)) != nil }),
               Set(rows.compactMap(\.id)).count == rows.count else { throw CloudSyncError.invalidResponse }
         var result = rows.map(mapListing)
-        struct PublishedDTO: Decodable { let id: UUID; let listingId: UUID; let slug: String; let publishedAt: String }
-        let published: [PublishedDTO] = try await cloudRows(table: "renders", columns: "id,listing_id,slug,published_at", filters: [URLQueryItem(name: "published_at", value: "not.is.null")])
+        let published = try await publishedRows
         guard Set(published.map(\.id)).count == published.count else { throw CloudSyncError.incomplete }
         var newest: [UUID: PublishedDTO] = [:]
         for render in published {

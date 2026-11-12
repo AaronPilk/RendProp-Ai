@@ -592,6 +592,30 @@ struct SoldListingsView: View {
 
 // MARK: - Aesthetic listing card
 
+/// Decoded Home covers of cloud listings, remembered for this run of the app
+/// only. Without it every appearance of a card asked the server for a signed
+/// media page and downloaded the full-size cover again. Memory only: no
+/// private link and no image bytes are written to disk. The key is the card's
+/// own hero identity, which already names the account, session, library,
+/// listing and cover object, so another account or library can never match.
+enum CloudCoverMemory {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 150
+        c.totalCostLimit = 96 * 1024 * 1024
+        return c
+    }()
+
+    static func image(for heroID: String) -> UIImage? {
+        cache.object(forKey: heroID as NSString)
+    }
+
+    static func store(_ image: UIImage, for heroID: String) {
+        let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+        cache.setObject(image, forKey: heroID as NSString, cost: cost)
+    }
+}
+
 struct ListingCard: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
@@ -630,6 +654,7 @@ struct ListingCard: View {
     private var heroImage: UIImage? {
         if heroID == currentHeroID { return hero }
         if case .local(let url) = heroSource { return ImageThumbnails.cached(url) }
+        if case .cloud = heroSource { return CloudCoverMemory.image(for: currentHeroID) }
         return nil
     }
 
@@ -668,6 +693,9 @@ struct ListingCard: View {
                   let api = model.api as? WorkspaceSyncAPI,
                   let context = try? CloudMediaAccessContext.capture(orgID: orgID),
                   isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) else { return }
+            // Same account, session, library, listing and cover as an earlier
+            // load in this run: show it without a media read or a download.
+            if let remembered = CloudCoverMemory.image(for: id) { hero = remembered; heroID = id; return }
             do {
                 var offset = 0
                 while true {
@@ -684,6 +712,7 @@ struct ListingCard: View {
                         let decoded = await ImageThumbnails.load(file.url)
                         if let decoded, isCurrentCloudCover(context, serverID: serverID, orgID: orgID, key: key, heroID: id) {
                             hero = decoded; heroID = id
+                            CloudCoverMemory.store(decoded, for: id)
                         }
                         return
                     }

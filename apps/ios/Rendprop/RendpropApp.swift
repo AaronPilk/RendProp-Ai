@@ -1275,12 +1275,16 @@ final class AppModel: ObservableObject {
     /// this phone while retaining filenames, captures and unfinished edits.
     func refreshCloudWorkspace() async {
         guard hasLoaded, Config.useLiveBackend else { return }
-        await syncRealEstateRole()
+        // The role read touches no listing, so it runs beside the listing
+        // refresh instead of delaying it by a round trip. Every path below
+        // waits for it before returning; nothing here cancels it.
+        async let roleSync: Void = syncRealEstateRole()
         guard AuthStore.shared.isIdentified, let cloud = api as? WorkspaceSyncAPI else {
+            await roleSync
             await syncDirtyListings()
             return
         }
-        if let existing = cloudRefreshTask { await existing.value; return }
+        if let existing = cloudRefreshTask { await roleSync; await existing.value; return }
         let operation = UUID()
         let task = Task { [weak self] in
             guard let self else { return }
@@ -1312,8 +1316,14 @@ final class AppModel: ObservableObject {
                 let merged = try CloudListingMerge.merge(local: self.listings, remote: remote, protected: protected, ownerID: actor.flatMap(UUID.init(uuidString:)))
                 // `listings` persists on assignment. Bind the snapshot to its
                 // owner first, then write both values in that one save.
-                self.identityOwnerUserID = actor.flatMap(UUID.init(uuidString:))
-                self.listings = merged
+                // An unchanged snapshot is not written again: assigning
+                // `listings` re-encodes and rewrites the whole library file
+                // on the main actor and redraws every screen observing it.
+                let mergedOwner = actor.flatMap(UUID.init(uuidString:))
+                if merged != self.listings || self.identityOwnerUserID != mergedOwner {
+                    self.identityOwnerUserID = mergedOwner
+                    self.listings = merged
+                }
                 self.lastCloudSyncAt = Date()
                 await self.defaultFirstCloudCoversAfterWorkspaceSync()
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
@@ -1358,6 +1368,19 @@ final class AppModel: ObservableObject {
         cloudRefreshOperation = operation
         await task.value
         if cloudRefreshOperation == operation { cloudRefreshTask = nil; cloudRefreshOperation = nil }
+        await roleSync
+    }
+
+    /// Returning to the foreground seconds after a completed sync (a system
+    /// alert, Control Centre, a glance at Messages) does not repeat the whole
+    /// workspace read. Unsent work, a failed sync, sign-in, a library switch
+    /// and pull-to-refresh all still refresh immediately.
+    static let foregroundRefreshInterval: TimeInterval = 15
+
+    func refreshCloudWorkspaceOnForeground() async {
+        if let last = lastCloudSyncAt, cloudSyncError == nil, pendingCloudListingCount == 0,
+           Date().timeIntervalSince(last) < Self.foregroundRefreshInterval { return }
+        await refreshCloudWorkspace()
     }
 
     var workspaceSwitchIsBusy: Bool {
@@ -3561,7 +3584,12 @@ enum PersistentStore {
         do {
             try adoptionBindings?.validate()
             let data = try JSONEncoder().encode(state)
-            try data.write(to: fileURL, options: .atomic)
+            // The same bytes already on disk are not written again. A missing
+            // file (a wipe) is always rewritten.
+            if data != lastWrittenData || !FileManager.default.fileExists(atPath: fileURL.path) {
+                try data.write(to: fileURL, options: .atomic)
+                lastWrittenData = data
+            }
             if !isEmpty { refusesEmptyOverwrite = false }
             return true
         } catch { return false }
@@ -3587,6 +3615,9 @@ enum PersistentStore {
     // Salvage readable listings, but never silently drop an unreadable recovery
     // journal during the next autosave. Original bytes stay in place for help.
     private static var refusesRecoveryOverwrite = false
+    /// Bytes of the last snapshot this process wrote. Main-actor only, like
+    /// the two flags above.
+    private static var lastWrittenData: Data?
 
     private static func unreadableSnapshot() -> Loaded {
         // Leave the original at its exact path. Moving it aside would look
@@ -4010,7 +4041,7 @@ struct RendpropApp: App {
                 if phase == .active {
                     ReelWorkQueue.shared.resumeForeground()
                     model.refreshSpatialCapability()
-                    Task { await model.refreshCloudWorkspace() }
+                    Task { await model.refreshCloudWorkspaceOnForeground() }
                     // iOS Settings can change the notification permission while
                     // the app is in the background, in BOTH directions — and a
                     // device token can be reissued. Re-read it on the way back
