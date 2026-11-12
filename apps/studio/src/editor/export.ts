@@ -1,3 +1,4 @@
+import {canContinueSilentCut, ContinuousSilentCutRun} from "./export-continuity";
 import {decodeMusic} from "./music";
 import {beginExportAudio, ExportAudioBootstrapSetupError,
   observeBootstrapSetup, type ExportAudioBootstrap} from "./export-audio-bootstrap";
@@ -244,6 +245,7 @@ export async function exportLocalVideo(options: {
   Object.assign(canvas, renderDimensions(draft.ratio));
   let stream: MediaStream | undefined;
   let recorder: MediaRecorder | undefined;
+  const continuousSilentCuts = new ContinuousSilentCutRun();
   const encodedTransitions: EncodedTransition[] = [];
   let audio: AudioContext | undefined;
   let destination: MediaStreamAudioDestinationNode | undefined;
@@ -401,10 +403,11 @@ export async function exportLocalVideo(options: {
       await overlays.paint(canvas, elapsedBefore);
       throwIfAborted(renderSignal);
       const duration = clipDuration(clip);
+      const continuousSilentPhoto = format.extension === "mp4" && !withAudio && clip.source.kind === "image";
       if (hasPrevious && transitionSeconds(clip) > 0)
         encodedTransitions.push({startSeconds: elapsedBefore, durationSeconds: transitionSeconds(clip)});
-      // Restart the cadence origin for each clip while the recorder is paused.
-      // Preparation can take time; only a gap in active capture is a defect.
+      // Keep per-clip transition checks; unpaused silent cuts also retain
+      // continuous gap/density checks and fixed-origin recording drift history.
       const captureCadence = new CaptureCadenceClock(hasPrevious ? transitionSeconds(clip) * 1000 : 0);
       // Prepare bounded gain data while capture is still stopped/paused. The
       // curve retains the nominal 30 Hz targets and existing 25 ms smoothing,
@@ -486,22 +489,27 @@ export async function exportLocalVideo(options: {
         await overlays.paint(canvas, elapsedBefore);
         const track = stream!.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
-        captureCadence.capture(performance.now(), 0);
+        const captureAt = performance.now();
+        captureCadence.capture(captureAt, 0);
+        if (continuousSilentPhoto) continuousSilentCuts.capture(captureAt);
         track?.requestFrame?.();
       } else {
         // resume() changes state synchronously and queues capture before its
         // notification. Waiting for that event records an idle frame/audio gap
         // before this segment's clock and source playback begin on busy devices.
-        recorder.resume();
+        if (!continuousSilentCuts.take(recorder.state)) recorder.resume();
         const track = stream!.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
-        captureCadence.capture(performance.now(), 0);
+        const captureAt = performance.now();
+        captureCadence.capture(captureAt, 0);
+        if (continuousSilentPhoto) continuousSilentCuts.capture(captureAt);
         track?.requestFrame?.();
       }
       // Start recording before advancing the source, so startup cannot discard speech.
       // Buffered audio starts before play() resolves. Its capture wall clock
       // must share that origin; a slow play promise does not mean sound was lost.
       const originalWallStart = performance.now();
+      if (continuousSilentPhoto) continuousSilentCuts.beginSegment(originalWallStart, elapsedBefore);
       const segmentAudioStart = audio?.currentTime;
       const originalClockStart = originalSource && audio ? segmentAudioStart : undefined;
       // At the fixed origin, submit one prepared curve and at most two
@@ -597,6 +605,7 @@ export async function exportLocalVideo(options: {
         } else lossReadings = 0;
         recordingClock.read((now - start) / 1000, elapsed,
           recordingAudioStart !== undefined && audio ? audio.currentTime - recordingAudioStart : undefined);
+        if (continuousSilentPhoto) continuousSilentCuts.read(now, elapsedBefore + elapsed);
         // The capture stream is30fps. Keep every clock/safety reading above,
         // while avoiding repeated HD paints inside the same capture interval.
         const paintBucket = Math.floor(elapsed * 30);
@@ -605,7 +614,9 @@ export async function exportLocalVideo(options: {
           await overlays.paint(canvas, elapsedBefore + elapsed);
           // Wall and media clocks may agree while the event loop or encoder
           // misses the entire transition. Refuse before offering that file.
-          captureCadence.capture(performance.now(), elapsed * 1000);
+          const captureAt = performance.now();
+          captureCadence.capture(captureAt, elapsed * 1000);
+          if (continuousSilentPhoto) continuousSilentCuts.capture(captureAt);
           (stream!.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined)?.requestFrame?.();
           lastPaintedBucket = paintBucket;
         }
@@ -617,9 +628,14 @@ export async function exportLocalVideo(options: {
       }
       // The successor is already prepared. MediaRecorder pause notifications do
       // not guarantee that MP4 timestamps exclude a long decoder setup gap.
-      const paused = waitForEvent(recorder, "pause", renderSignal);
-      recorder.pause();
-      await paused;
+      const successorReady = !!lookahead?.result && "media" in lookahead.result;
+      const continueSilentCut = canContinueSilentCut(format.extension, withAudio, clip, next, successorReady);
+      if (!continuousSilentCuts.offer(continueSilentCut, recorder.state)) {
+        const paused = waitForEvent(recorder, "pause", renderSignal);
+        recorder.pause();
+        await paused;
+        continuousSilentCuts.didPause(recorder.state);
+      }
       video?.pause();
       removeOriginalVideoListeners?.(); removeOriginalVideoListeners = undefined;
       stopOriginalAudio();

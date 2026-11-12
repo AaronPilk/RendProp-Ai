@@ -6,7 +6,7 @@ import {join} from "node:path";
 // This exact inventory is shared by browser receipts and CI binding checks.
 export const EXPORT_SOURCE_PATHS = Object.freeze([
   "package.json", "package-lock.json", "node_modules/mediabunny/package.json",
-  ...["export", "export-webcodecs", "export-frame-seek", "export-audio", "export-audio-prime", "export-audio-route", "export-audio-schedule", "export-pcm", "export-pcm-ownership",
+  ...["export", "export-continuity", "export-webcodecs", "export-frame-seek", "export-audio", "export-audio-prime", "export-audio-route", "export-audio-schedule", "export-pcm", "export-pcm-ownership",
     "export-audio-bootstrap", "export-plan", "encoder-protocol",
     "encoder-worker", "encoder-bridge", "encoder-output", "recording-clock",
     "model", "media", "music", "finishing", "overlays", "overlay-renderer", "mp4-cadence", "proxy"]
