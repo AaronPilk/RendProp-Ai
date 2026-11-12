@@ -44,7 +44,11 @@ async function processorConsentRefusal(consent:AiConsent,kie:boolean,context:Rec
 // A newly admitted or resumed job starts on the controller now instead of at
 // its next cron minute. Only accepted create/resume replies wake it; the wake
 // is not awaited and cannot change the reply (see _shared/property-video-wake.ts).
-export async function handler(req:Request):Promise<Response>{const response=await route(req);try{if(req.method==='POST'&&[200,202].includes(response.status)){const seg=pathSegments(req,'property-video-jobs');if(seg.length===0||seg.length===2&&seg[1]==='resume')void wakePropertyVideoRender();}}catch{/* Best-effort only. */}return response;}
+// A photo preparation that was queued (202) wakes it too: both prepare routes
+// put a row on the same controller queue (Studio uses sources/prepare, the iOS
+// app sources/prepare-chosen), and the first one of a batch otherwise waited up
+// to a minute. A preparation that is already ready (200) has nothing to start.
+export async function handler(req:Request):Promise<Response>{const response=await route(req);try{if(req.method==='POST'&&[200,202].includes(response.status)){const seg=pathSegments(req,'property-video-jobs'),path=seg.join('/');if(seg.length===0||seg.length===2&&seg[1]==='resume'||response.status===202&&(path==='sources/prepare'||path==='sources/prepare-chosen'))void wakePropertyVideoRender();}}catch{/* Best-effort only. */}return response;}
 async function route(req:Request):Promise<Response>{if(req.method==='OPTIONS')return new Response('ok',{headers:jobCors});try{
  const user=await getUser(req);assert(user.is_anonymous===false,403,'Sign in to your own account before creating a video.');const seg=pathSegments(req,'property-video-jobs');const aerial=await aerialPublic(req,user.id,seg);if(aerial)return aerial;const chosen=await privatePreparationPublic(req,user.id,seg);if(chosen)return chosen;const prepared=await preparationPublic(req,user.id,seg);if(prepared)return prepared;
  if(req.method==='GET'&&seg.join('/')==='sources/versions'){
