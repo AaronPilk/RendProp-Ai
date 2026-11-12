@@ -236,9 +236,10 @@ enum MovingPhotoClock {
 
         let unknownQuality = try fixture(); unknownQuality.model.api.loseDrift = true; await execute(unknownQuality)
         unknownQuality.model.api.loseDrift = false; await execute(unknownQuality)
-        check(unknownQuality.model.api.posts == 1 && unknownQuality.model.api.drifts == 1 && unknownQuality.animatedClip == nil, "lost quality reply cannot purchase another quality check")
+        // Owner decision, 12 Nov 2026: the check against the photo is advisory.
+        check(unknownQuality.model.api.posts == 1 && unknownQuality.model.api.drifts == 1 && unknownQuality.animatedClip != nil, "a lost quality reply never holds the video or buys another quality check")
         let held = try fixture(); held.model.api.holdQuality = true; await execute(held); await execute(held)
-        check(held.model.api.posts == 1 && held.model.api.drifts == 1 && held.animatedClip == nil, "quality-held motion clip cannot become a usable saved result")
+        check(held.model.api.posts == 1 && held.model.api.drifts == 1 && held.animatedClip != nil, "a failed advisory quality verdict still delivers the saved video, with one generation and one check")
 
         let changed = try fixture(); await execute(changed); changed.animatedClip = nil
         try Data("changed source photo bytes".utf8).write(to: root.appendingPathComponent("synthetic.jpg")); await execute(changed)

@@ -11508,6 +11508,13 @@ enum PhotoAnimationRecovery {
             guard let expected = entry.clipSHA256, let bytes = try? Data(contentsOf: finished), digest(bytes) == expected else { throw Failure.unavailable }
             try requireCurrent(); return finished
         }
+        // A video an earlier build held because its check failed is released:
+        // that check is advisory now. One held because this phone could not
+        // read it (no check was ever sent) stays held.
+        if entry.qualityPassed == false, entry.qualityDispatched, entry.clipSHA256 != nil {
+            entry.qualityPassed = true; entry.message = nil
+            try save(entry, directory: directory)
+        }
         if let message = entry.message { throw Failure.failed(message) }
         if saved != nil, entry.dispatched, entry.job == nil, let listing = context.serverListing, let lookup {
             try requireCurrent()
@@ -11579,18 +11586,31 @@ enum PhotoAnimationRecovery {
         }
         guard let clip else { throw Failure.waiting }
         if entry.qualityPassed == nil {
-            guard !entry.qualityDispatched else { throw Failure.qualityUnknown }
-            try requireCurrent()
-            let verdict = try await judge(job, entry.sourceJPEG, clip, {
+            // Owner decision, 12 Nov 2026: the check against the photo is
+            // advisory. The server records its verdict; the finished video is
+            // used whatever that verdict is, and a check that did not answer
+            // does not hold it. A check already sent is never sent again.
+            if !entry.qualityDispatched {
                 try requireCurrent()
-                entry.qualityDispatched = true; try save(entry, directory: directory)
-            })
-            guard entry.qualityDispatched || !verdict.mayUse else { throw Failure.unavailable }
-            entry.qualityPassed = verdict.mayUse
-            if !verdict.mayUse {
-                entry.message = "This saved video is held by its quality review. Your photo is unchanged. No new generation or quality check will be started."
+                do {
+                    _ = try await judge(job, entry.sourceJPEG, clip, {
+                        try requireCurrent()
+                        entry.qualityDispatched = true; try save(entry, directory: directory)
+                    })
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // The check did not answer. The video is used unchecked.
+                }
             }
-            try save(entry, directory: directory) // Exact verdict is durable before a context-dependent UI update.
+            // The check is sent only after this phone read the video's frames,
+            // so "never sent" means the video itself could not be read. That
+            // is the one case still held here.
+            entry.qualityPassed = entry.qualityDispatched
+            if !entry.qualityDispatched {
+                entry.message = "This saved video could not be opened on this phone, so it can't be used. Your photo is unchanged and no new video was started."
+            }
+            try save(entry, directory: directory) // Durable before a context-dependent UI update.
         }
         try requireCurrent()
         guard entry.qualityPassed == true else { throw Failure.failed(entry.message ?? Failure.qualityUnknown.localizedDescription) }
@@ -12835,11 +12855,10 @@ struct ReelStudioView: View {
             titleCardToggle
             bigCaptionsRow
             transitionRow
-            if !photoMotion {
-                Toggle("Use my selected photo if AI changes the property", isOn: $allowOriginalPhotoFallback).tint(Theme.accent)
-                Text("Fallback keeps the exact photo version you selected and adds restrained 2D movement. Connection, billing and uncertain-quality failures stop the job.")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-            }
+            // The "use my selected photo if AI changes the property" switch is
+            // gone (12 Nov 2026): the checks on an AI video are advisory and a
+            // still photo is never put in its place. `allowOriginalPhotoFallback`
+            // keeps its default and is still sent, so saved jobs decode as before.
             acceptedOpeningCard
             if !extraClipURLs.isEmpty { clipsCard }
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading).modifier(RendpropContentSurface())
@@ -16950,7 +16969,6 @@ struct ReelStudioView: View {
         // gate below must still succeed before these bytes can be used.
         let tmp = Self.clipPath(forDownloaded: downloaded)
         defer { try? FileManager.default.removeItem(at: tmp) }
-        // No unchecked clip enters the parked library or the final composition.
         // Recovery reuses the accepted generation receipt and exact source; it
         // never submits another paid clip. Legacy receipts without a source hold.
         guard let source = pending?.sourceJPEGBase64, !source.isEmpty,
@@ -16958,37 +16976,28 @@ struct ReelStudioView: View {
             throw AIImagePrep.error("This older request has no saved source photo for its quality check. It has been kept, but cannot be added to a reel unchecked.")
         }
         let frames = await ClipFrames.extract(from: tmp)
-        // FAIL CLOSED, locally: a clip this phone cannot read is held, the
+        // A clip this phone cannot read is the one thing still held here: the
         // receipt stays, and no empty judgement is sent to the server.
         guard !frames.isEmpty else {
             throw AIImagePrep.error("Couldn't read the finished clip on this phone, so it is being held rather than published. Recover the saved request to try again.")
         }
         try await requireCurrent()
-        let verdict = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
-            kind: "reel", sourceBase64: source, frames: frames, seconds: 5,
-            spaceType: spaceType, listingServerID: pending?.context.serverListingID,
-            provenanceID: job.provenanceID, sourceAssetID: pending?.sourceAssetID, attempt: pending?.qualityAttempt ?? 1))
-        try await requireCurrent()
-        guard verdict.mayUse else {
-            guard verdict.status == .fail, verdict.action == "refuse",
-                  let jpeg = Data(base64Encoded: source) else {
-                throw ReelQualityRefusal(verdict: verdict)
-            }
-            // Only the server's terminal property-drift refusal permits this.
-            // Decode, identity, quota, consent and unavailable-QC failures never
-            // reach here. The rejected video is deleted by the existing defer.
-            try await requireCurrent()
-            let local = dir.appendingPathComponent("clip-photo-motion-\(index).mp4")
-            let shape = UIImage(data: jpeg)?.size
-            guard let shape, shape.width > 0, shape.height > 0 else { throw CocoaError(.fileReadCorruptFile) }
-            let outputAspect = pending?.outputAspect ?? (shape.width < shape.height ? "9:16" : "16:9")
-            let size = outputAspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)
-            try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)
-            try await requireCurrent()
-            // Caller durably retains this local clip before retiring the failed
-            // AI receipt. No provider call or cost-history mutation is made.
-            return local
+        // Owner decision, 12 Nov 2026: the check against the photo is advisory.
+        // The server records its verdict; this phone uses the finished clip
+        // whatever that verdict is. No second generation, no still-photo clip
+        // and no held receipt follow from it. A check that could not run does
+        // not hold the clip either. Only leaving this account or listing stops.
+        do {
+            _ = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
+                kind: "reel", sourceBase64: source, frames: frames, seconds: 5,
+                spaceType: spaceType, listingServerID: pending?.context.serverListingID,
+                provenanceID: job.provenanceID, sourceAssetID: pending?.sourceAssetID, attempt: pending?.qualityAttempt ?? 1))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // The check did not answer. The clip is used unchecked.
         }
+        try await requireCurrent()
         let dest = dir.appendingPathComponent("clip-\(index).mp4")
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tmp, to: dest)

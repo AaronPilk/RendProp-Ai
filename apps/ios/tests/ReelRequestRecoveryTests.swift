@@ -150,7 +150,7 @@ final class ClosedVideoProtocol:URLProtocol {
   let ctx=PendingReelRequest.Context(listingID:UUID(),serverListingID:UUID(),owner:"synthetic-owner",workspace:UUID())
   if CommandLine.arguments.contains("--large-only") {let n=try await largeBatch(root:root);print("PASSED: \(n) actual large video recipe/recovery/order assertions; no provider");return}
   if CommandLine.arguments.contains("--choices-only") {let n=try await recoveryChoices(root:root,input:input);print("PASSED: \(n) actual explicit recovery choices and batch continuation assertions; no provider");return}
-  if CommandLine.arguments.contains("--quality-only") {let n=try await qualityRouting(root:root,input:input);print("PASSED: \(n) actual quality retry/original-motion assertions; renderer boundary doubled, no provider");return}
+  if CommandLine.arguments.contains("--quality-only") {let n=try await qualityRouting(root:root,input:input);print("PASSED: \(n) actual advisory quality assertions; renderer boundary doubled, no provider");return}
   defer{UserDefaults.standard.removeObject(forKey:PendingReelRequest.key(ctx))}
   if !CommandLine.arguments.contains("--dispatch-only") {
    let historyID=UUID(),historyDir=PendingReelClips.directory(for:UUID())
@@ -280,13 +280,19 @@ final class ClosedVideoProtocol:URLProtocol {
   clip.throwPolls=0
   do{_ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("HTTP500 surfaced")}catch{checks+=1}
   check(PendingReelRequest.load(ctx) != nil&&clip.posts==1,"HTTP500 preserves receipt without submitting")
+  // Owner decision, 12 Nov 2026: the check against the photo is advisory. A
+  // failed verdict, or a check that could not run, still returns the AI clip.
   clip.rejectsDrift=true
-  do { _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("changed property must not be retained") } catch {checks+=1}
-  check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"QC refusal keeps the paid receipt without a generation retry")
-  check(!FileManager.default.fileExists(atPath:root.appendingPathComponent("clip-0.mp4").path),"QC failure leaves no unchecked clip")
+  let failedCheckClip:URL
+  do { failedCheckClip=try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0) } catch { preconditionFailure("a failed advisory check must not hold a finished clip") }
+  check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"a failed advisory check sends no generation retry and leaves the receipt to its caller")
+  check(failedCheckClip.lastPathComponent=="clip-0.mp4" && FileManager.default.fileExists(atPath:failedCheckClip.path),"a failed advisory check still returns the AI clip")
+  try FileManager.default.removeItem(at:failedCheckClip)
   clip.rejectsDrift=false;clip.unavailableDrift=true
-  do { _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("unavailable check must hold") } catch {checks+=1}
-  check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"unavailable QC holds accepted receipt")
+  let uncheckedClip:URL
+  do { uncheckedClip=try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0) } catch { preconditionFailure("a check that could not run must not hold a finished clip") }
+  check(PendingReelRequest.load(ctx) != nil && clip.posts==1 && FileManager.default.fileExists(atPath:uncheckedClip.path),"a check that could not run still returns the AI clip")
+  try FileManager.default.removeItem(at:uncheckedClip)
   clip.unavailableDrift=false
   // Readability is independently tested on the simulator. Here the closed
   // decoder deliberately returns no frames regardless of the media suffix.
@@ -523,102 +529,56 @@ final class ClosedVideoProtocol:URLProtocol {
   func generate(_ context:PendingReelRequest.Context,_ api:ClipAPI,_ dir:URL,guardCurrent:@escaping @MainActor @Sendable ()throws->Void={try Task.checkCancellation()}) async throws -> URL {
    try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:api,listingServerID:context.serverListingID,into:dir,index:0,recoveryContext:context,requireCurrent:guardCurrent)
   }
-  let (retryContext,retryAPI,retryDir)=setup()
-  retryAPI.driftOutcomes=[.success(verdict(.fail,"retry")),.success(verdict(.pass,"publish",true))]
-  let safeRetry=try await generate(retryContext,retryAPI,retryDir)
-  check(retryAPI.posts==2 && retryAPI.checksDrift==2,"confirmed drift requests exactly one paid retry")
-  check(retryAPI.submissions.map(\.motion)==["fly_through","push_in"],"only the bounded retry uses the safer push-in preset")
-  check(retryAPI.submissions.allSatisfy{$0.image==jpeg.base64EncodedString() && $0.source==$0.image},"retry uses the exact same prepared and saved JPEG")
-  check(Set(retryAPI.submissions.compactMap(\.key)).count==2 && Set(retryAPI.submissions.map(\.jobID)).count==2,"quality retry has separate exact operation and accepted job identities")
-  check(retryAPI.submissions.map(\.attempt)==[0,1] && retryAPI.driftRequests.map(\.attempt)==[0,1],"retry attempts persist and reach the real drift request")
-  check(retryAPI.driftRequests.map(\.provenanceID)==["synthetic-provenance-0","synthetic-provenance-1"],"each drift judgement carries its exact accepted provenance")
-  check(OriginalPhotoMotion.sources.isEmpty && !OriginalPhotoMotion.isClip(safeRetry),"accepted safer retry stays an AI clip")
-  check(PendingReelRequest.load(retryContext)==nil && PendingReelClips.load(for:retryContext.listingID)?.clipURLs==[safeRetry],"successful retry acknowledges only its durably retained clip")
-  let (boundContext,boundAPI,boundDir)=setup()
-  boundAPI.driftOutcomes=Array(repeating:.success(verdict(.fail,"retry")),count:4)
-  do{_ = try await generate(boundContext,boundAPI,boundDir);preconditionFailure("repeated retry judgement must stay stopped")}catch{checks+=1}
-  check(boundAPI.posts==2 && boundAPI.checksDrift==2,"quality retry is bounded to two total provider generations")
-  check(PendingReelRequest.load(boundContext)?.qualityAttempt==1 && PendingReelRequest.load(boundContext)?.job.requestId==boundAPI.job.requestId,"second refused receipt remains recoverable")
-  check(OriginalPhotoMotion.sources.isEmpty && PendingReelClips.load(for:boundContext.listingID)==nil,"nonterminal retry never fabricates an original-photo fallback")
-  PendingReelRequest.forget(boundContext)
-  // A retained old receipt with an explicit terminal verdict uses the source
-  // stored with that receipt, not the photo currently selected in the UI.
-  let (terminalContext,terminalAPI,terminalDir)=setup()
-  let savedJPEG=Data("exact accepted saved JPEG bytes".utf8)
-  let terminal=PendingReelRequest(context:terminalContext,photoNumber:1,job:terminalAPI.job,sourceJPEGBase64:savedJPEG.base64EncodedString(),sourceSpaceType:"real_estate",qualityAttempt:1)
-  try terminal.save();terminalAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))];UIImage.savedSize=CGSize(width:720,height:1280)
-  let local=try await ReelReceiptHarness.retrieveClip(job:terminal.job,pending:terminal,api:terminalAPI,into:terminalDir,index:0)
-  check(terminalAPI.posts==0 && terminalAPI.polls==1,"terminal recovery never dispatches another generation")
-  check(OriginalPhotoMotion.sources==[savedJPEG],"original motion renders only the exact accepted saved JPEG")
-  check(OriginalPhotoMotion.sizes.count==1 && OriginalPhotoMotion.sizes[0].width==1080 && OriginalPhotoMotion.sizes[0].height==1920,"original portrait source selects the portrait renderer shape")
-  check(OriginalPhotoMotion.isClip(local),"temporary original-motion clip preserves its identity")
-  check(PendingReelRequest.load(terminalContext)?.job.requestId==terminal.job.requestId,"local fallback keeps receipt until durable retention")
-  check(!FileManager.default.fileExists(atPath:terminalDir.appendingPathComponent("clip-0.mp4").path),"rejected AI bytes never become an accepted clip")
-  let retained=try ReelReceiptHarness.retainRecoveredClip(local,for:terminalContext.listingID)
-  let retainedBytes=try Data(contentsOf:retained)
-  check(retainedBytes==OriginalPhotoMotion.bytes && OriginalPhotoMotion.isClip(retained),"durable retention preserves original-motion bytes and label")
-  check(PendingReelClips.load(for:terminalContext.listingID)?.clipURLs==[retained],"original fallback is addressable through the durable manifest")
-  check(PendingReelRequest.load(terminalContext) != nil,"retaining a local fallback never independently clears a receipt")
-  terminal.clear();check(PendingReelRequest.load(terminalContext)==nil,"caller may acknowledge the durably retained original fallback")
-  let rawLocal=terminalDir.appendingPathComponent("clip-photo-motion-next.mp4");try OriginalPhotoMotion.bytes.write(to:rawLocal)
-  ReelReceiptHarness.parkClips([retained,rawLocal],for:terminalContext.listingID,tmpDir:terminalDir)
-  let parked=PendingReelClips.load(for:terminalContext.listingID)!.clipURLs
-  check(parked.count==2 && parked.allSatisfy(OriginalPhotoMotion.isClip),"batch parking preserves original-motion labels for every retained copy")
-  let (ordinaryContext,ordinaryAPI,ordinaryDir)=setup();ordinaryAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))]
-  let ordinary=try await generate(ordinaryContext,ordinaryAPI,ordinaryDir)
-  check(ordinaryAPI.posts==1 && OriginalPhotoMotion.sources==[jpeg],"ordinary terminal refusal renders the same saved source with no paid retry")
-  check(OriginalPhotoMotion.sizes.count==1 && OriginalPhotoMotion.sizes[0].width==1080 && OriginalPhotoMotion.sizes[0].height==1920,"new request keeps selected portrait delivery for a landscape source")
-  check(OriginalPhotoMotion.isClip(ordinary) && PendingReelClips.load(for:ordinaryContext.listingID)?.clipURLs==[ordinary] && PendingReelRequest.load(ordinaryContext)==nil,"ordinary original fallback retires receipt after durable acceptance")
-  // Reject every nonterminal/unavailable verdict even when its action string
-  // says refuse. The server must explicitly report fail AND refuse.
-  let(legacyLandscape,legacyLandscapeAPI,legacyLandscapeDir)=setup()
-  let oldLandscape=PendingReelRequest(context:legacyLandscape,photoNumber:1,job:legacyLandscapeAPI.job,sourceJPEGBase64:savedJPEG.base64EncodedString(),sourceSpaceType:"real_estate",qualityAttempt:1)
-  try oldLandscape.save();legacyLandscapeAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))]
-  _ = try await ReelReceiptHarness.retrieveClip(job:oldLandscape.job,pending:oldLandscape,api:legacyLandscapeAPI,into:legacyLandscapeDir,index:0)
-  check(OriginalPhotoMotion.sizes[0].width==1920 && OriginalPhotoMotion.sizes[0].height==1080,"legacy landscape receipt preserves its saved source shape")
-  PendingReelRequest.forget(legacyLandscape)
-  for rejected in [verdict(.unavailable,"refuse"),verdict(.pass,"refuse"),verdict(.fail,"hold"),verdict(.fail,"reject")] {
-   let (context,api,dir)=setup();api.driftOutcomes=[.success(rejected)]
-   do{_ = try await generate(context,api,dir);preconditionFailure("ambiguous quality verdict must hold")}catch{checks+=1}
-   check(api.posts==1 && OriginalPhotoMotion.sources.isEmpty,"only explicit fail/refuse can render original motion")
-   check(PendingReelRequest.load(context)?.job.requestId==api.job.requestId && PendingReelClips.load(for:context.listingID)==nil,"ambiguous quality verdict keeps the accepted receipt and no clip")
-   PendingReelRequest.forget(context)
+  // Owner decision, 12 Nov 2026: the check against the photo is advisory. Every
+  // verdict leaves the finished AI clip in use: one generation, no still-photo
+  // clip and no held receipt.
+  for advisory in [verdict(.pass,"publish",true),verdict(.fail,"retry"),verdict(.fail,"refuse"),verdict(.unavailable,"hold"),verdict(.fail,"hold"),verdict(.pass,"refuse")] {
+   let (context,api,dir)=setup();api.driftOutcomes=[.success(advisory)]
+   let used=try await generate(context,api,dir)
+   check(api.posts==1 && api.checksDrift==1,"an advisory verdict never requests another generation")
+   check(api.submissions.map(\.motion)==["fly_through"] && api.submissions.allSatisfy{$0.image==jpeg.base64EncodedString() && $0.source==$0.image},"the one generation uses the chosen move and the exact prepared JPEG")
+   check(api.submissions.map(\.attempt)==[0] && api.driftRequests.map(\.attempt)==[0],"the saved attempt reaches the real drift request")
+   check(api.driftRequests.map(\.provenanceID)==["synthetic-provenance-0"],"each drift judgement carries its exact accepted provenance")
+   check(OriginalPhotoMotion.sources.isEmpty && !OriginalPhotoMotion.isClip(used),"an advisory verdict never replaces the AI clip with a still photo")
+   check(PendingReelRequest.load(context)==nil && PendingReelClips.load(for:context.listingID)?.clipURLs==[used],"the clip is durably retained and its receipt acknowledged whatever the verdict")
   }
-  for error:Error in [APIError.server(status:401,code:"auth",message:"Synthetic auth"),APIError.server(status:402,code:"quota",message:"Synthetic quota"),URLError(.networkConnectionLost),CancellationError()] {
+  for error:Error in [APIError.server(status:401,code:"auth",message:"Synthetic auth"),APIError.server(status:402,code:"quota",message:"Synthetic quota"),URLError(.networkConnectionLost),URLError(.timedOut)] {
    let (context,api,dir)=setup();api.driftOutcomes=[.failure(error)]
-   do{_ = try await generate(context,api,dir);preconditionFailure("quality route failure must hold")}catch{checks+=1}
-   check(api.posts==1 && OriginalPhotoMotion.sources.isEmpty,"auth quota transport cancellation never trigger a generation retry or fallback")
-   check(PendingReelRequest.load(context)?.job.requestId==api.job.requestId,"quality route failure preserves the accepted receipt")
-   PendingReelRequest.forget(context)
+   let used:URL
+   do{used=try await generate(context,api,dir)}catch{preconditionFailure("a check that could not run must not hold a finished clip")}
+   check(api.posts==1 && api.checksDrift==1 && OriginalPhotoMotion.sources.isEmpty && !OriginalPhotoMotion.isClip(used),"a check that could not run never holds or replaces the finished clip")
+   check(PendingReelRequest.load(context)==nil && PendingReelClips.load(for:context.listingID)?.clipURLs==[used],"an unchecked clip is durably retained and its receipt acknowledged")
   }
+  let (cancelContext,cancelAPI,cancelDir)=setup();cancelAPI.driftOutcomes=[.failure(CancellationError())]
+  do{_ = try await generate(cancelContext,cancelAPI,cancelDir);preconditionFailure("cancellation during the check must stop")}catch{checks+=1}
+  check(cancelAPI.posts==1 && PendingReelRequest.load(cancelContext)?.job.requestId==cancelAPI.job.requestId && PendingReelClips.load(for:cancelContext.listingID)==nil,"cancellation during the check keeps the accepted receipt and retains no clip")
+  PendingReelRequest.forget(cancelContext)
   let (decodeContext,decodeAPI,decodeDir)=setup();ClipFrames.answerNoFrames=true
   do{_ = try await generate(decodeContext,decodeAPI,decodeDir);preconditionFailure("decoder failure must hold")}catch{checks+=1}
   check(decodeAPI.posts==1 && decodeAPI.checksDrift==0 && OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(decodeContext) != nil,"decoder failure holds receipt without QC fallback or another POST")
   ClipFrames.answerNoFrames=false;PendingReelRequest.forget(decodeContext)
-  let (invalidContext,invalidAPI,invalidDir)=setup();invalidAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))];UIImage.rejectSavedJPEG=true
-  do{_ = try await generate(invalidContext,invalidAPI,invalidDir);preconditionFailure("invalid saved image must hold")}catch{checks+=1}
-  check(OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(invalidContext) != nil,"unreadable saved JPEG never reaches the local renderer")
-  UIImage.rejectSavedJPEG=false;PendingReelRequest.forget(invalidContext)
-  let (shapeContext,shapeAPI,shapeDir)=setup();shapeAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))];UIImage.savedSize = CGSize(width:0,height:0)
-  do{_ = try await generate(shapeContext,shapeAPI,shapeDir);preconditionFailure("invalid saved image shape must hold")}catch{checks+=1}
-  check(OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(shapeContext) != nil,"invalid source geometry never reaches local renderer")
-  PendingReelRequest.forget(shapeContext)
   let (qcContext,qcAPI,qcDir)=setup();let qcFence=QualityFence();qcAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))];qcAPI.onDrift={qcFence.stale=true}
   do{_ = try await generate(qcContext,qcAPI,qcDir,guardCurrent:{if qcFence.stale{throw CancellationError()}});preconditionFailure("identity switch during QC must stop")}catch{checks+=1}
-  check(OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(qcContext) != nil,"stale QC response never enters local fallback")
+  check(OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(qcContext) != nil && PendingReelClips.load(for:qcContext.listingID)==nil,"a stale QC response retains no clip and keeps the receipt")
   PendingReelRequest.forget(qcContext)
-  let (renderContext,renderAPI,renderDir)=setup();let renderFence=QualityFence();renderAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))];OriginalPhotoMotion.onRender={renderFence.stale=true}
-  let renderPending=PendingReelRequest(context:renderContext,photoNumber:1,job:renderAPI.job,sourceJPEGBase64:jpeg.base64EncodedString(),sourceSpaceType:"real_estate",qualityAttempt:1);try renderPending.save()
-  do{_ = try await ReelReceiptHarness.retrieveClip(job:renderPending.job,pending:renderPending,api:renderAPI,into:renderDir,index:0,requireCurrent:{if renderFence.stale{throw CancellationError()}});preconditionFailure("post-render identity change must stop")}catch{checks+=1}
-  check(OriginalPhotoMotion.sources.count==1 && PendingReelRequest.load(renderContext) != nil && PendingReelClips.load(for:renderContext.listingID)==nil,"stale local render keeps receipt and never durably accepts clip")
-  PendingReelRequest.forget(renderContext)
   let (diskContext,diskAPI,diskDir)=setup();diskAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))]
   let diskPark=PendingReelClips.directory(for:diskContext.listingID)
   diskAPI.beforeReply={try FileManager.default.createDirectory(at:diskPark.deletingLastPathComponent(),withIntermediateDirectories:true);try Data("retention blocker".utf8).write(to:diskPark)}
-  do{_ = try await generate(diskContext,diskAPI,diskDir);preconditionFailure("local fallback retention failure must surface")}catch{checks+=1}
-  check(diskAPI.posts==1 && OriginalPhotoMotion.sources.count==1 && PendingReelRequest.load(diskContext)?.job.requestId==diskAPI.job.requestId,"local fallback disk failure preserves its accepted receipt")
-  check(FileManager.default.fileExists(atPath:diskDir.appendingPathComponent("clip-photo-motion-0.mp4").path),"retention failure preserves the only local original-motion copy")
+  do{_ = try await generate(diskContext,diskAPI,diskDir);preconditionFailure("retention failure must surface")}catch{checks+=1}
+  check(diskAPI.posts==1 && OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(diskContext)?.job.requestId==diskAPI.job.requestId,"local fallback disk failure preserves its accepted receipt")
+  check(FileManager.default.fileExists(atPath:diskDir.appendingPathComponent("clip-0.mp4").path),"retention failure preserves the only copy of the finished clip")
   try FileManager.default.removeItem(at:diskPark);PendingReelRequest.forget(diskContext)
+  // Clips already saved as original-photo motion by an earlier build keep their label.
+  let (labelContext,_,labelDir)=setup()
+  let rawFirst=labelDir.appendingPathComponent("clip-photo-motion-0.mp4");try OriginalPhotoMotion.bytes.write(to:rawFirst)
+  let retained=try ReelReceiptHarness.retainRecoveredClip(rawFirst,for:labelContext.listingID)
+  let retainedBytes=try Data(contentsOf:retained)
+  check(retainedBytes==OriginalPhotoMotion.bytes && OriginalPhotoMotion.isClip(retained),"durable retention preserves original-motion bytes and label")
+  check(PendingReelClips.load(for:labelContext.listingID)?.clipURLs==[retained],"original fallback is addressable through the durable manifest")
+  let rawLocal=labelDir.appendingPathComponent("clip-photo-motion-next.mp4");try OriginalPhotoMotion.bytes.write(to:rawLocal)
+  ReelReceiptHarness.parkClips([retained,rawLocal],for:labelContext.listingID,tmpDir:labelDir)
+  let parked=PendingReelClips.load(for:labelContext.listingID)!.clipURLs
+  check(parked.count==2 && parked.allSatisfy(OriginalPhotoMotion.isClip),"batch parking preserves original-motion labels for every retained copy")
   OriginalPhotoMotion.reset();ReelPollClock.reset();return checks
  }
 
@@ -636,44 +596,36 @@ final class ClosedVideoProtocol:URLProtocol {
    let dir=root.appendingPathComponent("choice-"+UUID().uuidString);try! FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
    return(request,api,dir)
   }
-  let (original,originalAPI,originalDir)=setup();originalAPI.driftOutcomes=[.success(verdict(.fail,"retry"))]
-  let local=try await ReelReceiptHarness.resolveSavedQualityRetry(original,choice:.originalPhoto,api:originalAPI,into:originalDir,requireCurrent:{try Task.checkCancellation()})
-  check(originalAPI.posts==0 && originalAPI.polls==1,"explicit original choice sends no generation POST")
-  check(OriginalPhotoMotion.sources==[source],"explicit original choice renders exact saved JPEG")
-  check(PendingReelRequest.load(original.context)==nil && PendingReelClips.load(for:original.context.listingID)?.clipURLs==[local],"explicit original choice retains before acknowledgement")
-  let (retry,retryAPI,retryDir)=setup();retryAPI.driftOutcomes=[.success(verdict(.fail,"retry")),.success(verdict(.pass,"publish",true))]
-  let ai=try await ReelReceiptHarness.resolveSavedQualityRetry(retry,choice:.saferRetry,api:retryAPI,into:retryDir,requireCurrent:{try Task.checkCancellation()})
-  check(retryAPI.posts==1 && retryAPI.submissions[0].motion=="push_in" && retryAPI.submissions[0].index==0,"explicit retry sends one safer POST at original position")
-  check(retryAPI.submissions[0].image==source.base64EncodedString() && retryAPI.submissions[0].source==source.base64EncodedString(),"explicit safer retry uses exact saved JPEG")
-  check(retryAPI.submissions[0].attempt==1 && retryAPI.driftRequests.map(\.attempt)==[0,1],"explicit safer retry persists attempt one")
-  check(PendingReelRequest.load(retry.context)==nil && PendingReelClips.load(for:retry.context.listingID)?.clipURLs==[ai],"explicit accepted retry retains before acknowledgement")
-  for rejected in [verdict(.unavailable,"retry"),verdict(.fail,"hold"),verdict(.pass,"retry")] {
-   let (request,api,dir)=setup();api.driftOutcomes=[.success(rejected)]
-   do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(request,choice:.originalPhoto,api:api,into:dir,requireCurrent:{try Task.checkCancellation()});preconditionFailure("unavailable recovery must remain held")}catch{checks+=1}
-   check(api.posts==0 && OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(request.context) != nil,"unavailable recovery never opens either explicit choice")
+  // Owner decision, 12 Nov 2026: a saved request whose first check asked for a
+  // retry is no longer held for a choice. Either choice recovers the AI clip
+  // that request already paid for: no new generation and no still-photo clip.
+  for advisory in [verdict(.fail,"retry"),verdict(.fail,"refuse"),verdict(.unavailable,"retry"),verdict(.fail,"hold"),verdict(.pass,"publish",true)] {
+   let (request,api,dir)=setup();api.driftOutcomes=[.success(advisory)]
+   let used=try await ReelReceiptHarness.resolveSavedQualityRetry(request,choice:.originalPhoto,api:api,into:dir,requireCurrent:{try Task.checkCancellation()})
+   check(api.posts==0 && api.polls==1 && OriginalPhotoMotion.sources.isEmpty && !OriginalPhotoMotion.isClip(used),"choosing the photo recovers the saved AI clip with no generation and no still photo")
+   check(PendingReelRequest.load(request.context)==nil && PendingReelClips.load(for:request.context.listingID)?.clipURLs==[used],"the recovered clip is retained before acknowledgement")
+   let (again,againAPI,againDir)=setup();againAPI.driftOutcomes=[.success(advisory)]
+   let reused=try await ReelReceiptHarness.resolveSavedQualityRetry(again,choice:.saferRetry,api:againAPI,into:againDir,requireCurrent:{try Task.checkCancellation()})
+   check(againAPI.posts==0 && againAPI.polls==1 && OriginalPhotoMotion.sources.isEmpty && !OriginalPhotoMotion.isClip(reused),"choosing a safer retry recovers the saved AI clip with no generation")
+   check(PendingReelRequest.load(again.context)==nil && PendingReelClips.load(for:again.context.listingID)?.clipURLs==[reused],"the recovered clip is retained before acknowledgement")
   }
-  for error:Error in [APIError.server(status:401,code:"auth",message:"Synthetic"),APIError.server(status:402,code:"quota",message:"Synthetic"),URLError(.networkConnectionLost),CancellationError()] {
+  for error:Error in [APIError.server(status:401,code:"auth",message:"Synthetic"),APIError.server(status:402,code:"quota",message:"Synthetic"),URLError(.networkConnectionLost)] {
    let(request,api,dir)=setup();api.driftOutcomes=[.failure(error)]
-   do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(request,choice:.saferRetry,api:api,into:dir,requireCurrent:{try Task.checkCancellation()});preconditionFailure("failed cached recovery cannot retry")}catch{checks+=1}
-   check(api.posts==0 && OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(request.context) != nil,"auth quota network cancellation preserve choice receipt")
+   let used=try await ReelReceiptHarness.resolveSavedQualityRetry(request,choice:.saferRetry,api:api,into:dir,requireCurrent:{try Task.checkCancellation()})
+   check(api.posts==0 && OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(request.context)==nil && PendingReelClips.load(for:request.context.listingID)?.clipURLs==[used],"a check that could not run never holds a saved request")
   }
+  let(cancelled,cancelledAPI,cancelledDir)=setup();cancelledAPI.driftOutcomes=[.failure(CancellationError())]
+  do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(cancelled,choice:.saferRetry,api:cancelledAPI,into:cancelledDir,requireCurrent:{try Task.checkCancellation()});preconditionFailure("a cancelled recovery must stop without a new generation")}catch{checks+=1}
+  check(cancelledAPI.posts==0 && OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(cancelled.context) != nil,"a cancelled recovery preserves the saved receipt")
   let(stale,staleAPI,staleDir)=setup();let staleFence=QualityFence();staleAPI.driftOutcomes=[.success(verdict(.fail,"retry"))];staleAPI.onDrift={staleFence.stale=true}
   do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(stale,choice:.saferRetry,api:staleAPI,into:staleDir,requireCurrent:{if staleFence.stale{throw CancellationError()}});preconditionFailure("stale cached verdict cannot dispatch")}catch{checks+=1}
   check(staleAPI.posts==0 && OriginalPhotoMotion.sources.isEmpty && PendingReelRequest.load(stale.context) != nil,"identity change during cached QC sends no new generation")
   let(disk,diskAPI,diskDir)=setup();diskAPI.driftOutcomes=[.success(verdict(.fail,"retry"))]
   let diskPark=PendingReelClips.directory(for:disk.context.listingID)
-  OriginalPhotoMotion.onRender={try FileManager.default.createDirectory(at:diskPark.deletingLastPathComponent(),withIntermediateDirectories:true);try Data("blocker".utf8).write(to:diskPark)}
+  diskAPI.onDrift={try! FileManager.default.createDirectory(at:diskPark.deletingLastPathComponent(),withIntermediateDirectories:true);try! Data("blocker".utf8).write(to:diskPark)}
   do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(disk,choice:.originalPhoto,api:diskAPI,into:diskDir,requireCurrent:{try Task.checkCancellation()});preconditionFailure("explicit original retention failure must hold")}catch{checks+=1}
   check(PendingReelRequest.load(disk.context)?.job.requestId==disk.job.requestId && diskAPI.posts==0,"explicit original disk failure keeps its paid receipt")
-  let(unknown,unknownAPI,unknownDir)=setup();unknownAPI.driftOutcomes=[.success(verdict(.fail,"retry"))];unknownAPI.throwSubmit=true
-  do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(unknown,choice:.saferRetry,api:unknownAPI,into:unknownDir,requireCurrent:{try Task.checkCancellation()});preconditionFailure("unknown safer dispatch stays held")}catch{checks+=1}
-  check(unknownAPI.posts==1 && PendingReelRequest.load(unknown.context)?.submissionUnconfirmed==true && PendingReelRequest.load(unknown.context)?.qualityAttempt==1,"unknown safer dispatch preserves attempt-one marker")
-  unknownAPI.throwSubmit=false
-  do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(unknown,choice:.saferRetry,api:unknownAPI,into:unknownDir,requireCurrent:{try Task.checkCancellation()});preconditionFailure("old receipt cannot duplicate new unknown retry")}catch{checks+=1}
-  check(unknownAPI.posts==1,"stale original choice cannot submit twice")
-  let(denied,deniedAPI,deniedDir)=setup();deniedAPI.driftOutcomes=[.success(verdict(.fail,"retry"))];deniedAPI.refuseSubmit=true
-  do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(denied,choice:.saferRetry,api:deniedAPI,into:deniedDir,requireCurrent:{try Task.checkCancellation()});preconditionFailure("definitive safer refusal surfaces")}catch{checks+=1}
-  check(PendingReelRequest.load(denied.context)?.job.requestId==denied.job.requestId && PendingReelRequest.load(denied.context)?.qualityAttempt==0,"definitive safer refusal restores exact rejected receipt without gap")
+  try FileManager.default.removeItem(at:diskPark)
   let(legacy,legacyAPI,legacyDir)=setup();let old=PendingReelRequest(context:legacy.context,photoNumber:1,job:legacy.job,sourceJPEGBase64:source.base64EncodedString(),sourceSpaceType:"real_estate")
   try old.save()
   do{_ = try await ReelReceiptHarness.resolveSavedQualityRetry(old,choice:.saferRetry,api:legacyAPI,into:legacyDir,requireCurrent:{try Task.checkCancellation()});preconditionFailure("legacy attempt cannot infer a first retry")}catch{checks+=1}
