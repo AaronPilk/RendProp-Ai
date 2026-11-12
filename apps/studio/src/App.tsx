@@ -1406,7 +1406,7 @@ export default function App({ servicesFactory }: {
             </div>
           )}
           <footer className="workspace-footer">
-            <span>Made for the spaces worth sharing. <a href="/THIRD-PARTY-NOTICES.txt" target="_blank" rel="noreferrer">Third-party notices</a></span>
+            <span>Made for the spaces worth sharing.</span>
             <span>
               Rendprop Studio <i>✦</i>
             </span>

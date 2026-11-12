@@ -1,7 +1,4 @@
 import {decodeMusic} from "./music";
-import {beginExportAudio, ExportAudioBootstrapSetupError,
-  observeBootstrapSetup, type ExportAudioBootstrap} from "./export-audio-bootstrap";
-import {isEncoderUnsupportedError} from "./encoder-bridge";
 import {musicGainAt} from "./finishing";
 import {OverlayPainter} from "./overlay-renderer";
 import {AudioStartupClock, CaptureCadenceClock, RecordingClock} from "./recording-clock";
@@ -45,14 +42,13 @@ export type LocalExport = {
   music?: boolean;
 };
 
-export function exportFormats(options: {recorderOnly?: boolean} = {}): ExportFormat[] {
-  const recorder = typeof MediaRecorder !== "undefined" &&
-    typeof HTMLCanvasElement !== "undefined" &&
-    typeof HTMLCanvasElement.prototype.captureStream === "function";
-  const explicitFrames = !options.recorderOnly && typeof Worker === "function" &&
-    typeof VideoEncoder === "function" && typeof VideoFrame === "function" &&
-    typeof HTMLCanvasElement !== "undefined";
-  if (!recorder && !explicitFrames) return [];
+export function exportFormats(): ExportFormat[] {
+  if (
+    typeof MediaRecorder === "undefined" ||
+    typeof HTMLCanvasElement === "undefined" ||
+    typeof HTMLCanvasElement.prototype.captureStream !== "function"
+  )
+    return [];
   const candidates: ExportFormat[] = [
     // Generic video/mp4 can select Opus audio in Chromium. Request H.264/AAC explicitly
     // so the MP4 option means the familiar format accepted by common sharing destinations.
@@ -69,8 +65,7 @@ export function exportFormats(options: {recorderOnly?: boolean} = {}): ExportFor
   return candidates.filter((format) => {
     if (
       extensions.has(format.extension) ||
-      !(format.extension === "mp4" && explicitFrames) &&
-      !(recorder && MediaRecorder.isTypeSupported(format.mime))
+      !MediaRecorder.isTypeSupported(format.mime)
     )
       return false;
     extensions.add(format.extension);
@@ -165,8 +160,7 @@ export async function exportLocalVideo(options: {
         `Reselect the original file for ${clip.source.name} before exporting.`,
       );
   }
-  if (![...exportFormats(), ...exportFormats({recorderOnly: true})]
-    .some((candidate) => candidate.mime === format.mime))
+  if (!exportFormats().some((candidate) => candidate.mime === format.mime))
     throw new Error("This export format is unavailable in this browser.");
   if (draft.narration && (!options.narrationBlob?.size || options.narrationBlob.size > EDIT_LIMITS.narrationBytes)) throw new Error("Restore the selected narration before exporting.");
   if (draft.music && (!options.musicBlob?.size || options.musicBlob.size !== draft.music.source.size)) throw new Error("Restore the selected music before exporting.");
@@ -179,41 +173,6 @@ export async function exportLocalVideo(options: {
   assertCurrentRevision(draft, currentDraft(), signal);
   if (document.hidden)
     throw new Error("Keep this tab visible while exporting.");
-
-  // The Web Audio sink is opened in the original button gesture, before the
-  // worker's asynchronous codec admission. If the exact codec is unsupported,
-  // the legacy recorder can use this same owned context without a late resume.
-  let prestarted: ExportAudioBootstrap | undefined;
-  try {
-    const explicitFrames = format.extension === "mp4" &&
-      typeof Worker === "function" && typeof VideoEncoder === "function" &&
-      typeof VideoFrame === "function" &&
-      typeof HTMLCanvasElement !== "undefined";
-    if (explicitFrames) {
-      if (withAudio) {
-        try {prestarted = beginExportAudio();}
-        catch (error) {
-          if (error instanceof ExportAudioBootstrapSetupError)
-            return await observeBootstrapSetup(error);
-          throw error;
-        }
-      }
-      try {
-        // Audio is already begun in this gesture. Load the explicit exporter
-        // only for this route so recorder/proxy imports stay browser-agnostic.
-        const {exportWebCodecs} = await import("./export-webcodecs");
-        return await exportWebCodecs({...options, begunAudio: prestarted});
-      } catch (error) {
-        // Only a before-content codec capability refusal may choose the
-        // recorder. Abort, stale edits, media failures and cadence failures
-        // remain terminal and never silently change the export engine.
-        if (!isEncoderUnsupportedError(error)) throw error;
-        if (typeof MediaRecorder === "undefined" ||
-            typeof HTMLCanvasElement.prototype.captureStream !== "function" ||
-            !MediaRecorder.isTypeSupported(format.mime))
-          throw error;
-      }
-    }
 
   const controller = new AbortController();
   const forwardAbort = () => controller.abort(signal.reason);
@@ -317,22 +276,16 @@ export async function exportLocalVideo(options: {
   try {
     // Construct and resume during the original button gesture, before decoding awaits.
     if (withAudio) {
-      if (prestarted) {
-        audio = prestarted.context;
-        destination = prestarted.sink;
-        await awaitMediaOperation(prestarted.resumeStarted, renderSignal, "Starting audio");
-      } else {
-        audio = new AudioContext({sampleRate: 48000});
-        destination = audio.createMediaStreamDestination();
-        // Keep the destination clock running through photos and decoder gaps.
-        // Without a live source, Chromium omits leading silence and shifts the
-        // first video's sound to t=0 in the recorded file.
-        silentSource = audio.createConstantSource();
-        silentSource.offset.value = 0;
-        silentSource.connect(destination);
-        silentSource.start();
-        await awaitMediaOperation(audio.resume(), renderSignal, "Starting audio");
-      }
+      audio = new AudioContext({sampleRate: 48000});
+      destination = audio.createMediaStreamDestination();
+      // Keep the destination clock running through photos and decoder gaps.
+      // Without a live source, Chromium omits leading silence and shifts the
+      // first video's sound to t=0 in the recorded file.
+      silentSource = audio.createConstantSource();
+      silentSource.offset.value = 0;
+      silentSource.connect(destination);
+      silentSource.start();
+      await awaitMediaOperation(audio.resume(), renderSignal, "Starting audio");
       if (audio.state !== "running")
         throw new Error(
           "The browser blocked original audio. Press Export again, or explicitly choose Mute audio.",
@@ -701,7 +654,7 @@ export async function exportLocalVideo(options: {
     destination?.stream.getTracks().forEach((track) => track.stop());
     silentSource?.stop();
     silentSource?.disconnect();
-    if (audio && !prestarted && audio.state !== "closed")
+    if (audio && audio.state !== "closed")
       await Promise.race([
         audio.close().catch(() => undefined),
         new Promise((resolve) => setTimeout(resolve, 2000)),
@@ -709,8 +662,5 @@ export async function exportLocalVideo(options: {
     canvas.width = 0;
     canvas.height = 0;
     chunks.length = 0;
-  }
-  } finally {
-    await prestarted?.close();
   }
 }

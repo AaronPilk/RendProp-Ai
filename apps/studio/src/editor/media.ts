@@ -38,9 +38,6 @@ export function awaitMediaOperation<T>(
   description: string,
   timeoutMs = 15_000,
 ): Promise<T> {
-  // The caller may already have started a native operation before cancellation
-  // reaches this wrapper. Observe its rejection even when abort wins immediately.
-  if (signal.aborted) void operation.catch(() => undefined);
   throwIfAborted(signal);
   return new Promise((resolve, reject) => {
     const cleanup = () => {

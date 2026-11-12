@@ -8,13 +8,11 @@ import { execFileSync } from "node:child_process";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
-import {exportSourceHashes} from "./export-source-binding.mjs";
 const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
 assert.equal(args.length, 0, "Unknown conversation test option");
 
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-conversation-")), dist = join(artifacts, "dist");
-const sourcePaths=["tests/conversation-browser.mjs","tests/conversation-fixture.tsx"];
-const receipt = {sourceHashes:await exportSourceHashes(root,sourcePaths), proof: "Actual VideoEditor conversation UI, original synthetic media, real canvas preview and MP4 encoding. Only injected deferred text-plan and prompt-enhancement fixtures; no live account, model, generation or external requests.", audioOutput, checks: [], externalRequests: [], errors: [], status: "running" };
+const receipt = { proof: "Actual VideoEditor conversation UI, original synthetic media, real canvas preview and MP4 encoding. Only injected deferred text-plan and prompt-enhancement fixtures; no live account, model, generation or external requests.", audioOutput, checks: [], externalRequests: [], errors: [], status: "running" };
 let browser, server, page;
 try {
   await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/conversation-fixture.html") } } });
@@ -233,8 +231,6 @@ try {
   if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {});
   throw error;
 } finally {
-  receipt.sourceBoundAtEnd=JSON.stringify(await exportSourceHashes(root,sourcePaths))===JSON.stringify(receipt.sourceHashes);
-  if(!receipt.sourceBoundAtEnd){receipt.status="failed";process.exitCode=1;}
   await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   await browser?.close(); await new Promise(done => server ? server.close(done) : done());
   console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));

@@ -14,12 +14,11 @@ import {startNativeTraceObserver, NATIVE_TRACE_EXPORT_LIMITS} from "./native-tra
 import {startNodeSchedulingProbe, startPageSchedulingProbe, stopPageSchedulingProbe} from "./scheduling-probe.mjs";
 import {collectRunnerFacts, quickLoad} from "./runner-facts.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
-import {exportSourceHashes} from "./export-source-binding.mjs";
 const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
 assert.equal(args.length, 0, "Unknown finishing test option");
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
-const sourcePaths = ["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs", "tests/scheduling-probe.mjs", "tests/runner-facts.mjs"];
-const sourceHashes = await exportSourceHashes(root, sourcePaths);
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs", "tests/scheduling-probe.mjs", "tests/runner-facts.mjs",
+  ...["export", "recording-clock", "media", "finishing", "music"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
 const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", sourceHashes, audioOutput, runnerFacts: collectRunnerFacts(), checks: [], errors: [], externalRequests: [], status: "running"};
 let browser, server, page;
 // Retain the actual clock guard's cause without changing its readings,
@@ -343,4 +342,4 @@ try {
   }
   throw error;
 }
-finally{if(browser)await browser.close();if(server)await new Promise(done=>server.close(done));receipt.sourceBoundAtEnd=JSON.stringify(await exportSourceHashes(root,sourcePaths))===JSON.stringify(sourceHashes);if(!receipt.sourceBoundAtEnd){receipt.status="failed";process.exitCode=1;}await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));console.log(JSON.stringify({status:receipt.status,artifacts,checks:receipt.checks}));}
+finally{if(browser)await browser.close();if(server)await new Promise(done=>server.close(done));await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));console.log(JSON.stringify({status:receipt.status,artifacts,checks:receipt.checks}));}

@@ -12,8 +12,6 @@ import { NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
 import {testExportDiagnosticsOption, startExportDiagnostics} from "./export-diagnostics.mjs";
 import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
-import {exportSourceHashes} from "./export-source-binding.mjs";
-import {installExportBackendObserver, exportBackendSnapshot, simulatedUnsupportedEncoderPlugin} from "./export-backend-observer.mjs";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
 const {args: audioArgs, audioOutput} = testAudioOutputOption(process.argv.slice(2));
@@ -32,8 +30,8 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
-const sourceHashes = await exportSourceHashes(root, ["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/export-backend-observer.mjs"]);
-const receipt = { coverage: "Legacy recorder path under a test-only simulated unsupported worker capability response; no worker media coverage claim", capabilityOverride: "Simulated false capability response, not evidence actual browser lacks support", sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", ...["export", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const receipt = { sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -227,7 +225,7 @@ document.querySelector("#run").onclick=async()=>{
     assert(code.includes(seam), "Cadence control must remove only the frame interval ceiling");
     return code.replace(seam, "remainingMs");
   } };
-  for (const variant of variants) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", worker: {plugins: () => [simulatedUnsupportedEncoderPlugin()]}, plugins: [clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
+  for (const variant of variants) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", plugins: [clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
   server = createServer(async (request, response) => {
     const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`);
     if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end();
@@ -282,7 +280,6 @@ document.querySelector("#run").onclick=async()=>{
     receipt.browserIsolation.opened.push(session);
     const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: true });
     await installTestAudioOutput(context, audioOutput);
-    await installExportBackendObserver(context);
     await context.route("**/*", route => { const url = new URL(route.request().url()); if (url.origin === origin || ["blob:", "data:"].includes(url.protocol)) return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
     const page = await context.newPage(); page.on("pageerror", error => receipt.errors.push(error.message)); await page.goto(`${origin}/${variant}/fixture.html`);
     await verifyTestAudioOutput(page, audioOutput);
@@ -331,10 +328,7 @@ document.querySelector("#run").onclick=async()=>{
           tracks: window.fixture.tracks.map(track => track.readyState) }));
         attempt = { ...attempt, variant, narrated, audioOutput: await verifyTestAudioOutput(page, audioOutput), diagnostics: observers.facts,
           schedulingProbe: observers.facts.schedulingProbe ?? {status: "disabled"}, ...(observers.facts.nativeTrace ? {nativeTrace: observers.facts.nativeTrace} : {}) };
-        attempt.backend = await exportBackendSnapshot(page);
         receipt.attempts.push(attempt); await persist();
-        assert(attempt.backend.unsupportedReplies > 0 && attempt.backend.recorderConstructions === 1, "Legacy controls must execute the simulated-unsupported recorder fallback");
-        assert.equal(attempt.backend.postedVideoInputs, 0); assert.equal(attempt.backend.postedAudioInputs, 0);
       }
       if (variant === "baseline" && attempt.error) {
         if (attempt.error === encodedCadenceStall) {

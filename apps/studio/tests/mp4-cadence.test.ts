@@ -9,9 +9,9 @@ const box = (type: string, ...parts: Buffer[]) => {
 };
 const full = (version: number, flags: number, ...parts: Buffer[]) =>
   Buffer.concat([Buffer.from([version, flags >> 16 & 255, flags >> 8 & 255, flags & 255]), ...parts]);
-function fixture(durations: number[], timescale = 30_000): Blob {
+function fixture(durations: number[]): Blob {
   const tkhd = box("tkhd", full(0, 3, Buffer.alloc(8), u32(1), Buffer.alloc(8)));
-  const mdhd = box("mdhd", full(0, 0, Buffer.alloc(8), u32(timescale), u32(0)));
+  const mdhd = box("mdhd", full(0, 0, Buffer.alloc(8), u32(30_000), u32(0)));
   const hdlr = box("hdlr", full(0, 0, u32(0), Buffer.from("vide"), Buffer.alloc(12)));
   const trak = box("trak", tkhd, box("mdia", mdhd, hdlr));
   const trex = box("trex", full(0, 0, u32(1), u32(1), u32(0), u32(0), u32(0)));
@@ -23,9 +23,9 @@ function fixture(durations: number[], timescale = 30_000): Blob {
   return new Blob([box("ftyp", Buffer.from("isom")), moov,
     box("moof", box("traf", tfhd, tfdt, trun)), box("mdat", Buffer.from([0]))], {type: "video/mp4"});
 }
-function flatFixture(durations: number[], compositionOffsets?: number[], timescale = 30_000): Blob {
+function flatFixture(durations: number[], compositionOffsets?: number[]): Blob {
   const tkhd = box("tkhd", full(0, 3, Buffer.alloc(8), u32(1), Buffer.alloc(8)));
-  const mdhd = box("mdhd", full(0, 0, Buffer.alloc(8), u32(timescale), u32(0)));
+  const mdhd = box("mdhd", full(0, 0, Buffer.alloc(8), u32(30_000), u32(0)));
   const hdlr = box("hdlr", full(0, 0, u32(0), Buffer.from("vide"), Buffer.alloc(12)));
   const stts = box("stts", full(0, 0, u32(durations.length),
     ...durations.flatMap(duration => [u32(1), u32(duration)])));
@@ -64,56 +64,6 @@ test("nonfragmented Safari-style sample table verifies healthy frame cadence", a
     [{startSeconds: .5, durationSeconds: .28}]);
   await verifyMp4FrameCadence(flatFixture(Array.from({length: 90}, () => 1000),
     Array.from({length: 90}, () => 0)), [{startSeconds: .5, durationSeconds: .28}]);
-});
-const fractionalPlan = {frames: 68, durationMicroseconds: 2_244_615};
-const fractionalDurations = [...Array.from({length: 67}, () => 1920), 650];
-async function assertPlanRefusal(blob: Blob, rule: string, index: number) {
-  await assert.rejects(verifyMp4FrameCadence(blob, [], undefined, fractionalPlan), error => {
-    assert(error instanceof Error);
-    assert.match(error.message, /did not match the requested frame timing.*No download was created/);
-    assert.deepEqual(error.cause, {kind: "encoded-frame-plan", rule, frameIndex: index});
-    return true;
-  });
-}
-test("explicit frame plan accepts 68 distinct 30 fps starts and an 11.285 ms final MP4 sample", async () => {
-  await verifyMp4FrameCadence(fixture(fractionalDurations, 57_600), [], undefined, fractionalPlan);
-  await verifyMp4FrameCadence(flatFixture(fractionalDurations, undefined, 57_600), [], undefined, fractionalPlan);
-});
-test("explicit plan refuses the observed nonfragmented zero-duration final sample", async () => {
-  const zeroTail = [...Array.from({length: 67}, () => 1), 0];
-  await assertPlanRefusal(flatFixture(zeroTail, undefined, 30), "frame-count", 67);
-  await assertPlanRefusal(fixture(zeroTail, 30), "frame-count", 67);
-  // The historical recorder verifier still ignores zero-duration duplicate
-  // samples when no explicit WebCodecs plan is provided.
-  await verifyMp4FrameCadence(flatFixture(zeroTail, undefined, 30), []);
-});
-test("a legal one-microsecond tail is accepted only when MP4 timing preserves its positive sample", async () => {
-  const durationMicroseconds = Math.round(67 * 1_000_000 / 30) + 1;
-  const plan = {frames: 68, durationMicroseconds};
-  const precise = [...Array.from({length: 67}, (_, index) =>
-    Math.round((index + 1) * 1_000_000 / 30) - Math.round(index * 1_000_000 / 30)), 1];
-  await verifyMp4FrameCadence(flatFixture(precise, undefined, 1_000_000), [], undefined, plan);
-  await verifyMp4FrameCadence(fixture(precise, 1_000_000), [], undefined, plan);
-  const roundedAway = [...Array.from({length: 67}, () => 1920), 0];
-  await assert.rejects(verifyMp4FrameCadence(flatFixture(roundedAway, undefined, 57_600),
-    [], undefined, plan), error => {
-    assert(error instanceof Error);
-    assert.deepEqual(error.cause, {kind: "encoded-frame-plan", rule: "frame-count", frameIndex: 67});
-    return true;
-  });
-});
-test("explicit plan refuses a missing frame, a shifted timestamp and a full-length final sample", async () => {
-  await assertPlanRefusal(flatFixture(fractionalDurations.slice(0, -1), undefined, 57_600), "frame-count", 67);
-  const shifted = Array.from({length: 68}, (_, index) => index === 20 ? 80 : 0);
-  await assertPlanRefusal(flatFixture(fractionalDurations, shifted, 57_600), "frame-start", 20);
-  await assertPlanRefusal(flatFixture([...fractionalDurations.slice(0, -1), 1920], undefined, 57_600),
-    "frame-end", 67);
-});
-test("invalid explicit plan fails before accepting encoded MP4 timing", async () => {
-  for (const plan of [{frames: 68, durationMicroseconds: Number.POSITIVE_INFINITY},
-    {frames: 67, durationMicroseconds: 2_244_615}, {frames: 5401, durationMicroseconds: 180_000_000}])
-    await assert.rejects(verifyMp4FrameCadence(flatFixture(fractionalDurations, undefined, 57_600),
-      [], undefined, plan), /requested MP4 frame plan is invalid/);
 });
 test("nonfragmented sample table rejects a 552 ms encoded gap", async () => {
   const durations = [...Array.from({length: 15}, () => 1000), 16_575,

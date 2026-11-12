@@ -37,9 +37,7 @@ export async function hashFileInChunks(file: Blob, signal: AbortSignal, progress
 }
 export async function createEditingCopy(file: File, signal: AbortSignal, onProgress: (stage: string, fraction: number) => void): Promise<EditingCopy> {
   validateProxyInput(file); throwIfAborted(signal);
-  // Editing copies still use MediaRecorder. An explicit-frame Studio MP4
-  // capability cannot stand in for recorder support on this separate path.
-  const format = exportFormats({recorderOnly: true}).find(item => item.extension === "mp4");
+  const format = exportFormats().find(item => item.extension === "mp4");
   if (!format || typeof AudioContext === "undefined") throw new Error("This browser cannot make H.264/AAC editing copies. Use Chrome on your Mac, or export a 720p Most Compatible video from Photos.");
   if (document.hidden) throw new Error("Keep this tab visible while preparing an editing copy.");
   const controller = new AbortController(), forward = () => controller.abort(signal.reason);

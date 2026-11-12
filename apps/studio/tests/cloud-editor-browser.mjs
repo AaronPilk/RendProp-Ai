@@ -12,12 +12,11 @@ import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
 import { startNativeTraceObserver, summarizeRecordingSilence, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
 import { startNodeSchedulingProbe } from "./scheduling-probe.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
-import {exportSourceHashes} from "./export-source-binding.mjs";
 const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
 assert.equal(args.length, 0, "Unknown cloud editor test option");
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
 const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs",...['export','recording-clock','mp4-cadence','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
-const sourceHashes=()=>exportSourceHashes(root,sourcePaths);
+const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
 const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), audioOutput, runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
 const timingDevices=[];
@@ -103,8 +102,8 @@ export class RecordingClock extends ShippingRecordingClock {
     const seam='export async function verifyMp4FrameCadence(';
     assert.equal(code.split(seam).length,2,"Actual encoded-cadence observation anchor missing");
     return code.replace(seam,'async function shippingVerifyMp4FrameCadence(')+`
-export async function verifyMp4FrameCadence(blob: Blob, transitions: EncodedTransition[], signal?: AbortSignal, expectedPlan?: ExpectedMp4FramePlan): Promise<void> {
-  try { await shippingVerifyMp4FrameCadence(blob, transitions, signal, expectedPlan); }
+export async function verifyMp4FrameCadence(blob: Blob, transitions: EncodedTransition[], signal?: AbortSignal): Promise<void> {
+  try { await shippingVerifyMp4FrameCadence(blob, transitions, signal); }
   catch(error) {
     if ((error as Error).message === "Encoded video frames were skipped. No download was created. Close other busy tabs and retry.") {
       const observations = (window as any).exportCadenceRefusals ??= [];
@@ -448,4 +447,4 @@ finally { await captureMediaTiming();
   // Render silence inside each recording window of the traced device, edges
   // included. Evidence only; computed after the verdict above is final.
   if (receipt.nativeTrace?.renderGapSummary) try { receipt.renderSilenceInRecordings = summarizeRecordingSilence(receipt.nativeTrace, receipt.mediaTiming.find(entry => entry.id === receipt.nativeTraceDeviceId)); } catch (error) { receipt.renderSilenceInRecordings = {issue: error?.name ?? "Error"}; }
-  await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); if(!receipt.sourceBoundAtEnd){receipt.status="failed";process.exitCode=1;} await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
+  await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
