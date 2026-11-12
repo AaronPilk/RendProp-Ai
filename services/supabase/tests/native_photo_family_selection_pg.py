@@ -84,7 +84,7 @@ try:
   assert signature in final_map,'Later migration dropped an owned helper: '+signature
   assert final_map[signature]==(reviewed_target if signature==TARGET else v2_map[signature]),'Later migration changed an owned helper: '+signature
  later=[m.name for m in SCHEMA_MIGRATIONS[SCHEMA_MIGRATIONS.index(NEW)+1:]]
- receipt['owned_helper_authority']={'signatures':OWNED,'later_migrations':later,'later_rewrites_outside_owned':sorted(k for k,v in v2_map.items()if final_map.get(k)!=v),'later_added_outside_owned':sorted(set(final_map)-set(v2_map)),'owned_unchanged':True,'reviewed_owned_rewrite':{'signature':TARGET,'migration':REVIEW.name,'only_reviewed_replacements':True}}
+ receipt['owned_helper_authority']={'signatures':OWNED,'later_migrations':later,'later_rewrites_outside_owned':sorted(k for k,v in v2_map.items()if final_map.get(k)!=v),'later_added_outside_owned':sorted(set(final_map)-set(v2_map)),'owned_unchanged_except_reviewed_rewrite':True,'reviewed_owned_rewrite':{'signature':TARGET,'migration':REVIEW.name,'only_reviewed_replacements':True}}
  assert set(receipt['owned_helper_authority']['later_rewrites_outside_owned'])&set(OWNED)=={TARGET}
  # The introducing migration pins the target's original body, so replaying it after the reviewed
  # rewrite must refuse and change nothing; the rewrite itself replays as a no-op.
