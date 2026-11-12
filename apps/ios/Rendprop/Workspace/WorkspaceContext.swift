@@ -94,11 +94,32 @@ enum WorkspaceContext {
         defaults.string(forKey: "auth.supabase.userID").flatMap(UUID.init(uuidString:))
     }
     static func key(_ owner: UUID) -> String { "workspace.selection.v1." + owner.uuidString.lowercased() }
+    /// `selectedOrgID`, `billingOrgID`, `servingOrgID` and `storagePrefix` are
+    /// read from view bodies and from every request, and each read used to
+    /// decode and re-validate the whole saved directory. A Team owner's
+    /// directory holds one row per agent, so that cost grew with the roster.
+    /// The last validated value is kept for the exact bytes it was decoded
+    /// from: any write to the key changes the bytes and is decoded afresh.
+    private static let readCacheLock = NSLock()
+    private static var readCache: (owner: UUID, bytes: Data, value: Snapshot)?
     static func read(owner: UUID, defaults: UserDefaults = .standard) -> Snapshot? {
-        guard let bytes = defaults.data(forKey: key(owner)), let value = try? JSONDecoder().decode(Snapshot.self, from: bytes),
+        guard let bytes = defaults.data(forKey: key(owner)) else { return nil }
+        let cacheable = defaults === UserDefaults.standard
+        if cacheable {
+            readCacheLock.lock()
+            let hit = readCache
+            readCacheLock.unlock()
+            if let hit, hit.owner == owner, hit.bytes == bytes { return hit.value }
+        }
+        guard let value = try? JSONDecoder().decode(Snapshot.self, from: bytes),
               Set(value.workspaces.map(\.id)).count == value.workspaces.count,
               value.selectedOrgID == nil || value.selected != nil,
               value.directory.map({ $0.checked(actor: owner) != nil && $0.workspaces == value.workspaces && $0.activeOrgID == value.selectedOrgID }) ?? true else { return nil }
+        if cacheable {
+            readCacheLock.lock()
+            readCache = (owner, bytes, value)
+            readCacheLock.unlock()
+        }
         return value
     }
     @discardableResult static func save(_ value: Snapshot, owner: UUID, defaults: UserDefaults = .standard) -> Bool {

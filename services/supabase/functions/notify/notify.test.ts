@@ -22,7 +22,7 @@
 import { assert, assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import * as apns from "./apns.ts";
 import * as email from "./email.ts";
-import { deliverEmail, deliverPush, type DeviceRow, type OutboxRow } from "./deliver.ts";
+import { deliverEmail, deliverPush, emailFallbackRow, pushNeedsEmailFallback, type DeviceRow, type OutboxRow } from "./deliver.ts";
 import { absoluteLink, emailText, render } from "./copy.ts";
 
 const BASE = "https://rendprop.com";
@@ -597,5 +597,29 @@ Deno.test("build 57: deliverPush only pushes to the row's own devices and binds 
     // A userless row cannot be pushed anywhere, whatever devices are offered.
     const userless = await deliverPush(row({ user_id: null }), [device], BASE, fake);
     assertEquals(userless.state, "skipped"); assertEquals(sent.length, 1);
+  } finally { clearSecrets(); }
+});
+
+Deno.test("build 148: an undeliverable push falls back to e-mail, an access refusal does not", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const gone: typeof fetch = () => Promise.resolve(apnsResponse(410, "Unregistered"));
+    // Every token rejected: the inquiry is re-queued as e-mail under a derived key.
+    const dead = await deliverPush(row(), [device], BASE, gone);
+    assertEquals(dead.state, "skipped"); assertEquals(pushNeedsEmailFallback(row(), dead), true);
+    const twin = emailFallbackRow(row());
+    assertEquals(twin.channel, "email"); assertEquals(twin.user_id, row().user_id);
+    assertEquals(twin.category, "lead_received"); assertEquals(twin.dedupe_key, "lead_received:abc:def:email-fallback");
+    // No device at all is the same undeliverable-phone case.
+    const none = await deliverPush(row(), [], BASE, gone);
+    assertEquals(pushNeedsEmailFallback(row(), none), true);
+    // A refused enrollment/access check is a privacy decision, never a fallback.
+    const refused = await deliverPush(row(), [device], BASE, gone, () => Promise.resolve(false));
+    assertEquals(refused.state, "skipped"); assertEquals(pushNeedsEmailFallback(row(), refused), false);
+    // Delivered, retryable, e-mail and non-actionable rows never fall back.
+    const ok: typeof fetch = () => Promise.resolve(apnsResponse(200));
+    assertEquals(pushNeedsEmailFallback(row(), await deliverPush(row(), [device], BASE, ok)), false);
+    assertEquals(pushNeedsEmailFallback(row({ category: "allowance_low" }), dead), false);
+    assertEquals(pushNeedsEmailFallback(row({ channel: "email" }), dead), false);
   } finally { clearSecrets(); }
 });

@@ -43,7 +43,7 @@ import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts"
 import { adminClient, isServiceRole } from "../_shared/supabase.ts";
 import * as apns from "./apns.ts";
 import * as email from "./email.ts";
-import { deliverEmail, deliverPush, type DeviceRow, type OperationalEmailState, type OutboxRow } from "./deliver.ts";
+import { deliverEmail, deliverPush, emailFallbackRow, pushNeedsEmailFallback, type DeviceRow, type OperationalEmailState, type OutboxRow } from "./deliver.ts";
 import { prepareClientMessage } from "./client-delivery.ts";
 import { hostingNoticeCurrent } from "../_shared/hosting-retention.ts";
 import { opsAlertCurrent } from "../_shared/ops-alert.ts";
@@ -218,6 +218,16 @@ async function handleDrain(limit: number): Promise<Response> {
         // and fall through to the verified Auth lookup.
         : await deliverEmail(row, explicitRecipient(row) ? row.to_email ?? null : (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE,fetch,clientMessage);
       disabledTokens.push(...outcome.deadTokens);
+
+      // The phone this push was queued for is gone. Queue the same facts as an
+      // e-mail BEFORE closing the push, so a crash between the two leaves a
+      // retryable `sending` row rather than a closed row with no fallback. The
+      // e-mail is re-validated by its own drain (access, verified address).
+      if (pushNeedsEmailFallback(row, outcome)) {
+        const { error: fallbackError } = await admin.from("notification_outbox")
+          .upsert(emailFallbackRow(row), { onConflict: "dedupe_key", ignoreDuplicates: true });
+        if (fallbackError) console.error(`notify row ${row.id}: e-mail fallback was not queued`);
+      }
 
       await mark(row.id, outcome.state, outcome.reason, outcome.providerId);
       if (outcome.state === "sent") {

@@ -101,7 +101,7 @@ export async function deliverPush(
     // no device is not a failure worth retrying five times.
     return {
       state: "skipped",
-      reason: "no live device for this user",
+      reason: NO_LIVE_DEVICE,
       providerId: null,
       deadTokens: [],
     };
@@ -149,7 +149,7 @@ export async function deliverPush(
   if (deadTokens.length > 0 && deadTokens.length === authorizedDevices) {
     return {
       state: "skipped",
-      reason: `every device token for this user was rejected by APNs (${lastReason ?? "unregistered"})`,
+      reason: `${ALL_TOKENS_REJECTED} (${lastReason ?? "unregistered"})`,
       providerId: null,
       deadTokens,
     };
@@ -159,6 +159,41 @@ export async function deliverPush(
     reason: lastReason ?? "apns send failed",
     providerId: null,
     deadTokens,
+  };
+}
+
+/** The two closed-push reasons that mean "this person's phone can no longer be
+ * reached", as opposed to "this message must not be sent". */
+const NO_LIVE_DEVICE = "no live device for this user";
+const ALL_TOKENS_REJECTED = "every device token for this user was rejected by APNs";
+
+/**
+ * notification_enqueue() picks ONE channel when the row is written: push when
+ * the person has any enabled device, e-mail otherwise. A device that died after
+ * that choice (app deleted, token rotated) closes the push as `skipped`, and
+ * until now nothing else was ever sent: the first inquiry after an agent
+ * reinstalled the app reached nobody.
+ *
+ * True only for those undeliverable-phone outcomes, and only for the messages a
+ * person acts on. An access or enrollment refusal ("account access changed",
+ * "device enrollment changed") is a privacy decision and never falls back.
+ */
+export function pushNeedsEmailFallback(row: OutboxRow, outcome: Outcome): boolean {
+  if (row.channel !== "push" || outcome.state !== "skipped" || !row.user_id || !outcome.reason) return false;
+  if (!["lead_received", "render_ready", "upload_stuck"].includes(row.category)) return false;
+  return outcome.reason === NO_LIVE_DEVICE || outcome.reason.startsWith(ALL_TOKENS_REJECTED);
+}
+
+/** The e-mail twin of an undeliverable push. Its key is derived from the push
+ * row's, so a replayed drain cannot queue the same fallback twice. */
+export function emailFallbackRow(row: OutboxRow): Record<string, unknown> {
+  return {
+    org_id: row.org_id,
+    user_id: row.user_id,
+    category: row.category,
+    channel: "email",
+    dedupe_key: `${row.dedupe_key}:email-fallback`,
+    payload: row.payload,
   };
 }
 
