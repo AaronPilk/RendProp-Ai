@@ -120,11 +120,20 @@ struct PhotoVersionHistoryTests {
         }
         check((try? Data(contentsOf: dir.appendingPathComponent("orig-capture.jpg"))) == original, "collision preserves originals")
 
-        check(index.listingSelections?["capture"] == "declutter", "unreviewed staging keeps approved declutter on public listing")
+        check(index.listingSelections?["capture"] == "declutter", "a new staged photo does not replace the listing photo by itself")
         rejected("unreviewed staging cannot be a furnishing reference") { _ = try PhotoVersionHistory.stagingReference(id: "stage", directory: dir) }
         rejected("declutter cannot be mislabeled as a reviewed furnishing reference") { _ = try PhotoVersionHistory.stagingReference(id: "declutter", directory: dir) }
-        rejected("staging cannot bypass review through cover selection") { try PhotoVersionHistory.select(id: "stage", directory: dir) }
-        rejected("staging cannot bypass review through publication selection") { try PhotoVersionHistory.selectForPublication(id: "stage", directory: dir) }
+        // Owner decision, 12 Nov 2026: a staged photo no longer waits for a
+        // review before it can go on the listing or become the cover choice.
+        check(!stage.needsStagingReview && !stage.needsCustomReview, "a staged photo never needs a review")
+        try PhotoVersionHistory.selectForPublication(id: "stage", directory: dir)
+        index = try PhotoVersionHistory.load(directory: dir)
+        check(index.listingSelections?["capture"] == "stage" && index.current["capture"] == "rustic", "an unreviewed staged photo can be put on the listing without changing the editing workspace")
+        check(index.versions["stage"]?.stagingReviewed == nil, "putting a staged photo on the listing records no review")
+        try PhotoVersionHistory.selectForPublication(id: "declutter", directory: dir)
+        try PhotoVersionHistory.select(id: "stage", directory: dir)
+        index = try PhotoVersionHistory.load(directory: dir)
+        check(index.current["capture"] == "stage" && index.listingSelections?["capture"] == "stage" && index.versions["stage"]?.stagingReviewed == nil, "an unreviewed staged photo can be chosen through cover selection")
         try PhotoVersionHistory.select(id: "stage", directory: dir, reviewed: true)
         index = try PhotoVersionHistory.load(directory: dir)
         check(index.current["capture"] == "stage" && index.listingSelections?["capture"] == "stage", "reviewed saved version selected without a paid rerun")
@@ -161,12 +170,15 @@ struct PhotoVersionHistoryTests {
         index = try PhotoVersionHistory.load(directory: dir)
         check(index.current["capture"] == "stage" && index.listingSelections?["capture"] == "stage", "cover reselect uses the persisted review for the exact version")
         check((try? Data(contentsOf: dir.appendingPathComponent("orig-capture.jpg"))) == original, "reviewed-stage reselection never changes retained original bytes")
-        rejected("review of one stage cannot approve another stage in the same family") { try PhotoVersionHistory.selectForPublication(id: "rustic", directory: dir) }
-        rejected("cover reselect cannot inherit review from a different stage") { try PhotoVersionHistory.select(id: "rustic", directory: dir) }
+        try PhotoVersionHistory.selectForPublication(id: "rustic", directory: dir)
+        index = try PhotoVersionHistory.load(directory: dir)
+        check(index.listingSelections?["capture"] == "rustic" && index.versions["rustic"]?.stagingReviewed == nil, "another staged version of the same photo can be chosen with no review of its own")
+        try PhotoVersionHistory.select(id: "rustic", directory: dir)
+        check((try? PhotoVersionHistory.load(directory: dir).current["capture"]) == "rustic", "cover selection accepts another staged version with no review of its own")
         try PhotoVersionHistory.select(id: "declutter", directory: dir)
         rejected("missing saved version cannot become public") { try PhotoVersionHistory.select(id: "missing", directory: dir) }
         let publishChoices = try PhotoVersionHistory.publicationVersions(directory: dir)
-        check(publishChoices?.map(\.id) == ["declutter"], "publication uses reviewed versions rather than newest staging")
+        check(publishChoices?.map(\.id) == ["declutter"], "publication uses the chosen version rather than the newest staging")
         let missingSelected = dir.appendingPathComponent("edit-declutter.jpg")
         let retainedSelected = try Data(contentsOf: missingSelected)
         try FileManager.default.removeItem(at: missingSelected)
@@ -381,7 +393,9 @@ struct PhotoVersionHistoryTests {
         check(imported.versions["cloud"]?.effects == ["stage"] && imported.versions["cloud"]?.originalVerified == false, "cloud import retains staged disclosure without certifying original")
         check(imported.publicationLabel(for: "cloud") == "Earlier version on listing", "imported staging explains selected source")
         check((try? Set(PhotoVersionHistory.publicationVersions(directory: cloudDir)!.map(\.id))) == ["neighbor", "cloud-source"], "cloud import retains pre-history neighbors and a complete selected source")
-        rejected("unreviewed cloud staging cannot become cover") { try PhotoVersionHistory.selectForPublication(id: "cloud", directory: cloudDir) }
+        try PhotoVersionHistory.selectForPublication(id: "cloud", directory: cloudDir)
+        check((try? PhotoVersionHistory.load(directory: cloudDir).isSelectedForListing("cloud")) == true && (try? PhotoVersionHistory.load(directory: cloudDir).versions["cloud"]?.stagingReviewed) == nil, "an imported staged photo can be put on the listing with no review")
+        try PhotoVersionHistory.selectForPublication(id: "cloud-source", directory: cloudDir)
         try PhotoVersionHistory.selectForPublication(id: "cloud", directory: cloudDir, reviewed: true)
         check((try? PhotoVersionHistory.load(directory: cloudDir).isSelectedForListing("cloud")) == true, "explicit cloud review enables staged publication")
         try PhotoVersionHistory.selectForPublication(id: "cloud", directory: cloudDir)
@@ -414,20 +428,23 @@ struct PhotoVersionHistoryTests {
         try PhotoVersionHistory.saveCapture(original: original, enhanced: enhanced, id: "custom-root", directory: customDir)
         let custom = try PhotoVersionHistory.saveEdit(jpeg: Data("lighting-preview".utf8), id: "custom-one", parentID: "custom-root", sourceID: "custom-root", edit: "custom", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customDir)
         var customIndex = try PhotoVersionHistory.load(directory: customDir)
-        check(custom.customReviewed == false && custom.needsCustomReview, "a new custom output explicitly starts as an unreviewed preview")
-        check(!custom.canAutomaticallySelectForListing, "unreviewed custom cannot automatically replace the main photo")
+        check(custom.customReviewed == false && !custom.needsCustomReview, "a new custom output keeps its stored marker and needs no review")
+        check(!custom.canAutomaticallySelectForListing, "a custom edit does not replace the main photo by itself")
         check(customIndex.current["custom-root"] == "custom-one", "custom preview remains visible for comparison in latest history")
-        check(customIndex.listingSelections?["custom-root"] == "custom-root", "the prior photo remains on the listing until custom review")
+        check(customIndex.listingSelections?["custom-root"] == "custom-root", "the prior photo remains on the listing until the custom edit is chosen")
         check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-root"], "sync publishes the retained selected source, never the new custom preview")
-        rejected("unreviewed custom cannot become cover") { try PhotoVersionHistory.select(id: "custom-one", directory: customDir) }
-        rejected("unreviewed custom cannot become a listing photo") { try PhotoVersionHistory.selectForPublication(id: "custom-one", directory: customDir) }
-        rejected("a staging-only acknowledgement cannot approve a custom edit") { try PhotoVersionHistory.selectForPublication(id: "custom-one", directory: customDir, reviewed: true) }
-        rejected("raw-file save cannot bypass persisted custom download review") {
-            try PhotoVersionHistory.requireDownloadReview(imageURL: customDir.appendingPathComponent(custom.imageFile))
-        }
+        // Owner decision, 12 Nov 2026: a custom edit no longer waits for a review.
+        try PhotoVersionHistory.select(id: "custom-one", directory: customDir)
+        check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-one"], "an unreviewed custom edit can be chosen through cover selection and is published")
+        try PhotoVersionHistory.selectForPublication(id: "custom-root", directory: customDir)
+        try PhotoVersionHistory.selectForPublication(id: "custom-one", directory: customDir)
+        check((try? PhotoVersionHistory.load(directory: customDir).isSelectedForListing("custom-one")) == true, "an unreviewed custom edit can be put on the listing")
+        try PhotoVersionHistory.selectForPublication(id: "custom-root", directory: customDir)
+        try PhotoVersionHistory.requireDownloadReview(imageURL: customDir.appendingPathComponent(custom.imageFile))
+        check(true, "an unreviewed custom edit can be saved as a file")
         try PhotoVersionHistory.requireDownloadReview(imageURL: customDir.appendingPathComponent("orig-custom-root.jpg"))
         check((try? PhotoVersionHistory.load(directory: customDir).versions[custom.id]?.customReviewed) == false,
-              "admitting a retained original cannot approve its custom image")
+              "using a custom edit or its original records no review")
         let completeCustomReview = PhotoVersionHistory.CustomReview(comparedSource: true, fixedFeaturesMatch: true,
             colorsAndMaterialsMatch: true, onlyRequestedChange: true)
         for flags in 0..<15 {
@@ -474,14 +491,16 @@ struct PhotoVersionHistoryTests {
         check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-one"], "a reviewed exact custom output can be reselected without a paid rerun")
         let secondCustom = try PhotoVersionHistory.saveEdit(jpeg: Data("second-preview".utf8), id: "custom-two", parentID: "custom-one", sourceID: "custom-one", edit: "custom", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customDir)
         check(secondCustom.customReviewed == false, "review cannot transfer to a newly generated sibling custom output")
-        rejected("new custom cannot inherit earlier custom approval") { try PhotoVersionHistory.selectForPublication(id: "custom-two", directory: customDir) }
+        try PhotoVersionHistory.selectForPublication(id: "custom-two", directory: customDir)
+        check((try? PhotoVersionHistory.load(directory: customDir).isSelectedForListing("custom-two")) == true, "a new custom edit can be chosen with no review of its own")
         let customDescendant = try PhotoVersionHistory.saveEdit(jpeg: Data("custom-then-sky".utf8), id: "custom-sky", parentID: "custom-two", sourceID: "custom-two", edit: "sky", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customDir)
-        check(customDescendant.needsCustomReview && !customDescendant.canAutomaticallySelectForListing, "a preset cannot launder an unreviewed custom ancestor")
-        rejected("descendant of custom remains fenced from publication") { try PhotoVersionHistory.selectForPublication(id: "custom-sky", directory: customDir) }
+        check(customDescendant.customReviewed == false && !customDescendant.needsCustomReview && !customDescendant.canAutomaticallySelectForListing, "an edit made from a custom edit keeps the marker and is not put on the listing by itself")
+        try PhotoVersionHistory.selectForPublication(id: "custom-sky", directory: customDir)
+        check((try? PhotoVersionHistory.load(directory: customDir).isSelectedForListing("custom-sky")) == true, "an edit made from a custom edit can be chosen for the listing")
         let customStage = try PhotoVersionHistory.saveEdit(jpeg: Data("custom-then-stage".utf8), id: "custom-stage", parentID: "custom-sky", sourceID: "custom-sky", edit: "stage", style: "modern", disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customDir)
-        check(customStage.needsCustomReview, "custom and staging lineage retain separate review requirements")
-        rejected("custom acknowledgement alone cannot approve unreviewed staging") { try PhotoVersionHistory.selectForPublication(id: "custom-stage", directory: customDir, customReviewed: true) }
-        rejected("staging acknowledgement alone cannot approve unreviewed custom lineage") { try PhotoVersionHistory.selectForPublication(id: "custom-stage", directory: customDir, reviewed: true) }
+        check(customStage.customReviewed == false && !customStage.needsCustomReview && !customStage.needsStagingReview, "a staged edit made from a custom edit keeps the marker and needs no review")
+        try PhotoVersionHistory.selectForPublication(id: "custom-stage", directory: customDir)
+        check((try? PhotoVersionHistory.load(directory: customDir).isSelectedForListing("custom-stage")) == true && (try? PhotoVersionHistory.load(directory: customDir).versions["custom-stage"]?.customReviewed) == false, "a staged edit made from a custom edit can be chosen with no review; its stored marker is unchanged")
         try PhotoVersionHistory.selectForPublication(id: "custom-stage", directory: customDir, reviewed: true, customReviewed: true)
         check((try? PhotoVersionHistory.load(directory: customDir).versions["custom-stage"]?.customReviewed) == true, "combined custom/staging review only approves that exact output")
         check((try? Data(contentsOf: customDir.appendingPathComponent("orig-custom-root.jpg"))) == original, "custom review and presets preserve retained original bytes")
@@ -497,12 +516,12 @@ struct PhotoVersionHistoryTests {
         try JSONSerialization.data(withJSONObject: olderJSON).write(to: customIndexURL)
         check((try? PhotoVersionHistory.load(directory: customDir).versions["custom-stage"]?.customReviewed) == nil, "missing legacy marker decodes without certifying a review")
         check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-stage"], "legacy already selected outputs remain backward compatible")
-        // A damaged selection must not bypass a new explicit false marker.
+        // An explicit false marker is only a record now; it holds nothing back.
         olderVersions["custom-stage"]?["customReviewed"] = false
         olderJSON["versions"] = olderVersions
         try JSONSerialization.data(withJSONObject: olderJSON).write(to: customIndexURL)
-        rejected("an erroneously selected unreviewed custom is fenced at actual publication") { _ = try PhotoVersionHistory.publicationVersions(directory: customDir) }
-        check((try? PhotoVersionHistory.availableCoverVersion(directory: customDir)) == nil, "cover fallback cannot pick an erroneously selected unreviewed custom")
+        check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-stage"], "a selected custom edit with an explicit false marker is still published")
+        check((try? PhotoVersionHistory.availableCoverVersion(directory: customDir)?.id) == "custom-stage", "cover fallback can use a selected custom edit that was never reviewed")
 
         let customCloudDir = root.appendingPathComponent("new-cloud-altered-preview")
         try FileManager.default.createDirectory(at: customCloudDir, withIntermediateDirectories: true)
@@ -511,15 +530,17 @@ struct PhotoVersionHistoryTests {
         try PhotoVersionHistory.registerImport(id: "remote", imageFile: "cloud-result.jpg", originalFile: "cloud-original.jpg", staged: false, altered: true, directory: customCloudDir)
         var remoteIndex = try PhotoVersionHistory.load(directory: customCloudDir)
         let remote = remoteIndex.versions["remote"]!
-        check(remote.needsCustomReview && !remote.canAutomaticallySelectForListing, "new cloud altered imports require review when exact edit identity is unavailable")
+        check(remote.customReviewed == false && !remote.needsCustomReview && !remote.canAutomaticallySelectForListing, "a new cloud altered import keeps the marker, needs no review and is not put on the listing by itself")
         check(remote.reviewSourceFile(in: remoteIndex) == "cloud-original.jpg", "cloud comparison uses the exact retained source attached to this import")
         check(!remote.originalVerified, "a cloud comparison does not certify an unaltered original")
         check(remoteIndex.isSelectedForListing("remote-source"), "cloud import keeps the retained source selected for the listing")
-        rejected("cloud custom import cannot become cover without comparison") { try PhotoVersionHistory.select(id: "remote", directory: customCloudDir) }
-        rejected("cloud custom import cannot be selected for publication without comparison") { try PhotoVersionHistory.selectForPublication(id: "remote", directory: customCloudDir) }
+        try PhotoVersionHistory.selectForPublication(id: "remote", directory: customCloudDir)
+        check((try? PhotoVersionHistory.load(directory: customCloudDir).isSelectedForListing("remote")) == true && (try? PhotoVersionHistory.load(directory: customCloudDir).versions["remote"]?.customReviewed) == false, "a cloud altered import can be put on the listing with no comparison")
+        try PhotoVersionHistory.selectForPublication(id: "remote-source", directory: customCloudDir)
         let remoteSky = try PhotoVersionHistory.saveEdit(jpeg: Data("remote-then-sky".utf8), id: "remote-sky", parentID: "remote", sourceID: "remote", edit: "sky", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customCloudDir)
-        check(remoteSky.needsCustomReview && !remoteSky.canAutomaticallySelectForListing, "a preset cannot launder unreviewed unknown cloud AI lineage")
-        rejected("cloud custom descendant still cannot become public") { try PhotoVersionHistory.selectForPublication(id: "remote-sky", directory: customCloudDir) }
+        check(remoteSky.customReviewed == false && !remoteSky.needsCustomReview && !remoteSky.canAutomaticallySelectForListing, "an edit made from a cloud altered import keeps the marker and is not put on the listing by itself")
+        try PhotoVersionHistory.selectForPublication(id: "remote-sky", directory: customCloudDir)
+        check((try? PhotoVersionHistory.load(directory: customCloudDir).isSelectedForListing("remote-sky")) == true, "an edit made from a cloud altered import can be chosen for the listing")
         try PhotoVersionHistory.selectForPublication(id: "remote", directory: customCloudDir, customReviewed: true)
         try PhotoVersionHistory.selectForPublication(id: "remote-source", directory: customCloudDir)
         try PhotoVersionHistory.selectForPublication(id: "remote", directory: customCloudDir)
@@ -536,8 +557,8 @@ struct PhotoVersionHistoryTests {
         check((try? PhotoVersionHistory.load(directory: customCloudDir).versions["remote"]?.customReviewed) == nil, "preexisting cloud ids are not retroactively rewritten or certified")
         check((try? Data(contentsOf: customCloudDir.appendingPathComponent("cloud-original.jpg"))) == original, "cloud import review preserves exact retained source bytes")
 
-        // Review is an egress permission, not the current editing preview or
-        // a motion-QC verdict. No image bytes change when it is granted.
+        // No saved edit waits for a review before it can be used in a video
+        // (owner decision, 12 Nov 2026). No image bytes change either way.
         let reelReviewDir = root.appendingPathComponent("reel-review")
         try PhotoVersionHistory.saveCapture(original: original, enhanced: original, id: "source", directory: reelReviewDir)
         let clean = try PhotoVersionHistory.saveEdit(jpeg: original, id: "clean", parentID: "source", sourceID: "source", edit: "declutter", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
@@ -546,9 +567,12 @@ struct PhotoVersionHistoryTests {
         let skyPreview = try PhotoVersionHistory.saveEdit(jpeg: original, id: "custom-sky-preview", parentID: customPreview.id, sourceID: customPreview.id, edit: "sky", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
         try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(clean.imageFile))
         check(true, "reviewed built-in predecessor remains eligible for reels")
-        rejected("unreviewed custom preview cannot be sent to a reel") { try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(customPreview.imageFile)) }
-        rejected("unreviewed custom descendant cannot be laundered through reel QC") { try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(skyPreview.imageFile)) }
-        rejected("unreviewed staging cannot bypass property review through reels") { try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(stagePreview.imageFile)) }
+        try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(customPreview.imageFile))
+        check(true, "an unreviewed custom edit can be used in a video")
+        try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(skyPreview.imageFile))
+        check(true, "an edit made from an unreviewed custom edit can be used in a video")
+        try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(stagePreview.imageFile))
+        check(true, "an unreviewed staged photo can be used in a video")
         let egressIndex = try PhotoVersionHistory.load(directory: reelReviewDir)
         check(egressIndex.current[clean.familyID] == skyPreview.id && egressIndex.publicationChoice(for: skyPreview.id)?.id == clean.id, "current preview is independent from selected listing version")
         try PhotoVersionHistory.selectForPublication(id: stagePreview.id, directory: reelReviewDir, reviewed: true)
@@ -706,11 +730,10 @@ struct PhotoVersionHistoryTests {
         let unreviewedRemoval = try PhotoVersionHistory.saveEdit(jpeg: Data("new-stage".utf8), id: "room-stage-after-removal",
             parentID: "room", sourceID: "room", edit: "stage", style: "rustic", disclosure: nil,
             provenanceID: nil, provenanceRecorded: false, directory: removedDir)
-        rejected("re-adding a different staging version still requires that exact output's review") {
-            try PhotoVersionHistory.selectForPublication(id: unreviewedRemoval.id, directory: removedDir)
-        }
+        try PhotoVersionHistory.selectForPublication(id: unreviewedRemoval.id, directory: removedDir)
+        check((try? PhotoVersionHistory.load(directory: removedDir).isSelectedForListing(unreviewedRemoval.id)) == true, "re-adding a different staging version needs no review of its own")
         try PhotoVersionHistory.selectForPublication(id: cleanRemoval.id, directory: removedDir)
-        check((try? PhotoVersionHistory.load(directory: removedDir).isSelectedForListing(cleanRemoval.id)) == true, "explicitly choosing another reviewed version re-includes exactly that version")
+        check((try? PhotoVersionHistory.load(directory: removedDir).isSelectedForListing(cleanRemoval.id)) == true, "explicitly choosing another version re-includes exactly that version")
         check((try? PhotoVersionHistory.load(directory: removedDir).excludedListingFamilies?.isEmpty) == true, "explicit listing selection clears only that family's exclusion")
         rejected("a stale selected sheet cannot remove another version now selected for the family") {
             try PhotoVersionHistory.removeFromPublication(id: stagedRemoval.id, directory: removedDir)

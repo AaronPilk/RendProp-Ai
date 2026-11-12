@@ -197,9 +197,9 @@ enum PhotoExportRenderer {
                         // TestFlight 60). Oldest first, numbered by position in
                         // the photo's history, named by what each one is, exact
                         // stored bytes, each with its own disclosure note. The
-                        // rendered gallery copy keeps '-edited'. A custom output that
-                        // was never reviewed is withheld exactly as it is from a
-                        // direct download, and the photo's note says so.
+                        // rendered gallery copy keeps '-edited'. Since 12 Nov 2026
+                        // no version is withheld: `needsCustomReview` is always
+                        // false, so the withheld branch below never runs.
                         if options.includeOriginals, let version {
                             let savedVersions = history.history(for: version.id)
                                 .sorted { $0.createdAt != $1.createdAt ? $0.createdAt < $1.createdAt : $0.id < $1.id }
@@ -352,8 +352,8 @@ enum PhotoExportRenderer {
                         // Each saved version is several full-size renders; a
                         // stop request does not wait for the whole photo.
                         if cancellation?.isCancelled == true { throw CancellationError() }
-                        // Custom review is an exact persisted file permission,
-                        // including descendants. Export never marks it reviewed.
+                        // Always false since 12 Nov 2026: custom edits and their
+                        // descendants are exported like every other version.
                         if version.needsCustomReview { continue }
                         try autoreleasepool {
                         let source = photoDirectory.appendingPathComponent(version.imageFile)
@@ -372,8 +372,8 @@ enum PhotoExportRenderer {
                             + reviewNote
                             + "\nSaved version ID: " + version.id + "; source file: " + version.imageFile + ".\nMaster file: exact saved bytes, unchanged format and full available dimensions.\nCheck your MLS or advertising platform's original-photo and disclosure requirements before publishing.\n"
                         _ = try write(Data(disclosure.utf8), category + "/" + stem + "-disclosure.txt")
-                        // Keep the pending preview as a clearly named master,
-                        // never as an upload-ready copy or an implicit approval.
+                        // Always false since 12 Nov 2026: a staged version is
+                        // filed under Staged and can have upload copies.
                         if version.needsStagingReview { return }
                         // Upload-ready copies are made only for the version
                         // selected for the listing. Every other eligible saved
@@ -444,7 +444,7 @@ enum PhotoExportRenderer {
                                    progress: ZipArchive.Progress? = nil, cancellation: Cancellation? = nil) throws -> URL {
         guard !prepared.files.isEmpty || !extras.isEmpty else { throw Failure(message: "There are no files to package.") }
         let title = ZipArchive.safeFileName(archiveName, fallback: "Rendprop")
-        var readme = "\(title)\nRendprop coordinator handoff package. Only files saved on this iPhone are included; cloud-only media is not fetched.\n\nMasters: Originals contains the source files retained by Rendprop. New library imports preserve the file bytes and format supplied by Photos before enhancement. Camera captures and older library imports retain full-resolution JPEG copies made before enhancement, with camera metadata not preserved. Decluttered and Staged contain every eligible saved version separately. Enhanced, Edited and EarlierSources retain other saved sources. Masters are exact saved bytes in their real format, without cropping or re-encoding. Imported sources may contain edits made before Rendprop. Only files saved on this iPhone are included; cloud-only photos, tours and videos are not downloaded for this package.\n\nDelivery aspect presets, not platform rules: the MLS and Zillow folders use landscape 4:3; Instagram/Feed4x5 uses portrait 4:5; Instagram/Stories9x16 uses portrait 9:16. Upload copies are made only for the version selected for the listing; a photo with no listing selection recorded, or whose selection is withheld or still a staging preview, has none. Every other eligible saved version is included as its master with its disclosure note. Each platform folder groups its copies as Decluttered, Staged, Enhanced or Edited. Copies are clean JPEGs encoded at quality 0.97, center-cropped at full available resolution without borders or upscaling. Cropping removes edges; review the master before uploading. No resolution or detail is invented. A short edge below 1080 pixels is flagged as limited available resolution, not a platform eligibility guarantee.\n\nThe same photo/version number maps a master to its individual disclosure note and, for the listing selection, to its platform copies. All eligible saved predecessors stay accessible. Unreviewed custom edits and their unreviewed descendants are withheld. StagingPreviews contains pending staging masters, explicitly not approved for publication, with no platform copies. No export grants approval. This package is a handoff, not an automatic publication. Add each matching disclosure in your MLS/advertising platform and check its rules.\n\n"
+        var readme = "\(title)\nRendprop coordinator handoff package. Only files saved on this iPhone are included; cloud-only media is not fetched.\n\nMasters: Originals contains the source files retained by Rendprop. New library imports preserve the file bytes and format supplied by Photos before enhancement. Camera captures and older library imports retain full-resolution JPEG copies made before enhancement, with camera metadata not preserved. Decluttered and Staged contain every eligible saved version separately. Enhanced, Edited and EarlierSources retain other saved sources. Masters are exact saved bytes in their real format, without cropping or re-encoding. Imported sources may contain edits made before Rendprop. Only files saved on this iPhone are included; cloud-only photos, tours and videos are not downloaded for this package.\n\nDelivery aspect presets, not platform rules: the MLS and Zillow folders use landscape 4:3; Instagram/Feed4x5 uses portrait 4:5; Instagram/Stories9x16 uses portrait 9:16. Upload copies are made only for the version selected for the listing; a photo with no listing selection recorded has none. Every other eligible saved version is included as its master with its disclosure note. Each platform folder groups its copies as Decluttered, Staged, Enhanced or Edited. Copies are clean JPEGs encoded at quality 0.97, center-cropped at full available resolution without borders or upscaling. Cropping removes edges; review the master before uploading. No resolution or detail is invented. A short edge below 1080 pixels is flagged as limited available resolution, not a platform eligibility guarantee.\n\nThe same photo/version number maps a master to its individual disclosure note and, for the listing selection, to its platform copies. Every saved version of each photo is included, staged and custom edits too. This package is a handoff, not an automatic publication. Add each matching disclosure in your MLS/advertising platform and check its rules.\n\n"
         readme += prepared.notes.joined(separator: "\n") + "\n"
         let base = prepared.directory.standardizedFileURL.path + "/"
         var entries: [ZipArchive.Entry] = [], used = Set<String>()
@@ -505,7 +505,7 @@ enum PhotoExportRenderer {
         if whole { readme += ", \(extras.count) more file\(extras.count == 1 ? "" : "s") listed below" }
         readme += ".\n\n"
         if versionCount > 0 {
-            readme += "The package includes retained originals where verified, available saved enhancements and AI edits in the order they were made, and the version shown in the app. '-edited.jpg' is a rendered delivery copy; the matching stored version is also included among '-version-' files without changing its bytes. Unreviewed custom edits are withheld; each photo's disclosure note reports any withheld versions. "
+            readme += "The package includes retained originals where verified, available saved enhancements and AI edits in the order they were made, and the version shown in the app. '-edited.jpg' is a rendered delivery copy; the matching stored version is also included among '-version-' files without changing its bytes. "
             readme += "The label in the file name says what each one is (enhanced, virtually-staged-modern, decluttered, twilight-sky, ...).\n"
         }
         if disclosureCount > 0 {
@@ -785,7 +785,7 @@ struct PhotoExportSheet: View {
                     }
                     if versions.contains(where: { $0?.originalVerified == true }) {
                         Toggle("Include retained originals and every saved version", isOn: $includeOriginals)
-                        Text("Verified retained originals and every saved version keep their exact bytes and original format, which may be HEIC or PNG. The current JPEG delivery copy is included too. Unreviewed custom edits are withheld. Turn this off for current JPEG copies only. Imported sources may contain edits made before Rendprop.")
+                        Text("Verified retained originals and every saved version keep their exact bytes and original format, which may be HEIC or PNG. The current JPEG delivery copy is included too. Turn this off for current JPEG copies only. Imported sources may contain edits made before Rendprop.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Button("Copy disclosure captions") {
@@ -813,7 +813,7 @@ struct PhotoExportSheet: View {
                     Text(asArchive
                          ? (wholeListing
                             ? "One ZIP with eligible photo versions, videos and listing details saved on this iPhone, plus disclosure notes and a README. Cloud-only files are not included. It opens on any Mac, PC or phone."
-                            : "One ZIP with eligible saved photo versions, their disclosure notes and a README. Unreviewed custom edits are withheld. It opens on any Mac, PC or phone.")
+                            : "One ZIP with eligible saved photo versions, their disclosure notes and a README. It opens on any Mac, PC or phone.")
                          : (wholeListing
                             ? "Eligible photos, retained sources, disclosure notes, videos and listing details saved on this iPhone are shared as separate files. Cloud-only files are not included. Better for AirDrop to another iPhone."
                             : "Each photo, original, other version and disclosure note is shared as its own file. Better for AirDrop to another iPhone."))
@@ -890,9 +890,9 @@ struct PhotoExportSheet: View {
 
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Every eligible saved photo version stays separate. Full saved masters and retained sources keep their stored bytes. Upload copies are made for the version selected for the listing only. Delivery aspect presets use centered crops: MLS/Zillow folders 4:3, Instagram feed 4:5, stories 9:16. These are presets, not platform rules. Pending staging has no platform copies.")
+                        Text("Every eligible saved photo version stays separate. Full saved masters and retained sources keep their stored bytes. Upload copies are made for the version selected for the listing only. Delivery aspect presets use centered crops: MLS/Zillow folders 4:3, Instagram feed 4:5, stories 9:16. These are presets, not platform rules.")
                         Text("The README and matching text files name each edit, disclose cropping and report actual pixel dimensions. Low-resolution sources are flagged. Check the photos and your platform's rules before publishing.")
-                        Text("Pending staging is preview-only, with no listing or social copies. Unreviewed custom edits are withheld.")
+                        Text("A staged or custom edit that is not selected for the listing is included as a full saved copy only, with no listing or social copies.")
                     }
                     .font(.footnote).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)

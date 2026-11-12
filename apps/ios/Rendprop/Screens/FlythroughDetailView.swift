@@ -6570,7 +6570,7 @@ struct PhotoStudioView: View {
             Button(EditWords.animate) { animate(p) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Each edit is saved separately. Find decluttered and staged photos in Photos. Choose a staged preview for the listing only after reviewing it.")
+            Text("Each edit is saved separately. Find decluttered and staged photos in Photos. To put a staged photo on the listing, open it and tap Use on listing.")
         }
     }
 
@@ -6745,8 +6745,8 @@ struct PhotoStudioView: View {
             .buttonStyle(RendpropPillButtonStyle(compact: true))
             .disabled(filteredLibraryPhotos.isEmpty || isProcessing || galleryRetrying || listingChoiceWorkID != nil)
             .accessibilityIdentifier("photos.selectCategoryForListing")
-            .accessibilityHint("Uses the latest shown version of each photo. Results still needing review stay unchanged.")
-            Text("One shown version per photo. Results needing review or verification stay unchanged.")
+            .accessibilityHint("Uses the version shown for each photo.")
+            Text("Uses the version shown for each photo. A photo we can't match to this listing is left as it is.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
             if listingChoiceWorkID != nil {
                 Button("Stop selecting") {
@@ -6877,8 +6877,8 @@ struct PhotoStudioView: View {
                 } else {
                     let (report, error) = await PhotoGridListingSelection.selectAll(targets, requireCurrent: check, state: currentState, select: { try await apply($0, selecting: true) })
                     try check()
-                    listingChoiceNote = "\(report.selected) selected · \(report.unchanged) already on listing · \(report.needsReview) need review" +
-                        (report.unavailable == 0 ? "." : " · \(report.unavailable) could not be verified and were left unchanged.")
+                    listingChoiceNote = "\(report.selected) selected · \(report.unchanged) already on listing" +
+                        (report.unavailable == 0 ? "." : " · \(report.unavailable) could not be matched to this listing and were left as they are.")
                     if let error { photoSaveError = "\(report.selected) choices confirmed. Further selection stopped. " + error.localizedDescription }
                 }
             } catch { if context.isCurrent { photoSaveError = error.localizedDescription } }
@@ -8632,10 +8632,13 @@ struct PhotoCompareView: View {
         guard isCloudListing, let family = viewed.savedVersion?.familyID, let cloudProjection else { return false }
         return cloudProjection.mutableFamilyIDs.contains(family) && !cloudProjection.pending
     }
+    // Owner decision, 12 Nov 2026: a staged or custom edit never waits for a
+    // review. Both are always false, so the checklists below are not shown and
+    // no action in this view is held back by them.
     private var needsStagingReview: Bool {
-        viewed.savedVersion?.effects.contains("stage") == true && viewed.savedVersion?.stagingReviewed != true
+        false
     }
-    private var needsCustomReview: Bool { viewed.savedVersion?.needsCustomReview == true }
+    private var needsCustomReview: Bool { false }
     private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
     private var savedDisclosure: String? { viewed.savedVersion?.reviewDisclosure ?? (viewed.id == photo.id ? disclosure : nil) }
     private var versionChoices: [EnhancedPhoto] {
@@ -9258,11 +9261,6 @@ struct PhotoCompareView: View {
                 .padding(14)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            if !showOriginal, (viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview),
-               imageLoadComplete && (original == nil || viewed.originalURL == viewed.enhancedURL) {
-                Label("Restore the retained source before selecting this version.", systemImage: "exclamationmark.circle")
-                    .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
-            }
             if (!showOriginal && savedDisclosure?.isEmpty == false) || viewed.savedVersion?.sourceHistoryKnown != true {
                 DisclosureGroup("About this version") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -9331,11 +9329,9 @@ struct PhotoCompareView: View {
         if isCloudListing && !cloudSelectionKnown { return false } // Refresh only, never an ambiguous mutation.
         // Removing exposure does not require decoded pixels or a new approval.
         if publicationSelected && !cloudCoverRequested { return false }
+        // Adding needs only the photo itself. A staged or custom edit is no
+        // longer held until its source is loaded and a checklist is ticked.
         return enhanced == nil
-            || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
-                && (original == nil || viewed.originalURL == viewed.enhancedURL
-                    || (needsStagingReview && !stagingReview.isComplete)
-                    || (needsCustomReview && !customReview.isComplete)))
     }
 
     private func changeListingSelection() {
@@ -15102,7 +15098,7 @@ struct ReelStudioView: View {
                     .opacity(!reviewed || order == nil && selected.count >= VideoSelectionCapacity.maximumPhotos ? 0.4 : 1)
 
                 if !reviewed {
-                    Text("Review photo first").font(.caption2.weight(.semibold))
+                    Text("Can't be used").font(.caption2.weight(.semibold))
                         .padding(5).background(.ultraThinMaterial, in: Capsule())
                 } else if let order {
                     Text("\(order + 1)")
@@ -15122,7 +15118,7 @@ struct ReelStudioView: View {
         }
         .buttonStyle(ScalePressStyle())
         .disabled(!reviewed)
-        .accessibilityLabel(Text(!reviewed ? "Photo needs review in Photo Studio before use in a reel." : order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
+        .accessibilityLabel(Text(!reviewed ? "This photo's saved history can't be read, so it can't be used in a video." : order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
                                  ?? "Photo not in reel. Tap to add."))
         .accessibilityIdentifier("reel.photo.\(p.id)")
     }
@@ -15993,7 +15989,7 @@ struct ReelStudioView: View {
             for photo in chosen { try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL) }
         } catch {
             phase = .failed
-            failure = AIFailure(error, title: "Review the selected photo first")
+            failure = AIFailure(error, title: "One of the chosen photos can't be used")
             return
         }
         let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }

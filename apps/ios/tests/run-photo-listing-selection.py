@@ -115,12 +115,13 @@ __ACTUAL__
         let stage = try PhotoVersionHistory.saveEdit(jpeg: bytes, id: "a-stage", parentID: clean.id, sourceID: clean.id, edit: "stage", style: "modern", disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: dir)
         let stagePhoto = EnhancedPhoto(id: stage.id, enhancedURL: dir.appendingPathComponent(stage.imageFile), originalURL: a.originalURL)
         let addStage = Harness(stagePhoto, model); addStage.selectedForListing = false; addStage.enhanced = bytes; addStage.original = bytes
-        check(addStage.listingSelectionDisabled, "unreviewed staging stays disabled when adding")
+        // Owner decision, 12 Nov 2026: a staged photo no longer waits for a review.
+        check(!addStage.listingSelectionDisabled, "unreviewed staging can be added as soon as its pixels are loaded")
+        addStage.original = nil
+        check(!addStage.listingSelectionDisabled, "adding a staged photo does not need its retained source loaded")
         addStage.changeListingSelection()
-        check(addStage.selectionError != nil && (try? PhotoVersionHistory.load(directory: dir).isSelectedForListing(stage.id)) == false, "actual add action cannot bypass staging review")
-        addStage.stagingReview = .init(comparedSource: true, fixedFeaturesMatch: true, accessIsClear: true, furnitureMatchesOtherViews: true)
-        addStage.selectionError = nil; addStage.changeListingSelection()
-        check(addStage.selectedForListing && addStage.selectionError == nil, "reviewed alternate version can replace existing selected version")
+        check(addStage.selectedForListing && addStage.selectionError == nil && (try? PhotoVersionHistory.load(directory: dir).isSelectedForListing(stage.id)) == true, "actual add action puts an unreviewed staged version on the listing in place of the selected version")
+        check((try? PhotoVersionHistory.load(directory: dir).versions[stage.id]?.stagingReviewed) == nil, "adding an unreviewed staged version records no review")
         addStage.stagingReview = .init(); addStage.enhanced = nil; addStage.original = nil
         check(!addStage.listingSelectionDisabled, "selected staging removal does not demand repeat comparison")
         addStage.changeListingSelection()

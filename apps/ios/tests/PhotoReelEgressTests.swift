@@ -13,16 +13,20 @@ import Foundation
         let bytes = Data("same retained bytes".utf8)
         try PhotoVersionHistory.saveCapture(original: bytes, enhanced: bytes, id: "base", directory: directory)
         let custom = try PhotoVersionHistory.saveEdit(jpeg: bytes, id: "custom", parentID: "base", sourceID: "base", edit: "custom", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: directory)
-        refused("saved custom source remains held before reel continuation") { try PhotoVersionHistory.requireReelReview(versionID: custom.id, directory: directory) }
+        // Owner decision, 12 Nov 2026: no saved edit waits for a review before a video.
+        try PhotoVersionHistory.requireReelReview(versionID: custom.id, directory: directory)
+        check(true, "a saved custom edit is admitted to a video with no review")
         try PhotoVersionHistory.select(id: "base", directory: directory)
         let stage = try PhotoVersionHistory.saveEdit(jpeg: bytes, id: "stage", parentID: "base", sourceID: "base", edit: "stage", style: "modern", disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: directory)
-        refused("saved staging source remains held before reel composition") { try PhotoVersionHistory.requireReelReview(versionID: stage.id, directory: directory) }
+        try PhotoVersionHistory.requireReelReview(versionID: stage.id, directory: directory)
+        check(true, "a saved staged photo is admitted to a video with no review")
+        refused("a version id that is not a safe file name is still refused") { try PhotoVersionHistory.select(id: "../outside", directory: directory) }
         try PhotoVersionHistory.selectForPublication(id: stage.id, directory: directory, reviewed: true)
         try PhotoVersionHistory.requireReelReview(versionID: stage.id, directory: directory)
-        check(true, "exact staged approval admits saved source without new image bytes")
+        check(true, "a recorded staged review changes nothing about admission")
         try PhotoVersionHistory.requireReelReview(versionID: "unknown-legacy", directory: directory)
         check(true, "unknown legacy is not retroactively certified or erased")
-        check((try? Data(contentsOf: directory.appendingPathComponent("orig-base.jpg"))) == bytes, "review admission preserves retained bytes")
+        check((try? Data(contentsOf: directory.appendingPathComponent("orig-base.jpg"))) == bytes, "admission preserves retained bytes")
         let old = ReelWorkJob.Configuration(extras: [URL(fileURLWithPath: "/saved/aerial.mp4")], captions: "saved title", voice: "saved voice", captionStyle: .standard, shotStyle: .highlightBox, transition: .whip, aspect: "16:9")
         let reopened = ReelWorkJob.Configuration(extras: [], captions: nil, voice: nil, captionStyle: .off, shotStyle: .off, transition: .cut, aspect: "9:16")
         let saved = ReelDecision.parkedReelSettings(configuration: old, batchAspect: "16:9", fallback: reopened)
