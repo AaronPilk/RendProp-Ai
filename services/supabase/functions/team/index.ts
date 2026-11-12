@@ -319,11 +319,18 @@ Deno.serve(async (req) => {
       const { data: rows, error: membersError } = await membersQuery;
       if (membersError) throw new HttpError(503, "The team could not be loaded. Please retry.");
       const ids = (rows ?? []).map((r) => r.user_id as string);
-      const { data: people, error: peopleError } = ids.length
-        ? await admin.from("profiles").select("id, name, email").in("id", ids)
-        : { data: [] as { id: string; name: string | null; email: string | null }[], error: null };
-      if (peopleError) throw new HttpError(503, "The team could not be loaded. Please retry.");
-      const byId = new Map((people ?? []).map((p) => [p.id, p]));
+      // A brokerage roster can hold hundreds of seats. One `.in()` filter puts
+      // every id in the request line (37 bytes each), so the lookup is chunked
+      // the same way admin/index.ts chunks its org lookup; an unchunked 500-seat
+      // roster would be refused as too long and the whole Team screen with it.
+      const people: { id: string; name: string | null; email: string | null }[] = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data: chunk, error: peopleError } = await admin.from("profiles")
+          .select("id, name, email").in("id", ids.slice(i, i + 200));
+        if (peopleError) throw new HttpError(503, "The team could not be loaded. Please retry.");
+        people.push(...((chunk ?? []) as { id: string; name: string | null; email: string | null }[]));
+      }
+      const byId = new Map(people.map((p) => [p.id, p]));
 
       // Pending invites are visible to MANAGERS ONLY, and never with the code:
       // the plaintext existed once, in the response that created it. An agent
