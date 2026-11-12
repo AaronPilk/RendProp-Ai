@@ -114,7 +114,10 @@ test("funded five-edit intro stays visible with a paid SKU name and ceiling enve
   assert.equal(currentTrialAllowance(current), true);
   const html = renderToStaticMarkup(createElement(TrialAllowance, { trial: current.trialUsage! }));
   assert.match(html, /5 AI photo edit|AI photo edit credits/);
-  assert.match(html, /decluttering or staging/);
+  assert.match(html, /staging, declutter, twilight, sky, lawn or custom change uses one AI photo edit/);
+  // Trial terms in plain words: how many edits, in how many days.
+  assert.match(html, /Your free trial includes 5 AI photo edits to use within 7 days/);
+  assert.doesNotMatch(html, /unavailable|capacity|temporarily|limited AI/i);
   assert.match(html, /website publishing begin with a paid plan/);
   assert.doesNotMatch(html, /Hosted walkthrough<|Published listing<|1 remaining/);
   assert.equal(currentTrialAllowance({ ...current, servingActivation: null, plan: "pro" }), false,
@@ -212,7 +215,7 @@ test("exhausted and expired views keep saved-work access and explicit subscripti
     const html = renderToStaticMarkup(createElement(TrialAllowance, { trial: decoded }));
     assert.match(html, /saved photos and downloads remain accessible/);
     assert.match(html, /apps.apple.com\/account\/subscriptions/);
-    assert.match(html, status === "expired" ? /creation window has ended/ : /included trial allowance/);
+    assert.match(html, status === "expired" ? /Your free trial has ended/ : /used all \d+ AI photo edits? in your free trial/);
     assert.doesNotMatch(html, /charged now|delete your/);
   }
 });
@@ -222,5 +225,5 @@ test("full upload allowance leaves photo and publication counters visible for ex
   assert.match(html, /0 MB remaining/);
   assert.match(html, /3 remaining/);
   assert.match(html, /1 remaining/);
-  assert.doesNotMatch(html, /creation window has ended|used your included trial allowance/);
+  assert.doesNotMatch(html, /free trial has ended|used all \d+ AI photo edit/);
 });

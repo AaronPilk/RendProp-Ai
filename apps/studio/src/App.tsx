@@ -1367,7 +1367,7 @@ export default function App({ servicesFactory }: {
                     </dl>
                     <p className="muted small">
                       Choose or change your plan in the iPhone app under Settings → Plan &amp; usage.
-                      A 7-day trial starts only after you confirm an eligible Apple subscription offer.
+                      {workspace.trialOffer ? `New subscribers get a ${workspace.trialOffer.maxDays}-day free trial with ${workspace.trialOffer.photoEdits} AI photo edits when they choose a monthly plan there.` : "A free trial starts only after you confirm it with Apple there."}{" "}
                       Signing in does not start a trial; Studio uses that same subscription.
                     </p>
                     <button onClick={() => void signOut()} disabled={authBusy}>

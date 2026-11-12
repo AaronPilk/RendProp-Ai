@@ -69,7 +69,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.evaluate(value => window.businessFixture.trial({ ...value, status: "expired" }), trial);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
-  await expect(trialCard).toContainText("creation window has ended"); await expect(trialCard).toContainText("downloads remain accessible");
+  await expect(trialCard).toContainText("Your free trial has ended"); await expect(trialCard).toContainText("downloads remain accessible");
   await page.evaluate(value => window.businessFixture.trial({ ...value, photo_edits: { used: 2, cap: 5, remaining: 5 } }), trial);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
   await expect(page.getByRole("alert")).toContainText("could not check your free trial");
@@ -105,7 +105,7 @@ try {
   await expect(trialCard).toHaveCount(0);
   await page.evaluate(value => { window.businessFixture.trial({ ...value, status: "expired" }); window.businessFixture.activation({ org_id: value.org_id, available: false, funded: false, authority: "subscription_activation_unavailable" }, "free"); }, trial);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
-  await expect(trialCard).toContainText("creation window has ended"); await expect(pendingCard).toHaveCount(0);
+  await expect(trialCard).toContainText("Your free trial has ended"); await expect(pendingCard).toHaveCount(0);
   await expect(page.locator(".business-plan-name")).toHaveText("free");
   await page.evaluate(value => { window.businessFixture.trial(null); window.businessFixture.activation(value, "free", "2026-09-01T12:00:00Z"); }, pending);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
@@ -113,7 +113,7 @@ try {
   await expect(page.locator(".business-plan-name")).toHaveText("free");
   await page.evaluate(value => { window.businessFixture.trial({ ...value, status: "exhausted", walkthroughs: { used: 1, cap: 1, remaining: 0 }, photo_edits: { used: 5, cap: 5, remaining: 0 }, published_listings: { used: 1, cap: 1, remaining: 0 } }); window.businessFixture.activation({ org_id: value.org_id, available: false, funded: false, authority: "subscription_activation_unavailable" }, "pro"); }, trial);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
-  await expect(trialCard).toContainText("used your included trial allowance"); await expect(pendingCard).toHaveCount(0);
+  await expect(trialCard).toContainText("in your free trial. Choose a plan to keep editing."); await expect(pendingCard).toHaveCount(0);
   for (const bad of [{ ...pending, org_id: "99999999-9999-4999-8999-999999999999" }, { ...pending, available: true }, { ...pending, authority: "verified_retail", available: true, funded: false }]) {
     await page.evaluate(value => window.businessFixture.activation(value, "pro"), bad);
     await page.getByRole("button", { name: "Refresh allowance" }).click();
