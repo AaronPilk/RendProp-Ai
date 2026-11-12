@@ -23,6 +23,10 @@
 --      set mode='pool',updated_at=now(),note='rolled back to pool rules' where singleton;
 --   update public.subscription_trial_media_template
 --      set account_reserve_ref='card-trial-media-2026-10' where singleton;
+-- One transaction, however the file is applied: a refused function pin leaves
+-- nothing behind.
+begin;
+
 do $activate$
 declare pol public.subscription_trial_admission_policy;
  t public.subscription_trial_media_template;a public.media_account_reserves;
@@ -74,3 +78,5 @@ begin
  raise notice 'trial per-user activation: mode=per_user, hosting record=%',
   (select account_reserve_ref from public.subscription_trial_media_template where singleton);
 end $activate$;
+
+commit;

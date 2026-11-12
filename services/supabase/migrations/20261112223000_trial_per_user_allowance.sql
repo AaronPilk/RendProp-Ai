@@ -32,6 +32,10 @@
 -- function rewrite is pinned to the md5 of the body it replaces and of the body
 -- it installs. A function that is neither refuses the whole migration.
 
+-- One transaction, however the file is applied: a refused function pin leaves
+-- nothing behind.
+begin;
+
 do $guard$
 begin
  if to_regclass('public.subscription_trial_purchase_reservations') is null
@@ -451,3 +455,5 @@ begin
 end$$;
 revoke all on function public.subscription_trial_per_user_readiness() from public,anon,authenticated;
 grant execute on function public.subscription_trial_per_user_readiness() to service_role;
+
+commit;
