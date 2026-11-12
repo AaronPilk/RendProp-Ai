@@ -105,7 +105,9 @@ export function decodeTrialOffer(value: unknown): TrialOffer | null {
   const maxDays = count(row.max_days, true);
   const walkthroughs = count(row.walkthroughs), photoEdits = count(row.photo_edits, true), publishedListings = count(row.published_listings);
   const maxVideoSeconds = count(row.max_video_seconds), uploadBudgetBytes = count(row.upload_budget_bytes, true);
-  const current = walkthroughs === 0 && publishedListings === 0 && maxVideoSeconds === 0 && photoEdits === 5;
+  // The photo-only trial's edit count is the server's per-user allowance
+  // (subscription_trial_config.photo_edits, 5 to 20).
+  const current = walkthroughs === 0 && publishedListings === 0 && maxVideoSeconds === 0 && photoEdits >= 5 && photoEdits <= 20;
   const historical = walkthroughs === 1 && publishedListings === 1 && maxVideoSeconds > 0 && maxVideoSeconds <= 90 && photoEdits <= 20;
   if (maxDays !== 7 || (!current && !historical) || uploadBudgetBytes > 1_073_741_824) return invalid();
   return {

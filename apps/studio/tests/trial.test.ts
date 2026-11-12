@@ -183,8 +183,14 @@ test("dormant offer never displays proposed caps; enabled offers require verifie
   const offer = { enabled: true, walkthroughs: 1, photo_edits: 5, published_listings: 1, max_days: 7, max_video_seconds: 90, upload_budget_bytes: 1_073_741_824 };
   assert.equal(decodeTrialOffer(offer)?.photoEdits, 5);
   assert.equal(decodeTrialOffer({ ...offer, walkthroughs: 0, published_listings: 0, max_video_seconds: 0 })?.photoEdits, 5);
-  assert.throws(() => decodeTrialOffer({ ...offer, walkthroughs: 0, published_listings: 0, max_video_seconds: 0, photo_edits: 6 }),
-    /allowance could not be verified/);
+  // The photo-only allowance is the server's per-user row: 5 to 20 edits.
+  for (const edits of [6, 10, 20]) {
+    assert.equal(decodeTrialOffer({ ...offer, walkthroughs: 0, published_listings: 0, max_video_seconds: 0, photo_edits: edits })?.photoEdits, edits);
+  }
+  for (const edits of [4, 21]) {
+    assert.throws(() => decodeTrialOffer({ ...offer, walkthroughs: 0, published_listings: 0, max_video_seconds: 0, photo_edits: edits }),
+      /allowance could not be verified/);
+  }
   for (const value of [{ ...offer, enabled: "true" }, { ...offer, max_days: 8 }, { ...offer, walkthroughs: 0 }, { ...offer, photo_edits: -1 }, { ...offer, max_video_seconds: undefined }, { ...offer, walkthroughs: 2 }, { ...offer, photo_edits: 21 }, { ...offer, photo_edits: 20.5 }, { ...offer, photo_edits: "20" }, { ...offer, published_listings: 2 }, { ...offer, max_video_seconds: 91 }, { ...offer, upload_budget_bytes: 1_073_741_825 }]) {
     assert.throws(() => decodeTrialOffer(value), /allowance could not be verified/);
   }
