@@ -30,6 +30,10 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: read
+    outputs:
+      # Set only when CoreSimulator itself never became ready, so the required
+      # gate below can report a runner problem instead of a failed test.
+      simulator-infrastructure-miss: ${{ steps.simulator.outputs.infrastructure-miss }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -318,6 +322,17 @@ jobs:
         run: python3 apps/ios/tests/run-reel-work-integration.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-work-integration"
       - name: Moving-photo work refuses changed account, consent and library contexts
         run: python3 apps/ios/tests/run-moving-photo-identity.py --evidence-dir "$RUNNER_TEMP/rendprop-moving-photo-identity"
+      # The first `xcrun simctl` call on a fresh hosted Mac starts CoreSimulator
+      # and has taken longer than the 120 s the gate below allows it, failing
+      # the job before a test ran. Absorb that cold start here with bounded
+      # retries and finite deadlines, and boot the same iPhone kernel the gates
+      # would pick. No gate, deadline inside a gate, or assertion changes.
+      - name: Warm CoreSimulator and boot one iPhone kernel (bounded setup)
+        id: simulator
+        timeout-minutes: 22
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 tools/ci/warm-simulator.py --evidence-dir "$RUNNER_TEMP/rendprop-simulator-warmup-$GITHUB_RUN_ATTEMPT"
       - name: Actual AVFoundation extraction handles downloaded MP4 bytes
         run: python3 apps/ios/tests/run-clip-frames.py --evidence-dir "$RUNNER_TEMP/rendprop-clip-frames"
       - name: Original photo motion preserves source pixels, orientation and geometry
@@ -607,10 +622,49 @@ jobs:
           AUDIT_RESULT: ${{ needs['audit-harnesses'].result }}
           PHOTO_RESULT: ${{ needs['native-photo-renderer'].result }}
           REEL_RESULT: ${{ needs['native-reel-recovery'].result }}
+          AUDIT_SIMULATOR_MISS: ${{ needs['audit-harnesses'].outputs['simulator-infrastructure-miss'] }}
+        shell: bash
         run: |
-          test "$AUDIT_RESULT" = success
-          test "$PHOTO_RESULT" = success
-          test "$REEL_RESULT" = success
+          set -euo pipefail
+          # Every job is still required: anything other than success fails
+          # this gate. The only change is that a job which never ran a test
+          # (no runner acquired, run cancelled, simulator never started) is
+          # named as an infrastructure miss rather than left looking like a
+          # code failure.
+          failed=0
+          missed=0
+          check() {
+            local name="$1" result="$2" setup_miss="${3:-}"
+            case "$result" in
+              success)
+                echo "ok: $name" ;;
+              cancelled|skipped)
+                missed=1
+                echo "::error title=Infrastructure miss (job never ran)::$name ended as '$result' without running a test: no runner was acquired or the run was cancelled. Re-run the failed jobs." ;;
+              *)
+                if [ "$setup_miss" = true ]; then
+                  missed=1
+                  echo "::error title=Infrastructure miss (simulator setup)::$name stopped in CoreSimulator setup before its simulator tests ran. Re-run the failed jobs."
+                else
+                  failed=1
+                  echo "::error title=Native audit failure::$name ended as '$result'. Read that job's log; this is a real gate failure."
+                fi ;;
+            esac
+            printf '| %s | %s |\n' "$name" "$result" >> "$GITHUB_STEP_SUMMARY"
+          }
+          printf '| Native audit job | Result |\n| --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+          check 'Offline audit evidence, consent and adoption source gates' "$AUDIT_RESULT" "$AUDIT_SIMULATOR_MISS"
+          check 'Actual UIKit photo exports and classified controls' "$PHOTO_RESULT"
+          check 'Paid reel recovery and classified controls' "$REEL_RESULT"
+          if [ "$failed" -ne 0 ]; then
+            echo 'Verdict: at least one native audit gate failed.' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ "$missed" -ne 0 ]; then
+            echo 'Verdict: no gate failed, but at least one never ran (infrastructure). Still required: re-run the failed jobs.' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo 'Verdict: every native audit gate ran and passed.' | tee -a "$GITHUB_STEP_SUMMARY"
 
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)
@@ -691,8 +745,7 @@ jobs:
               exit 0
             fi
           fi
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg unzip
+          "$GITHUB_WORKSPACE/tools/ci/apt-retry.sh" --no-install-recommends ffmpeg unzip
           encoders="$(ffmpeg -hide_banner -encoders 2>/dev/null)"
           grep -Eq '[[:space:]]libx264[[:space:]]' <<<"$encoders"
           grep -Eq '[[:space:]]aac[[:space:]]' <<<"$encoders"
@@ -1963,7 +2016,7 @@ jobs:
       - name: psql client
         run: |
           if ! command -v psql >/dev/null; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+            "$GITHUB_WORKSPACE/tools/ci/apt-retry.sh" postgresql-client
           fi
           psql --version
 
@@ -2141,6 +2194,10 @@ jobs:
           # Same exact pin as edge-functions; the handler and spatial edge
           # regressions run the real Deno test files offline.
           deno-version: "2.9.6"
+      - name: Setup retries stay bounded and never relax verification (closed fixtures)
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 tools/ci/test_ci_setup_retries.py
       - name: Install explicit PostgreSQL 17 binaries
         shell: bash
         run: |
@@ -2151,12 +2208,19 @@ jobs:
           . /etc/os-release
           test "$VERSION_CODENAME" = noble
           sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+          # Bounded download retry; the key is then pinned by its full
+          # fingerprint, so a retried or substituted file cannot be trusted.
+          sudo curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --max-time 60 \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc \
             -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          key_fingerprints="$(gpg --show-keys --with-colons /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc | awk -F: '$1 == "pub" { want = 1 } $1 == "fpr" && want { print $10; want = 0 }')"
+          test "$key_fingerprints" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
           printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nArchitectures: %s\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc\n' \
             "$VERSION_CODENAME" "$(dpkg --print-architecture)" | sudo tee /etc/apt/sources.list.d/pgdg.sources >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-17 postgresql-client-17
+          # The PGDG index is sometimes caught mid-publication ("File has
+          # unexpected size"). Retry a fixed number of times with backoff;
+          # apt still verifies the repository signature and every hash.
+          tools/ci/apt-retry.sh postgresql-17 postgresql-client-17
           for tool in initdb pg_ctl psql createdb; do
             test -x "/usr/lib/postgresql/17/bin/$tool"
             pg_version=$("/usr/lib/postgresql/17/bin/$tool" --version)
@@ -2329,8 +2393,7 @@ jobs:
             services/supabase/tests/rentcast_billing_binding.fixture.ts
       - name: Install actual CPU, font and isolated database test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-liberation2 postgresql postgresql-client
+          "$GITHUB_WORKSPACE/tools/ci/apt-retry.sh" ffmpeg fonts-liberation2 postgresql postgresql-client
           python -m pip install -r services/edge/property-video-render/requirements.txt
           python -m pip install -r services/edge/property-video-render/requirements-test.txt
           npm ci --prefix services/edge/property-video-render --ignore-scripts
@@ -2705,8 +2768,7 @@ jobs:
               exit 0
             fi
           fi
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          "$GITHUB_WORKSPACE/tools/ci/apt-retry.sh" --no-install-recommends ffmpeg
           filters="$(ffmpeg -hide_banner -filters 2>/dev/null)"
           grep -Eq '[[:space:]]zscale[[:space:]]' <<<"$filters"
           grep -Eq '[[:space:]]tonemap[[:space:]]' <<<"$filters"
