@@ -55,9 +55,12 @@ def main():
     try:
         commands = [('node', [str(args.node), '--version']), ('browser', [str(args.browser), '--version']),
             ('ffmpeg', ['ffmpeg', '-version']), ('ffprobe', ['ffprobe', '-version'])]
+        journal['runtimeVersionsRaw'] = {}
         for label, command in commands:
-            journal['runtimeVersions'][label] = subprocess.check_output(command,
+            raw_version = subprocess.check_output(command,
                 text=True, stderr=subprocess.STDOUT).splitlines()[0]
+            journal['runtimeVersionsRaw'][label] = raw_version
+            journal['runtimeVersions'][label] = raw_version.strip()
         versions = journal['runtimeVersions']
         assert versions['node'] == 'v24.22.2', 'Node differs from failed hosted condition'
         assert versions['browser'] == 'Google Chrome for Testing 153.0.8010.12', 'Browser version differs'
