@@ -55,6 +55,13 @@ enum RPGradient {
     var filePackageExtras: [PhotoExportRenderer.Extra] = []
     var filePhotoExport: PhotoExportSelection?
     var packageError: String?
+    // The listing screen's own link check, which the package now reuses.
+    var preparingListingPackage = false
+    var verifiedBuyerLink: (key: String, url: URL)?
+    var withdrawnBuyerLinkKey: String?
+    func shareLinkKey(for fallback: URL, listing current: Listing) -> String {
+        "\(fallback.absoluteString):\(current.serverShareURL?.absoluteString ?? ""):\(current.address)"
+    }
     func mediaExportAdmission(for listing: Listing) -> () -> Bool {
         { self.admissionReads += 1; return self.admissionAllowed }
     }
@@ -156,6 +163,26 @@ enum RPGradient {
         await withdrawn.run()
         check(withdrawn.filePhotoExport == nil && withdrawn.packageError?.contains("no longer published") == true,
             "withdrawn publication cannot be exported with a dead buyer link")
+        // The listing screen's completed check is reused: no second lookup.
+        // The resolver would still answer "withdrawn" here if it were asked.
+        let readsBeforeReuse = PublicShareLinkResolver.reads
+        let reused = ListingPackageAssemblyHarness()
+        reused.mediaItems = [items.first { $0.kind == .photo }!]
+        let screenFallback = reused.currentListing.serverShareURL!
+        reused.verifiedBuyerLink = (reused.shareLinkKey(for: screenFallback, listing: reused.currentListing), canonical)
+        await reused.run()
+        let reusedNoteURL = reused.filePackageExtras.first { $0.name == "listing-details.txt" }!.url
+        let reusedNote = try String(contentsOf: reusedNoteURL, encoding: .utf8)
+        check(PublicShareLinkResolver.reads == readsBeforeReuse && reused.packageError == nil
+              && reusedNote.contains("Listing page: \(canonical.absoluteString)"),
+            "a link the listing screen already verified is reused without a second lookup")
+        let knownWithdrawn = ListingPackageAssemblyHarness()
+        knownWithdrawn.mediaItems = [items.first { $0.kind == .photo }!]
+        knownWithdrawn.withdrawnBuyerLinkKey = knownWithdrawn.shareLinkKey(for: screenFallback, listing: knownWithdrawn.currentListing)
+        await knownWithdrawn.run()
+        check(PublicShareLinkResolver.reads == readsBeforeReuse && knownWithdrawn.filePhotoExport == nil
+              && knownWithdrawn.packageError?.contains("no longer published") == true,
+            "a publication the listing screen found withdrawn is refused without a second lookup")
         PublicShareLinkResolver.next = .available(canonical)
 
         let missing = ListingPackageAssemblyHarness()
