@@ -30,8 +30,13 @@ function provenKind(asset:Row,rows:Row[],originals:Row[],actor:string,org:string
   if(rows.length===0)return originals.some(p=>p.original_key===asset.storage_key)?{kind:'original',provenance:null}:{kind:'unknown',provenance:null};
   if(rows.length!==1)return{kind:'unknown',provenance:null};
   const p=rows[0],kind=known(p.kind),q=p.qc;
+  // The photo judge is advisory (owner decisions 6 and 12 Nov 2026): an edit is
+  // accepted and publishable whatever the verdict says, and the verdict stays
+  // on the disclosure record. Requiring verdict 'pass' here left an accepted
+  // staged or twilight photo with recorded findings unusable in a video. The
+  // accepted, publishable, exact-bytes proof below is unchanged.
   if(kind==='unknown'||!UUID.test(p.id)||p.org_id!==org||p.listing_id!==listing||p.altered_key!==asset.storage_key||
-    !object(q)||q.publishable!==true||q.action!=='accept'||q.verdict!=='pass'||q.output_sha256!==asset.sha256)return{kind:'unknown',provenance:null};
+    !object(q)||q.publishable!==true||q.action!=='accept'||q.output_sha256!==asset.sha256)return{kind:'unknown',provenance:null};
   if(p.photo_publication!==null){
     const v=p.photo_publication;
     if(!publicationMatches(v,asset,actor,org,listing,library))return{kind:'unknown',provenance:null};
