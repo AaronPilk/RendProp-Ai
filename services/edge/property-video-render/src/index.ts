@@ -3,7 +3,7 @@ import {DurableObject,WorkerEntrypoint} from 'cloudflare:workers';
 import type {WorkerAction} from '../../../supabase/functions/property-video-jobs/contracts.ts';
 import {UUID,capabilities,outputCapabilities,egress,isTerminal,sanitizedFailure} from './controller';
 import type {SlotState,EgressProps,CPUAction,PrepareImageAction} from './controller';
-import {photoCapabilities,photoOutputCapabilities,checkedPhotoResult,photoFailure} from './photo-quality';
+import {photoCapabilities,photoOutputCapabilities,checkedPhotoResult,photoFailure,photoPrewarmOnly,photoPollDelay,photoCallbackDelay,PHOTO_PREWARM_HOLD_MS} from './photo-quality';
 import type {PhotoSlotState,PhotoAction} from './photo-quality';
 import {bindTemporalProducer,attestTemporalExtract,checkedTemporalAttestation,diagnosticTemporalAttestation,TemporalEnvelopeRefusal} from './temporal-envelope';
 import type {TemporalAttestation,TemporalAttestationDiagnostic} from './temporal-envelope';
@@ -19,6 +19,8 @@ interface Env extends PhotoMotionRuntimeConfiguration {
   ENABLED:string;
   EDGE_WORKER_URL:string;
   EDGE_SERVICE_ROLE_KEY:string;
+  /** Optional Supabase region for every authority call (deployment setting). */
+  EDGE_FUNCTION_REGION?:string;
   RENDER_TRIGGER_KEY:string;
   MEDIA_HOSTS:string;
   CPU_TEMPORAL_PRODUCER_IMAGE_URI?:string;
@@ -30,6 +32,10 @@ interface Env extends PhotoMotionRuntimeConfiguration {
 const POLL_MS=15_000;
 const CPU_TIMEOUT_MS=20*60_000;
 const COLD_READY_MS=120_000;
+// Cron runs in whichever Cloudflare location is free, so without a pinned
+// region each minute's queue read lands on a different, cold Supabase region
+// far from the database. This is deployment configuration, never caller input.
+const EDGE_REGIONS=new Set(['ap-northeast-1','ap-northeast-2','ap-south-1','ap-southeast-1','ap-southeast-2','ca-central-1','us-east-1','us-west-1','us-west-2','eu-central-1','eu-west-1','eu-west-2','eu-west-3','sa-east-1']);
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
 async function photoStartBody(request:Request):Promise<{check_id:string}|null>{
   if(request.headers.get('Content-Type')?.split(';')[0].trim()!=='application/json'||Number(request.headers.get('Content-Length')??0)>256||!request.body)return null;
@@ -95,7 +101,7 @@ async function bridge(env:Env,path:string,body?:unknown,domain:'video'|'photo'='
   if (base.protocol!=='https:'||!base.hostname.endsWith('.supabase.co')||!env.EDGE_SERVICE_ROLE_KEY) throw new BridgeFailure('bridge_configuration');
   if(domain==='photo')base=new URL('/functions/v1/photo-quality-worker',base.origin);
   let response:Response;try {response=await fetch(`${base.toString().replace(/\/$/,'')}/${path}`,{
-    method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${env.EDGE_SERVICE_ROLE_KEY}`,apikey:env.EDGE_SERVICE_ROLE_KEY,'Content-Type':'application/json'},
+    method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${env.EDGE_SERVICE_ROLE_KEY}`,apikey:env.EDGE_SERVICE_ROLE_KEY,'Content-Type':'application/json',...(env.EDGE_FUNCTION_REGION&&EDGE_REGIONS.has(env.EDGE_FUNCTION_REGION)?{'x-region':env.EDGE_FUNCTION_REGION}:{})},
     // workerd rejects redirect:'error' before issuing this subrequest. Manual
     // mode never follows/forwards credentials; non-2xx stays a closed refusal.
     body:body===undefined?undefined:JSON.stringify(body),redirect:'manual',signal:AbortSignal.timeout(domain==='photo'&&path==='judge'?120_000:50_000)});}catch(error) {throw transportFailure(error);}
@@ -112,6 +118,8 @@ export class PropertyVideoCPU extends DurableObject<Env> {
   protected photoMotionOnly=false;
   private advancing=false;
   private reconcilingHeld=false;
+  /** In-memory only: the photo capability set this instance last bound. */
+  private photoEgressBound?:string;
   constructor(ctx:DurableObjectState,env:Env) {
     super(ctx,env);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS slot (id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL)');
@@ -201,6 +209,9 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     if (this.env.ENABLED!=='true'||!UUID.test(jobID)||!['slot-0','slot-1'].includes(slot)) return false;
     if(this.reconcilingHeld)return false;
     let prior=this.read();
+    // An unused photo warm-up never delays video work: release it (stop()
+    // destroys that process, so this job still boots its own fresh one).
+    if(photoPrewarmOnly(prior)){await this.stop();prior=null;}
     if(prior&&'jobID'in prior&&this.photoMotionOnly&&prior.photoMotionStartup?.held){
       const same=prior.jobID===jobID&&prior.workKind===workKind;
       if(!await this.reconcileHeldTerminal(prior))return same;
@@ -219,8 +230,26 @@ export class PropertyVideoCPU extends DurableObject<Env> {
   async wakePhoto(checkID:string,slot:'slot-0'|'slot-1'):Promise<boolean> {
     if(this.env.ENABLED!=='true'||!UUID.test(checkID)||!['slot-0','slot-1'].includes(slot))return false;
     const prior=this.read();
+    if(photoPrewarmOnly(prior)){
+      // The warm process has never held a lease, a task or customer bytes, so a
+      // ready check may use it instead of waiting for the check it was started
+      // for. It keeps the token that process was started with.
+      this.save({kind:'photo_quality',checkID,slot:prior.slot,token:prior.token});
+      await this.ctx.storage.setAlarm(Date.now()+1);return true;
+    }
     if(prior&&(!('kind'in prior)||prior.kind!=='photo_quality'||prior.checkID!==checkID))return false;
     if(!prior)this.save({kind:'photo_quality',checkID,slot,token:crypto.randomUUID()+crypto.randomUUID()});
+    await this.ctx.storage.setAlarm(Date.now()+1);return true;
+  }
+  /** Best effort: start this slot's process while the edit is still generating,
+   * so the comparison does not wait for a cold start. Never displaces anything,
+   * issues no lease and binds no egress; any real work may take the slot. */
+  async prewarmPhoto(checkID:string,slot:'slot-0'|'slot-1'):Promise<boolean> {
+    if(this.env.ENABLED!=='true'||!UUID.test(checkID)||!['slot-0','slot-1'].includes(slot))return false;
+    const prior=this.read();
+    if(prior){const owner=prior as PhotoSlotState;return owner.kind==='photo_quality'&&owner.checkID===checkID;}
+    if(this.ctx.container?.running)return false;
+    this.save({kind:'photo_quality',checkID,slot,token:crypto.randomUUID()+crypto.randomUUID(),prewarmUntil:Date.now()+PHOTO_PREWARM_HOLD_MS});
     await this.ctx.storage.setAlarm(Date.now()+1);return true;
   }
   private bridgeFor(state:SlotState,path:string,body?:unknown):Promise<Record<string,unknown>>{
@@ -586,16 +615,54 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       }
     }
   }
+  private async bindPhotoEgress(props:EgressProps):Promise<void> {
+    // Polls are frequent, so re-issue the interceptor only when the capability
+    // set changed or this instance restarted (the marker is not persisted).
+    const key=JSON.stringify(props);
+    if(this.photoEgressBound===key)return;
+    await this.bindEgress(props);this.photoEgressBound=key;
+  }
+  /** Start, but do not use, the process a generating edit's check will need. */
+  private async prewarmPhotoContainer(state:PhotoSlotState):Promise<void> {
+    const container=this.ctx.container;
+    if(!container)throw Error('cpu_configuration_missing');
+    // No await between reading the slot (caller) and start(): a wake that
+    // replaces this slot either sees the process and destroys it, or runs first.
+    if(!container.running){
+      try{container.start({image:container.images.cpu,instance:'standard-3',enableInternet:false,env:{CONTAINER_TOKEN:state.token,MEDIA_HOSTS:this.env.MEDIA_HOSTS},labels:{workload:'property-video'}});}catch(error){throw cpuAPIFailure('start',error);}
+      try{this.ctx.waitUntil(container.monitor().then(()=>{},()=>{}));}catch{ /* boot() observes a dead process itself. */ }
+    }
+    try{await container.setInactivityTimeout(PHOTO_PREWARM_HOLD_MS+30_000);}catch(error){throw cpuAPIFailure('inactivity',error);}
+  }
+  /** The measured receipt is already durable: release the CPU while the
+   * authority confirms it, instead of waiting for the stop and another alarm. */
+  private async finishPhoto(state:PhotoSlotState,call:(path:string,body?:unknown)=>Promise<Record<string,unknown>>):Promise<void> {
+    const released=this.ctx.container?.running?this.ctx.container.destroy().catch(()=>{}):Promise.resolve();
+    await call(state.pendingCallback!.path,state.pendingCallback!.body);
+    await released;
+    await this.stop();
+  }
   private async advancePhoto(state:PhotoSlotState):Promise<void> {
     if(this.env.ENABLED!=='true'){await this.stop();return;}
     const call=(path:string,body?:unknown)=>bridge(this.env,path,body,'photo');
+    if(photoPrewarmOnly(state)){
+      try{
+        if(Date.now()>=state.prewarmUntil!){await this.stop();return;}
+        await this.prewarmPhotoContainer(state);
+        // A real start or other work may have taken the slot meanwhile and has
+        // already set its own alarm; only an untouched warm-up schedules release.
+        const latest=this.read();
+        if(photoPrewarmOnly(latest)&&latest.checkID===state.checkID&&latest.prewarmUntil===state.prewarmUntil)await this.ctx.storage.setAlarm(state.prewarmUntil!);
+      }catch(error){
+        console.warn('photo_quality_prewarm_refused',cpuDiagnostic(error));
+        const latest=this.read();
+        if(photoPrewarmOnly(latest)&&latest.checkID===state.checkID)await this.stop();
+      }
+      return;
+    }
     try{
       if(this.ctx.container?.running)await this.ctx.container.setInactivityTimeout(60_000);
-      if(state.pendingCallback){
-        if(this.ctx.container?.running)await this.ctx.container.destroy();
-        await call(state.pendingCallback.path,state.pendingCallback.body);
-        await this.stop();return;
-      }
+      if(state.pendingCallback){await this.finishPhoto(state,call);return;}
       if(state.taskID&&state.task){
         if(!this.ctx.container?.running||Date.now()-(state.startedAt??0)>CPU_TIMEOUT_MS)throw Error('cpu_interrupted');
         if(Date.now()-(state.heartbeatAt??0)>=60_000){
@@ -603,23 +670,22 @@ export class PropertyVideoCPU extends DurableObject<Env> {
           if(current.current!==true){await this.stop();return;}
           state.heartbeatAt=Date.now();this.save(state);
         }
-        await this.bindEgress(state.capabilities!);
+        await this.bindPhotoEgress(state.capabilities!);
         const status=await this.cpu('status',{task_id:state.taskID});
-        if(status.state==='working'){await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;}
+        if(status.state==='working'){await this.ctx.storage.setAlarm(Date.now()+photoPollDelay(state.startedAt,Date.now(),POLL_MS));return;}
         if(status.state==='failed'||status.state==='missing')throw new CPUFailure('status',status.state==='failed'?'cpu_task_failed':'cpu_task_missing');
         const result=checkedPhotoResult(status.result,state.task);
         if(status.state==='prepared'){
           const output=await call('derivatives',{check_id:state.checkID,lease_token:state.task.lease_token,manifest:result.manifest});
           state.capabilities=photoOutputCapabilities(output,result,new Set(this.env.MEDIA_HOSTS.split(',')));
-          this.save(state);await this.bindEgress(state.capabilities);
+          this.save(state);await this.bindPhotoEgress(state.capabilities);
           await this.cpu('upload',{task_id:state.taskID,output});
-          await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;
+          await this.ctx.storage.setAlarm(Date.now()+photoPollDelay(state.startedAt,Date.now(),POLL_MS));return;
         }
         if(status.state!=='uploaded'||!Array.isArray(result.receipts)||result.receipts.length!==10)throw Error('photo_quality_protocol_refused');
         state.pendingCallback={path:'derivatives-finish',body:{check_id:state.checkID,lease_token:state.task.lease_token,receipts:result.receipts}};
-        this.save(state);
-        if(this.ctx.container?.running)await this.ctx.container.destroy();
-        await this.ctx.storage.setAlarm(Date.now()+1);return;
+        this.save(state); // Save the measured receipt before the fenced callback.
+        await this.finishPhoto(state,call);return;
       }
       const action=await call('tick',{check_id:state.checkID,worker_id:state.slot});
       if(action.check_id!==state.checkID||'job_id'in action)throw Error('photo_quality_identity_conflict');
@@ -630,14 +696,18 @@ export class PropertyVideoCPU extends DurableObject<Env> {
         await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;
       }
       if(action.action!=='prepare_photo_quality')throw Error('photo_quality_action_required');
-      state.task=action as unknown as PhotoAction;state.startedAt=Date.now();
+      // The tick has just issued this lease; the first renewal is due a minute
+      // from now, not on the first status poll.
+      state.task=action as unknown as PhotoAction;state.startedAt=Date.now();state.heartbeatAt=state.startedAt;delete state.prewarmUntil;
       state.capabilities=photoCapabilities(state.task,new Set(this.env.MEDIA_HOSTS.split(',')));this.save(state);
+      this.photoEgressBound=undefined;
       await this.boot(state);
       const accepted=await this.cpu('execute',action);
       if(typeof accepted.task_id!=='string'||!/^[0-9a-f]{64}$/.test(accepted.task_id))throw Error('cpu_receipt_invalid');
-      state.taskID=accepted.task_id;this.save(state);await this.ctx.storage.setAlarm(Date.now()+POLL_MS);
+      state.taskID=accepted.task_id;this.save(state);await this.ctx.storage.setAlarm(Date.now()+photoPollDelay(state.startedAt,Date.now(),POLL_MS));
     }catch(error){
       console.warn('photo_quality_cpu_refused',cpuDiagnostic(error));
+      this.photoEgressBound=undefined;
       this.ctx.storage.sql.exec('INSERT INTO diagnostic (id,observation) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET observation=excluded.observation',JSON.stringify(closedDiagnostic(error)));
       if(error instanceof AuthorityRefusal&&[403,404,409].includes(error.status)){await this.stop();return;}
       if(state.task&&!state.pendingCallback){
@@ -645,6 +715,11 @@ export class PropertyVideoCPU extends DurableObject<Env> {
         if(this.ctx.container?.running)await this.ctx.container.destroy();
         try{await call('failure',state.pendingCallback.body);await this.stop();}
         catch(failure){if(failure instanceof AuthorityRefusal&&[403,404,409].includes(failure.status))await this.stop();else await this.ctx.storage.setAlarm(Date.now()+POLL_MS);}
+      }else if(state.pendingCallback){
+        // Only this saved receipt is replayed: no decode, upload or new lease.
+        if(this.ctx.container?.running)await this.ctx.container.destroy().catch(()=>{});
+        const retries=state.callbackRetries??0;state.callbackRetries=retries+1;this.save(state);
+        await this.ctx.storage.setAlarm(Date.now()+photoCallbackDelay(retries,POLL_MS));
       }else await this.ctx.storage.setAlarm(Date.now()+POLL_MS);
     }
   }
@@ -656,6 +731,7 @@ export class PhotoMotionCPU extends PropertyVideoCPU {
   protected override photoMotionOnly=true;
   override async wake(jobID:string,slot:'slot-0'|'slot-1',workKind?:AerialWorkKind):Promise<boolean>{return slot==='slot-0'?super.wake(jobID,slot,workKind):false;}
   override async wakePhoto(_checkID:string,_slot:'slot-0'|'slot-1'):Promise<boolean>{return false;}
+  override async prewarmPhoto(_checkID:string,_slot:'slot-0'|'slot-1'):Promise<boolean>{return false;}
 }
 
 async function dispatch(env:Env):Promise<void> {
@@ -710,13 +786,22 @@ export default {
     if (request.method==='GET'&&url.pathname==='/health') return json({service:'property-video-render',enabled:env.ENABLED==='true',provider_dispatch:false});
     const inspect=request.method==='GET'&&url.pathname==='/diagnostic';
     const photoStart=request.method==='POST'&&url.pathname==='/photo-quality/start';
-    if (!inspect&&!photoStart&&(request.method!=='POST'||url.pathname!=='/wake')) return json({error:'not_found'},404);
+    const photoPrewarm=request.method==='POST'&&url.pathname==='/photo-quality/prewarm';
+    if (!inspect&&!photoStart&&!photoPrewarm&&(request.method!=='POST'||url.pathname!=='/wake')) return json({error:'not_found'},404);
     if (!env.RENDER_TRIGGER_KEY||request.headers.get('Authorization')!==`Bearer ${env.RENDER_TRIGGER_KEY}`) return json({error:'private_controller_only'},403);
     if(inspect)return json({slots:await Promise.all((['slot-0','slot-1'] as const).map(async slot=>{
       const cpu=env.CPU.getByName(slot);const[observation,attestations]=await Promise.all([cpu.diagnostic(),cpu.temporalAttestations()]);
       return{slot,observation,...(attestations.length?{temporal_attestations:attestations}:{})};
     }))});
     if (env.ENABLED!=='true') return json({error:'renderer_disabled'},503);
+    if(photoPrewarm){
+      // Optional head start for a check whose edit is still generating. A
+      // refusal is normal (both slots busy) and changes nothing for the check.
+      const body=await photoStartBody(request);if(!body)return json({error:'bounded_check_required'},400);
+      const checkID=body.check_id;
+      const accepted=await env.CPU.getByName('slot-0').prewarmPhoto(checkID,'slot-0')||await env.CPU.getByName('slot-1').prewarmPhoto(checkID,'slot-1');
+      return json({accepted,check_id:checkID},accepted?202:200);
+    }
     if(photoStart){
       const body=await photoStartBody(request);if(!body)return json({error:'bounded_check_required'},400);
       const checkID=body.check_id;

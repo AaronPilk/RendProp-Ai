@@ -9,6 +9,28 @@ export interface PhotoSlotState {
   kind:'photo_quality';checkID:string;slot:'slot-0'|'slot-1';token:string;
   task?:PhotoAction;taskID?:string;capabilities?:EgressProps;startedAt?:number;heartbeatAt?:number;
   pendingCallback?:{path:'derivatives-finish'|'failure';body:Record<string,unknown>};
+  /** Callback replays so far; only spaces out retries of the saved receipt. */
+  callbackRetries?:number;
+  /** Set only while the slot holds a started, never-used process for a check
+   * whose edit is still generating. Cleared by that check's real start. */
+  prewarmUntil?:number;
+}
+/** How long an unused warm process may wait for its check before it is released. */
+export const PHOTO_PREWARM_HOLD_MS=90_000;
+/** A reserved-but-unused warm slot: no lease, no task, no customer bytes yet. */
+export function photoPrewarmOnly(state:unknown):state is PhotoSlotState&{prewarmUntil:number} {
+  const value=state as PhotoSlotState|null;
+  return !!value&&value.kind==='photo_quality'&&value.prewarmUntil!==undefined&&!value.task&&!value.taskID&&!value.pendingCallback;
+}
+/** A photo comparison finishes in seconds, so the video controller's 15 s
+ * poll would be most of its wall time. Poll closely at first, then back off. */
+export function photoPollDelay(startedAt:number|undefined,now:number,slow:number):number {
+  const elapsed=now-(startedAt??now);
+  return elapsed<45_000?400:elapsed<120_000?2_000:slow;
+}
+/** Retry spacing for a saved callback: 1 s, 2 s, 4 s, 8 s, then the slow poll. */
+export function photoCallbackDelay(retries:number,slow:number):number {
+  return Math.min(slow,1_000*2**Math.max(0,Math.min(retries,10)));
 }
 const SHA=/^[a-f0-9]{64}$/;
 const REGIONS=['whole','tl','tr','bl','br'];
