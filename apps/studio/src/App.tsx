@@ -27,6 +27,7 @@ import type { IconName } from "./icons";
 import { INDUSTRIES, scopeKey, writePlans } from "./workspace";
 import { restoreDrafts } from "./drafts";
 import { canRetainWorkspace } from "./workspace-refresh";
+import { retainFreshLinks } from "./data/media-cache";
 import {useEditingAssistant} from "./features/sync/useEditingAssistant";
 import type { Industry, PlanItem } from "./workspace";
 import "./design/real-estate-glass.css";
@@ -170,6 +171,7 @@ export default function App({ servicesFactory }: {
   const dialogRef = useRef<HTMLElement | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const mediaPageAbort = useRef<AbortController | null>(null);
+  const listingRefresh = useRef<AbortController | null>(null);
   const [mediaPageBusy, setMediaPageBusy] = useState(false);
   const isConnected =
     session.status === "signed-in" && !session.identity?.isAnonymous;
@@ -357,6 +359,26 @@ export default function App({ servicesFactory }: {
     setStoredAgentPlan({...structuredClone(plan),id:crypto.randomUUID()});
     navigate("editor");
   }
+  /** An action changed listing rows (a new property, its facts or cover), not
+   * the account. Re-read that one page; the account, its libraries and every
+   * open workspace stay mounted. Any failure falls back to the full verified reload. */
+  function refreshListings() {
+    if (!services || !workspace || busy) { setRefresh(v => v + 1); return; }
+    listingRefresh.current?.abort();
+    const controller = new AbortController();
+    listingRefresh.current = controller;
+    const version = session.identityVersion, scope = editScope;
+    void services.listListings(workspace.org.id, controller.signal).then(spaces => {
+      if (controller.signal.aborted || activeVersion.current !== scope ||
+          services.getSnapshot().identityVersion !== version) return;
+      setLastSynced(new Date());
+      setListings(spaces);
+      const requestedListing = initialListing.current;
+      if (requestedListing) { setSelected(spaces.find(item => item.id === requestedListing) ?? null); initialListing.current = null; }
+    }, () => {
+      if (!controller.signal.aborted && activeVersion.current === scope) setRefresh(v => v + 1);
+    });
+  }
   function setShowLogin(open: boolean) {
     if (open)
       returnFocus.current =
@@ -402,19 +424,18 @@ export default function App({ servicesFactory }: {
       return () => controller.abort();
     }
     directoryRefreshStartedAt.current = Date.now();
+    listingRefresh.current?.abort();
     setBusy(true);
     // Keep the same verified scope mounted while refreshing. Identity and org
     // selection already fence the rendered data; blanking this state here also
     // blanks the editor's scope and unnecessarily discards its selected files.
     const version = session.identityVersion;
     void (async () => {
-      const account = await services.loadWorkspace(
+      // The account profile and the listing page load side by side once the
+      // directory has named the library; neither waits for the other.
+      const { workspace: account, listings: spaces } = await services.loadLibrary(
         controller.signal,
         requestedOrg,
-      );
-      const spaces = await services.listListings(
-        account.org.id,
-        controller.signal,
       );
       if (
         controller.signal.aborted ||
@@ -554,7 +575,10 @@ export default function App({ servicesFactory }: {
       }
       if (current() && combined) {
         mediaDepth.current.pages = pages;
-        setMedia(combined);
+        // A refresh keeps links that are still good, so photos already on
+        // screen are not downloaded a second time.
+        const latest = combined;
+        setMedia(previous => retainFreshLinks(previous, latest));
         setMediaLoadedScope(scope);
         setMediaVersion(version);
       }
@@ -572,6 +596,7 @@ export default function App({ servicesFactory }: {
     () => () => {
       transfer.current?.abort();
       mediaPageAbort.current?.abort();
+      listingRefresh.current?.abort();
     },
     [],
   );
@@ -1061,7 +1086,7 @@ export default function App({ servicesFactory }: {
           {page === "overview" && <Dashboard services={services} workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
           {entry?.gate && workspace && <FeatureGate feature={entry.gate} listings={listings} spaceType={workspace.org.spaceType} onChoose={id=>openFeature(entry.gate!,id)} onCancel={()=>setFeatureEntry(undefined)} onCreate={createProperty}/>}
           {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening your properties…</p>}>
-            <ListingWorkflow active={page === "properties"} entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onContactGuardChange={contactGuardChanged} />
+            <ListingWorkflow active={page === "properties"} entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onListingsChanged={refreshListings} onSelectListing={selectListing} onContactGuardChange={contactGuardChanged} />
           </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening creative tools…</p>}>
             <CreativeWorkspace active={page === "creative"} entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={id => selectListing(id, true)} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} onPresenterPendingChange={presenterPendingChanged} />
@@ -1173,6 +1198,7 @@ export default function App({ servicesFactory }: {
                                     src={photo.url}
                                     alt={photo.caption || "Listing photo"}
                                     loading="lazy"
+                                    decoding="async"
                                     referrerPolicy="no-referrer"
                                   />
                                   <strong>{photo.caption || "Photo"}</strong>

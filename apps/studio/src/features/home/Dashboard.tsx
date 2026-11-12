@@ -1,6 +1,7 @@
 import {isPrivateMediaURL,privateMediaCapability} from "../../data/private-media";
 import {useEffect,useRef,useState} from "react";
-import type { Listing, Workspace, StudioServices } from "../../data";
+import type { Listing, ListingMedia, Workspace, StudioServices } from "../../data";
+import {recallMedia,rememberMedia} from "../../data/media-cache";
 import Icon from "../../icons";
 import {AI_FEATURES,FEATURES,featureFor,homeWords,listingStatus,type Feature,type FeatureId} from "./features";
 
@@ -13,13 +14,25 @@ export function FeatureCards({features,onOpen}: {features:readonly Feature[];onO
 export function PropertyPreview({listing,services,workspace}:{listing:Listing;services:StudioServices|null;workspace:Workspace}) {
   const [url,setURL]=useState<string|null>(null),[failed,setFailed]=useState(false);
   useEffect(()=>{const controller=new AbortController(),version=services?.getSnapshot().identityVersion;setURL(null);setFailed(false);
-    if(!services||!listing.mainPhotoKey||listing.orgId!==workspace.org.id)return()=>controller.abort();
-    void services.listMedia(workspace.org.id,listing.id,controller.signal).then(media=>{
+    if(!services||version===undefined)return()=>controller.abort();
+    const library=workspace.libraryOrgId??workspace.org.id;
+    const scope={identityVersion:version,user:workspace.user.id,library,org:listing.orgId,listing:listing.id};
+    // The chosen cover when there is one; otherwise the first saved photo. A
+    // home with photos must never look empty only because no cover was picked.
+    const show=(media:ListingMedia)=>{
+      const cover=listing.mainPhotoKey?media.photos.find(p=>{try{return(isPrivateMediaURL(p.url)?privateMediaCapability(p.url,{actor:workspace.user.id,org:listing.orgId,listing:listing.id}).key:new URL(p.url).pathname.split("/").slice(2).map(decodeURIComponent).join("/"))===listing.mainPhotoKey;}catch{return false;}}):undefined;
+      setURL((cover??media.photos[0])?.url??null);
+    };
+    // A property already opened in this session, or a preview read a moment
+    // ago, is reused while its links are valid instead of signing a page again.
+    const known=recallMedia(services,"full",scope)??recallMedia(services,"preview",scope);
+    if(known){show(known);return()=>controller.abort();}
+    void services.listMedia(listing.orgId,listing.id,controller.signal,0,library).then(media=>{
       const identity=services.getSnapshot();if(controller.signal.aborted||identity.identityVersion!==version||identity.identity?.userId!==workspace.user.id)return;
-      const photo=media.photos.find(p=>{try{return(isPrivateMediaURL(p.url)?privateMediaCapability(p.url,{actor:workspace.user.id,org:workspace.org.id,listing:listing.id}).key:new URL(p.url).pathname.split("/").slice(2).map(decodeURIComponent).join("/"))===listing.mainPhotoKey;}catch{return false;}});setURL(photo?.url??null);
+      rememberMedia(services,"preview",scope,media);show(media);
     }).catch(()=>{if(!controller.signal.aborted)setFailed(true);});return()=>controller.abort();
-  },[listing.id,listing.orgId,listing.mainPhotoKey,services,workspace.org.id,workspace.user.id]);
-  return <div className="app-property-image">{url&&!failed?<img src={url} alt="" loading="lazy" referrerPolicy="no-referrer" onError={()=>setFailed(true)}/>:<Icon name="home" size={36}/>}<span className={`app-property-status status-${listing.status}`}>{listingStatus(listing.status,listing.soldAt)}</span></div>;
+  },[listing.id,listing.orgId,listing.mainPhotoKey,services,workspace.org.id,workspace.libraryOrgId,workspace.user.id]);
+  return <div className="app-property-image">{url&&!failed?<img src={url} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={()=>setFailed(true)}/>:<Icon name="home" size={36}/>}<span className={`app-property-status status-${listing.status}`}>{listingStatus(listing.status,listing.soldAt)}</span></div>;
 }
 type Props={services:StudioServices|null;workspace:Workspace|null;listings:Listing[];selectedId?:string;busy:boolean;spatialAvailable:boolean;onSelect:(id:string)=>void;onFeature:(id:FeatureId,listingId?:string)=>void;onCreate:()=>void;onStartCreating:()=>void;onProperties:()=>void;onLeads:()=>void;onPlanner:()=>void;onConnect:()=>void;onLibrary:()=>void;};
 export default function Dashboard(props:Props) {
