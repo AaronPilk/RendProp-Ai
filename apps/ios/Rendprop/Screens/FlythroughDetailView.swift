@@ -9701,6 +9701,11 @@ struct CustomEditSheet: View {
                         Text(preparedPrompt).font(.rpBody)
                             .accessibilityIdentifier("customPhoto.preparedInstruction")
                         Text(CustomPhotoPromptPolicy.preservedFeatures).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        if let note = CustomPhotoPromptPolicy.note(for: preparedPrompt) {
+                            Text(note).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("customPhoto.keptNote")
+                        }
                         Text("AI can still make mistakes. The result is saved as a preview until you compare and approve it for your listing.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     }.padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12))
