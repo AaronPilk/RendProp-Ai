@@ -1,5 +1,5 @@
 import { assert, HttpError, throwRpc } from "./http.ts";
-import { libraryAccess, listingLibraryScope } from "./library-access.ts";
+import { libraryAccess, type LibraryAccess, listingLibraryScope } from "./library-access.ts";
 
 type Authority = { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -13,10 +13,19 @@ export interface LibraryUsageSummary {
   listings: number; leads: number; leads_new: number; render_count: number; cost_cents: number;
 }
 /** Content counts follow the selected library; financial usage follows the
- * immutable billing stamp. Removing a seat cannot reset the old Team's meter. */
-export async function libraryUsageSummary(admin: Authority, actor: string, org: string, since: string): Promise<LibraryUsageSummary> {
-  const access = await libraryAccess(admin, actor, org);
-  // Compare against the database's canonical lowercase form (library-access.ts).
+ * immutable billing stamp. Removing a seat cannot reset the old Team's meter.
+ *
+ * `known` lets a caller that already holds this request's fresh authority for
+ * (actor, org) skip the opening lookup; the RPC still enforces access itself
+ * and its billing stamp is still compared with that authority. `recheck:
+ * false` moves the closing "did access change while loading" lookup to the
+ * caller, which MUST then run it after this resolves (GET /me runs it with
+ * its next batch of reads instead of as a round trip of its own). */
+export async function libraryUsageSummary(admin: Authority, actor: string, org: string, since: string,
+  known?: { access: LibraryAccess; recheck?: boolean }): Promise<LibraryUsageSummary> {
+  const access = known?.access ?? await libraryAccess(admin, actor, org);
+  assert(access.actor_id === actor.toLowerCase() && access.org_id === org.toLowerCase() && access.can_read === true,
+    503, "Listing library usage returned inconsistent data.", "upstream");
   actor = access.actor_id; org = access.org_id;
   const {data, error} = await admin.rpc("library_usage_summary", {p_actor: actor, p_org: org, p_since: since});
   if (error) rpcError(error);
@@ -24,8 +33,10 @@ export async function libraryUsageSummary(admin: Authority, actor: string, org: 
   assert(row && row.actor_id === actor && row.org_id === org && row.billing_org_id === access.billing_org_id &&
     ["listings", "leads", "leads_new", "render_count"].every(key => Number.isSafeInteger(row[key]) && Number(row[key]) >= 0) &&
     (typeof row.cost_cents === "number" || typeof row.cost_cents === "string" && row.cost_cents.trim() !== "") && Number.isFinite(Number(row.cost_cents)) && Number(row.cost_cents) >= 0, 503, "Listing library usage returned inconsistent data.", "upstream");
-  const current = await libraryAccess(admin, actor, org);
-  assert(current.billing_org_id === access.billing_org_id, 409, "Team access changed while loading. Refresh your library.");
+  if (known?.recheck !== false) {
+    const current = await libraryAccess(admin, actor, org);
+    assert(current.billing_org_id === access.billing_org_id, 409, "Team access changed while loading. Refresh your library.");
+  }
   return {...row, cost_cents: Number(row.cost_cents)} as unknown as LibraryUsageSummary;
 }
 

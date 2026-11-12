@@ -6,7 +6,9 @@
 export const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, idempotency-key, x-org-id",
+    // x-region: lets a browser client pin execution to the database's region
+    // (Supabase regional invocation) so each DB round trip stays in-region.
+    "authorization, x-client-info, apikey, content-type, idempotency-key, x-org-id, x-region",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "Access-Control-Max-Age": "86400",
 };

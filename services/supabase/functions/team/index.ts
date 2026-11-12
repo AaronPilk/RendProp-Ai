@@ -135,6 +135,11 @@ const DEFAULT_OVERVIEW_WINDOW = "30d";
  *  losing somebody's lead to a tidy-up would be the worst bug in this file. */
 const CONTENT_TABLES = ["listings", "leads"] as const;
 
+/** Members looked up per `in.(…)` filter on GET /team. */
+const PROFILE_PAGE = 100;
+/** Invite emails queued at once by POST /team/invites/bulk. */
+const INVITE_MAIL_CONCURRENCY = 6;
+
 type Admin = ReturnType<typeof adminClient>;
 
 async function orgIsEmpty(admin: Admin, orgId: string): Promise<boolean> {
@@ -305,40 +310,60 @@ Deno.serve(async (req) => {
 
     // ── GET /team ────────────────────────────────────────────────────────────
     if (req.method === "GET" && seg.length === 0) {
-      const seats = await seatCounts(admin, orgId);
-      const { data: seatRows, error: seatError } = await admin.rpc("team_seat_status", { p_org: orgId });
-      if (seatError || !Array.isArray(seatRows)) throw new HttpError(503, "Team seat status could not be loaded. Please retry.");
-      const activeById = new Map((seatRows as { user_id: string; seat_active: boolean }[])
-        .map((row) => [row.user_id, row.seat_active === true]));
-      const [privateMembers, privateTeam] = canManage && !(user as { is_anonymous?: boolean }).is_anonymous
-        ? await Promise.all([privateTestingMembers(admin, user.id, orgId), privateTestingHostMode(admin, user.id, orgId)])
-        : [[], null] as const;
-      const privateAccess = await privateTestingContext(admin, user.id, orgId);
+      // Independent reads for one screen. Issued together and examined in the
+      // order they used to run in, so the first failure reported is the same;
+      // one after another they were nine database round trips.
       let membersQuery = admin.from("memberships").select("user_id, role").eq("org_id", orgId);
       if (!canManage) membersQuery = membersQuery.eq("user_id", user.id);
-      const { data: rows, error: membersError } = await membersQuery;
-      if (membersError) throw new HttpError(503, "The team could not be loaded. Please retry.");
-      const ids = (rows ?? []).map((r) => r.user_id as string);
-      const { data: people, error: peopleError } = ids.length
-        ? await admin.from("profiles").select("id, name, email").in("id", ids)
-        : { data: [] as { id: string; name: string | null; email: string | null }[], error: null };
-      if (peopleError) throw new HttpError(503, "The team could not be loaded. Please retry.");
-      const byId = new Map((people ?? []).map((p) => [p.id, p]));
-
-      // Pending invites are visible to MANAGERS ONLY, and never with the code:
-      // the plaintext existed once, in the response that created it. An agent
-      // on the team has no business reading who else is mid-invite.
-      const { data: invites, error: invitesError } = canManage
-        ? await admin.from("org_invites")
+      const reads = await Promise.allSettled([
+        seatCounts(admin, orgId),
+        admin.rpc("team_seat_status", { p_org: orgId }),
+        canManage && !(user as { is_anonymous?: boolean }).is_anonymous
+          ? Promise.all([privateTestingMembers(admin, user.id, orgId), privateTestingHostMode(admin, user.id, orgId)])
+          : Promise.resolve([[], null] as const),
+        privateTestingContext(admin, user.id, orgId),
+        membersQuery,
+        // Pending invites are visible to MANAGERS ONLY, and never with the code:
+        // the plaintext existed once, in the response that created it. An agent
+        // on the team has no business reading who else is mid-invite.
+        canManage
+          ? admin.from("org_invites")
             .select("id, email, role, created_at, expires_at")
             .eq("org_id", orgId).is("accepted_at", null).is("revoked_at", null)
             .gt("expires_at", new Date().toISOString())
             .order("created_at", { ascending: false })
-        : { data: [] as unknown[], error: null };
+          : Promise.resolve({ data: [] as unknown[], error: null }),
+        admin.from("orgs").select("name, plan").eq("id", orgId).maybeSingle(),
+      ]);
+      const settled = <T>(result: PromiseSettledResult<T>): T => {
+        if (result.status === "rejected") throw result.reason;
+        return result.value;
+      };
+      const seats = settled(reads[0]);
+      const { data: seatRows, error: seatError } = settled(reads[1]);
+      if (seatError || !Array.isArray(seatRows)) throw new HttpError(503, "Team seat status could not be loaded. Please retry.");
+      const activeById = new Map((seatRows as { user_id: string; seat_active: boolean }[])
+        .map((row) => [row.user_id, row.seat_active === true]));
+      const [privateMembers, privateTeam] = settled(reads[2]);
+      const privateAccess = settled(reads[3]);
+      const { data: rows, error: membersError } = settled(reads[4]);
+      if (membersError) throw new HttpError(503, "The team could not be loaded. Please retry.");
+      const ids = (rows ?? []).map((r) => r.user_id as string);
+      // One `id=in.(…)` filter per 100 members: a 500-seat roster in a single
+      // filter is an ~18 KB query string, past what the API gateway accepts.
+      const people: { id: string; name: string | null; email: string | null }[] = [];
+      const profilePages = await Promise.all(Array.from({ length: Math.ceil(ids.length / PROFILE_PAGE) }, (_, page) =>
+        admin.from("profiles").select("id, name, email").in("id", ids.slice(page * PROFILE_PAGE, (page + 1) * PROFILE_PAGE))));
+      for (const page of profilePages) {
+        if (page.error) throw new HttpError(503, "The team could not be loaded. Please retry.");
+        people.push(...(page.data ?? []) as typeof people);
+      }
+      const byId = new Map(people.map((p) => [p.id, p]));
+
+      const { data: invites, error: invitesError } = settled(reads[5]);
       if (invitesError) throw new HttpError(503, "Pending invitations could not be loaded. Please retry.");
 
-      const { data: org, error: orgError } = await admin
-        .from("orgs").select("name, plan").eq("id", orgId).maybeSingle();
+      const { data: org, error: orgError } = settled(reads[6]);
       if (orgError || !org) throw new HttpError(503, "The workspace could not be loaded. Please retry.");
 
       return json({
@@ -500,20 +525,26 @@ Deno.serve(async (req) => {
       // 200 when the whole list was already on the team, because nothing was.
       const report = (data ?? {}) as Record<string, unknown>;
 
-      // Queue one mail per issued invite. Sequential rather than parallel: this
-      // is at most 200 rows against the same table, and a burst of 200
-      // concurrent RPCs would contend on the outbox for no gain when the drain
-      // runs once a minute anyway. Failures are already swallowed per-invite,
+      // Queue one mail per issued invite, a few at a time. One by one, 200
+      // invites were 200 database round trips in a row (30-50 s from a region
+      // away from the database, long enough for the app to give up on a
+      // request that had already issued every code). All at once would be a
+      // burst against the outbox. Failures are already swallowed per-invite,
       // so one bad address cannot stop the other 199.
       const results = Array.isArray(report.results) ? report.results as Array<Record<string, unknown>> : [];
-      let queued = 0;
-      for (const r of results) {
-        if (r.outcome !== "issued") continue;
+      const issued = results.flatMap((r) => {
+        if (r.outcome !== "issued") return [];
         const addr = typeof r.email === "string" ? r.email : null;
         const codeOut = typeof r.code === "string" ? r.code : null;
-        if (!addr || !codeOut) continue;
-        if (await queueInviteEmail(orgId, r.id, addr, codeOut, role, user.id)) queued++;
-      }
+        return addr && codeOut ? [{ id: r.id, addr, codeOut }] : [];
+      });
+      let queued = 0, next = 0;
+      await Promise.all(Array.from({ length: Math.min(INVITE_MAIL_CONCURRENCY, issued.length) }, async () => {
+        while (next < issued.length) {
+          const invite = issued[next++];
+          if (await queueInviteEmail(orgId, invite.id, invite.addr, invite.codeOut, role, user.id)) queued++;
+        }
+      }));
       return json({ ...report, emails_queued: queued }, Number(report.issued ?? 0) > 0 ? 201 : 200);
     }
 

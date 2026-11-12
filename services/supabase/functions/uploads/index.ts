@@ -125,6 +125,8 @@ async function requireAssetWriteRole(
 const MULTIPART_THRESHOLD = 64 * 1024 * 1024; // 64 MB
 const MAX_PART_URLS_PER_CALL = 256;
 const MAX_PHOTOS_PER_BATCH = 200;
+/** Upload tickets planned at once for one batch request. */
+const TICKET_CONCURRENCY = 8;
 
 // Hard size ceilings + a content-type allowlist so a caller can't presign an
 // arbitrary-type or absurdly large object.
@@ -280,8 +282,15 @@ Deno.serve(async (req) => {
       transportConfiguration();
       const body = await readJson<CreateBody & BatchBody>(req);
       const listing = await requireListing(db, body.listing_id);
-      await requireWriteRole(admin, user.id, listing.org_id, body.listing_id);
-      await assertNotDeleting(user.id);
+      // Two independent checks, one round trip instead of two; the role
+      // refusal is still reported ahead of the deletion one. (The reservation
+      // RPC below re-checks deletion itself, under its own lock.)
+      const [role, deleting] = await Promise.allSettled([
+        requireWriteRole(admin, user.id, listing.org_id, body.listing_id),
+        assertNotDeleting(user.id),
+      ]);
+      if (role.status === "rejected") throw role.reason;
+      if (deleting.status === "rejected") throw deleting.reason;
       const batch = seg[0] === "batch";
       const files = batch ? body.files : [body];
       assert(
@@ -308,10 +317,24 @@ Deno.serve(async (req) => {
       // Every asset and its budget reservation commit in one DB transaction.
       // A partial batch error cannot leave rows whose allowance was refunded.
       const assets = await reserveAssets(admin, user.id, specs);
-      const tickets = [];
-      for (const asset of assets) {
-        tickets.push(await ticketResponse(admin, asset));
-      }
+      // Each ticket plans its own asset's transfer and touches no other
+      // asset. One at a time, a 30-photo batch was 30 database round trips in
+      // a row before the phone could send its first byte. Plan a few at once,
+      // keep the response in request order, and report the first failure in
+      // that order only after every started plan has finished.
+      const planned: PromiseSettledResult<Awaited<ReturnType<typeof ticketResponse>>>[] = new Array(assets.length);
+      let nextTicket = 0;
+      await Promise.all(Array.from({ length: Math.min(TICKET_CONCURRENCY, assets.length) }, async () => {
+        while (nextTicket < assets.length) {
+          const index = nextTicket++;
+          try { planned[index] = { status: "fulfilled", value: await ticketResponse(admin, assets[index]) }; }
+          catch (reason) { planned[index] = { status: "rejected", reason }; }
+        }
+      }));
+      const tickets = planned.map((ticket) => {
+        if (ticket.status === "rejected") throw ticket.reason;
+        return ticket.value;
+      });
       return batch
         ? json({ assets: tickets.map((t, index) => ({ ...t, index })) }, 201)
         : json(tickets[0], assets[0].replayed === true ? 200 : 201);

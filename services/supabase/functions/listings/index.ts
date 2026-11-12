@@ -25,7 +25,7 @@ import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, user
 import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
 import { createListingRow } from "./create.ts";
 import { listLibraryListings } from "../_shared/library-listings.ts";
-import { listingLibraryScope, requireLibraryWrite } from "../_shared/library-access.ts";
+import { libraryAccessFromDirectory, listingLibraryScope, requireLibraryWrite } from "../_shared/library-access.ts";
 import { clientContact, saveClientContact } from "./client-contact.ts";
 import { appendPublishedPhotos, publishedPhotoPatch } from "../_shared/property-cover.ts";
 import { publishedGallerySnapshot, removePublishedPhotos } from "./gallery-remove.ts";
@@ -189,8 +189,11 @@ Deno.serve(async (req) => {
 
     const scope = id ? await listingLibraryScope(adminClient(), user.id, id, req.method !== "GET") : null;
     if (scope && requested !== undefined) assert(requested === scope.org_id || requested === scope.library_org_id, 404, "This listing belongs to another library.");
-    const explicitOrg = scope?.org_id ?? (requested === undefined ? undefined :
-      (await workspaceDirectory(adminClient(), user.id, requested)).active_org_id);
+    // Kept whole: the library sync below reads its authority row from this
+    // same fresh directory rather than asking the database for it again.
+    const directory = scope || requested === undefined ? null :
+      await workspaceDirectory(adminClient(), user.id, requested);
+    const explicitOrg = scope?.org_id ?? directory?.active_org_id;
     const responseListing = async (row: Record<string, unknown>) => {
       assert(typeof row?.id === "string" && typeof row.org_id === "string", 503, "Listing update returned inconsistent data.");
       const fresh = await listingLibraryScope(adminClient(), user.id, row.id);
@@ -305,7 +308,8 @@ Deno.serve(async (req) => {
       const url = new URL(req.url);
       if (url.searchParams.get("library") === "1") {
         assert(explicitOrg, 409, "Choose your listing library before syncing.");
-        const page = await listLibraryListings(adminClient(), user.id, explicitOrg, url.searchParams);
+        const page = await listLibraryListings(adminClient(), user.id, explicitOrg, url.searchParams,
+          directory ? libraryAccessFromDirectory(directory, user.id, explicitOrg) : null);
         return json({ ...page, listings: (page.listings as Record<string, unknown>[]).map(canonicalTimestamps) });
       }
       let q = db.from("listings").select("*").is("deleted_at", null);

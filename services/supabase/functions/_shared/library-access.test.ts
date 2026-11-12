@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertRejects, AssertionError } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { HttpError } from "./http.ts";
-import { libraryAccess, libraryBillingOrg, listingLibraryScope, requireContentWrite } from "./library-access.ts";
+import { libraryAccess, libraryAccessFromDirectory, libraryBillingOrg, listingLibraryScope, requireContentWrite } from "./library-access.ts";
 import { listLibraryListings } from "./library-listings.ts";
 
 const owner="ab100109-0000-4000-8000-000000000001",sally="ab100109-0000-4000-8000-000000000002",tom="ab100109-0000-4000-8000-000000000003";
@@ -148,4 +148,40 @@ Deno.test("without canonicalisation an uppercase listing id is a 503 identity mi
   const e=await assertRejects(()=>mutant.listingLibraryScope(admin,sally,listing.toUpperCase(),true),HttpError);
   assertEquals([e.status,e.message],[503,"Listing identity returned inconsistent data."]);
   assertEquals((await listingLibraryScope(admin,sally,listing.toUpperCase(),true)).listing_id,listing);
+});
+
+// ── Authority read from this request's own workspace directory ───────────────
+// workspace_directory() builds each row from library_access(actor, org), so a
+// route that just fetched the directory need not ask for the same row again.
+// Anything short of the complete authority shape must fall back to the RPC.
+Deno.test("a complete directory row is the same authority library_access returns; anything less is refused",async()=>{
+  const f=fixture(),real=await libraryAccess(f.admin,owner,sallyOrg);
+  const {actor_id:_a,org_id:_o,...row}=real;
+  const directory={actor_id:owner,workspaces:[{id:sallyOrg,name:"Sally's listings",...row}]};
+  assertEquals(libraryAccessFromDirectory(directory,owner,sallyOrg),real);
+  assertEquals(libraryAccessFromDirectory(directory,owner.toUpperCase(),sallyOrg.toUpperCase()),real);
+  // Another actor's directory, an absent org, a duplicated row and a
+  // malformed id are not authorities.
+  assertEquals(libraryAccessFromDirectory(directory,sally,sallyOrg),null);
+  assertEquals(libraryAccessFromDirectory(directory,owner,tomOrg),null);
+  assertEquals(libraryAccessFromDirectory({...directory,workspaces:[...directory.workspaces,...directory.workspaces]},owner,sallyOrg),null);
+  assertEquals(libraryAccessFromDirectory(directory,owner,"not-a-uuid"),null);
+  assertEquals(libraryAccessFromDirectory(null,owner,sallyOrg),null);
+  // Every binding the RPC path refuses is refused here too, as "ask the RPC".
+  for(const change of [{library_owner_user_id:"bad"},{billing_org_id:"bad"},{team_org_id:undefined},{team_org_id:"bad"},{can_read:false},
+    {can_manage_subscription:true},{role:"admin"},{access_mode:"own"},{can_manage_subscription:undefined}]){
+    assertEquals(libraryAccessFromDirectory({actor_id:owner,workspaces:[{id:sallyOrg,name:"x",...row,...change}]},owner,sallyOrg),null,JSON.stringify(change));
+  }
+});
+Deno.test("sync with this request's directory authority skips only the opening lookup and still rechecks after its page",async()=>{
+  const f=fixture(),known=await libraryAccess(f.admin,owner,sallyOrg);f.calls.length=0;
+  const p=await listLibraryListings(f.admin,owner,sallyOrg,new URLSearchParams("library=1"),known);
+  assertEquals(p.listings[0].library_org_id,sallyOrg);
+  assertEquals(f.calls.map(c=>c.name),["list_library_listings","library_access"]);
+  // An authority for another actor or library is never accepted in its place.
+  await assertRejects(()=>listLibraryListings(f.admin,sally,sallyOrg,new URLSearchParams("library=1"),known),HttpError);
+  await assertRejects(()=>listLibraryListings(f.admin,owner,tomOrg,new URLSearchParams("library=1"),known),HttpError);
+  const revoked=fixture(),before=await libraryAccess(revoked.admin,owner,sallyOrg);
+  revoked.mutate((data,name)=>{if(name==="list_library_listings")revoked.revoke();return data;});
+  await assertRejects(()=>listLibraryListings(revoked.admin,owner,sallyOrg,new URLSearchParams("library=1"),before),HttpError);
 });
