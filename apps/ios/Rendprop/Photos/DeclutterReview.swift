@@ -94,14 +94,30 @@ import ImageIO
                     guard let b64 = await AIImagePrep.jpegBase64(at: url, maxDimension: 2048, quality: 0.9, maxBytes: 1_000_000), let bytes = Data(base64Encoded: b64) else { throw PhotoVersionHistory.Failure.missingImage }
                     try requireCurrent()
                     let prepared = DeclutterGenerationApproval.sha256(bytes)
-                    let reply = try await api.assessDeclutter(.init(imageBase64: b64, sourceSHA256: prepared, requestID: UUID(), actor: actor, library: library,
-                        listingServerID: listing.serverID, consentRevision: consentRevision, spaceType: space.rawValue))
+                    // The check is advice. When the check itself cannot run (no
+                    // connection, the day's check allowance is used up, a server
+                    // error) the photo the realtor picked stays selectable and
+                    // selected instead of being dropped with "could not be
+                    // assessed" (owner decision, 12 Nov 2026). The edit request
+                    // still passes the server's own plan and credit checks.
+                    var assessment = AIPhotoDeclutterAssessment.uncertain
+                    var costBound = 0.0, checked = true
+                    do {
+                        let reply = try await api.assessDeclutter(.init(imageBase64: b64, sourceSHA256: prepared, requestID: UUID(), actor: actor, library: library,
+                            listingServerID: listing.serverID, consentRevision: consentRevision, spaceType: space.rawValue))
+                        assessment = reply.assessment; costBound = reply.costBoundCents
+                    } catch {
+                        guard isCurrent, !Task.isCancelled else { throw error }
+                        checked = false
+                        assessment = (try? AIPhotoDeclutterAssessment(decision: .uncertain, confidence: 0,
+                            reason: "We couldn't check this photo, so it stays selected. Untick it if it doesn't need decluttering.", targets: [])) ?? .uncertain
+                    }
                     try requireCurrent()
                     guard try await Self.sourceHash(url) == sourceSHA,
                           try PhotoVersionHistory.enhancedCaptureForEditing(id: source.id, directory: directory).id == source.id else { throw PhotoVersionHistory.Failure.changedVersion }
                     items[index].sourceSHA256 = sourceSHA; items[index].preparedSHA256 = prepared
-                    items[index].assessment = reply.assessment; items[index].validAssessment = true
-                    items[index].costBoundCents = reply.costBoundCents
+                    items[index].assessment = assessment; items[index].validAssessment = true
+                    items[index].costBoundCents = costBound
                     // The realtor already chose these photos. The assessment only
                     // steps aside when it is sure there is nothing to remove
                     // ("already clear"). "Needs review" is the realtor's call, so
@@ -109,8 +125,8 @@ import ImageIO
                     // same review and feedback as any other edit (owner decision,
                     // 6 Nov 2026: 9 of 11 photos were left unselected by the
                     // gate and no declutter ran).
-                    items[index].selected = reply.assessment.decision != .unnecessary
-                    items[index].manualOverride = items[index].selected && reply.assessment.decision != .needed
+                    items[index].selected = !checked || assessment.decision != .unnecessary
+                    items[index].manualOverride = items[index].selected && assessment.decision != .needed
                 } catch {
                     items[index].assessment = .uncertain; items[index].selected = false; items[index].manualOverride = false
                     items[index].error = "This photo could not be assessed safely. No image edit is selected."

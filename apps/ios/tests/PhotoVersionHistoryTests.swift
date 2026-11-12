@@ -25,16 +25,23 @@ struct PhotoVersionHistoryTests {
             check(customReview.isComplete == (flags == 15), "custom review requires actual source comparison, fixed features, colors/materials and requested-change checks")
         }
         for text in ["repaint the garage white", "make the garage door white", "change the color of the trim", "hide the wall crack", "repair the roof", "remove the wall", "replace the windows", "make it brighter and repaint the garage white", "make it look freshly painted white with warm evening light", "repainting the garage and improve lighting", "re\u{200B}paint garage and lighting", "chànge trím color and lighting", "répair roof and lighting", "repaint\u{2060}ing garage and lighting", "ｒｅｐａｉｎｔ garage and lighting"] {
-            check(CustomPhotoPromptPolicy.decision(for: text, realEstate: true) == .blocked, "explicit permanent property changes are refused rather than silently interpreted: \(text)")
+            // Owner decision, 12 Nov 2026: wording never blocks a request. It is sent,
+            // with a plain note that paint, fixed features and damage stay as photographed.
+            check(CustomPhotoPromptPolicy.decision(for: text, realEstate: true) == .ready, "a request that mentions a permanent change still runs: \(text)")
+            check(CustomPhotoPromptPolicy.note(for: text) == CustomPhotoPromptPolicy.keptNote, "the person is told that part stays as photographed: \(text)")
         }
         for text in ["make it better", "make it nicer", "modernize garage", "clean garage", "clean house", "make this modern", "change this", "improve lighting and make house nicer", "make the garage modern"] {
-            check(CustomPhotoPromptPolicy.decision(for: text, realEstate: true) == .clarify, "ambiguous property request needs a plain choice before generation: \(text)")
+            check(CustomPhotoPromptPolicy.decision(for: text, realEstate: true) == .ready, "a short or general request runs without a clarification step: \(text)")
+            check(CustomPhotoPromptPolicy.note(for: text) == nil, "an ordinary request carries no note: \(text)")
         }
         for text in ["brighten exposure only; preserve all colors", "remove bags", "add modern furniture", "do not repaint the garage; improve lighting only", "Don't repair the roof, replace only the sky", "make the lawn greener", "remove my reflection"] {
             check(CustomPhotoPromptPolicy.decision(for: text, realEstate: true) == .ready, "specific benign scope and protective negations remain available: \(text)")
+            check(CustomPhotoPromptPolicy.note(for: text) == nil, "protective wording is not mistaken for a permanent change: \(text)")
         }
+        check(CustomPhotoPromptPolicy.decision(for: "   ", realEstate: true) == .clarify, "only an empty request has nothing to send")
         for choice in CustomPhotoPromptPolicy.Choice.allCases {
             check(CustomPhotoPromptPolicy.decision(for: choice.prompt, realEstate: true) == .ready, "every offered clarification choice can reach a prepared review")
+            check(CustomPhotoPromptPolicy.note(for: choice.prompt) == nil, "an offered choice carries no note")
             check(choice.prompt.count <= 600, "clarification instruction fits the same full request contract")
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("photo-history-tests-\(UUID())")

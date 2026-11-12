@@ -1,7 +1,8 @@
 import Foundation
 
-/// Free local guidance; the server independently validates the actual listing
-/// and instruction before reserving funds or sending a photo to a model.
+/// Free local guidance for a free-text photo request. Nothing here stops a
+/// request: it only says, before anything is sent, which part will be left as
+/// photographed. The server prepares the same request independently.
 enum CustomPhotoPromptPolicy {
     enum Decision: Equatable { case ready, clarify, blocked }
     enum Choice: String, CaseIterable, Identifiable {
@@ -27,7 +28,24 @@ enum CustomPhotoPromptPolicy {
     static let preservedFeatures = "Keep the structure, fixed features, materials, finishes and existing paint colors—including the garage door and trim—as photographed."
     static let blockedMessage = "For a property listing, we can't repaint or remodel the home, repair damage or hide defects in a photo. Choose lighting, movable clutter, the sky or furniture instead."
 
+    /// Advice shown beside a prepared request. The request is sent either way
+    /// (owner decision, 12 Nov 2026): the server tells the model to leave paint,
+    /// fixed features and damage as photographed and to do the rest.
+    static let keptNote = "One thing to know: a listing photo has to show the home's real finishes and condition, so we won't repaint, remodel, remove fixed parts of the property or cover up damage. Everything else you asked for will be done."
+
+    /// A request is ready as soon as it says something. Its wording no longer
+    /// blocks it or asks for a clarification; `.clarify` only means it is empty.
     static func decision(for prompt: String, realEstate: Bool) -> Decision {
+        prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .clarify : .ready
+    }
+
+    /// `keptNote` when the request asks to repaint, remodel, remove a fixed
+    /// feature or hide damage; nil for everything else.
+    static func note(for prompt: String) -> String? {
+        mentionsPermanentChange(prompt) ? keptNote : nil
+    }
+
+    private static func mentionsPermanentChange(_ prompt: String) -> Bool {
         let text = prompt.decomposedStringWithCompatibilityMapping
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .replacingOccurrences(of: "’", with: "'")
@@ -35,9 +53,9 @@ enum CustomPhotoPromptPolicy {
         func matches(_ pattern: String, in value: String) -> Bool {
             value.range(of: pattern, options: .regularExpression) != nil
         }
-        // Mirrors the free server policy: split independent actions first, then
-        // exclude explicit preservation clauses. A negation cannot authorize a
-        // later positive request to change a permanent feature.
+        // Mirrors the server's advisory analysis: split independent actions
+        // first, then leave out explicit preservation clauses ("do not
+        // repaint", "keep the walls").
         let clauses = text.replacingOccurrences(of: "[.,;!?\\n]+|\\b(?:but|however|then|and|except)\\b|\\s+(?=without\\b)",
             with: "\n", options: .regularExpression).components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -51,23 +69,7 @@ enum CustomPhotoPromptPolicy {
             "\\b(?:make|turn|change)\\b.{0,70}\\b" + fixed + "\\b.{0,40}\\b(?:white|black|grey|gray|beige|blue|red|green|color|colour|finish|material)\\b|\\b(?:change|alter|replace)\\b.{0,50}\\b(?:paint|color|colour|finish|material)\\b",
             "\\b(?:ignore|override|disregard|bypass)\\b.{0,60}\\b(?:instructions?|rules?|locks?|restrictions?|guardrails?)\\b"
         ]
-        if clauses.contains(where: { clause in unsafe.contains { matches($0, in: clause) } }) { return .blocked }
-        let actionable = clauses.joined(separator: ". ")
-        let specific = [
-            "\\b(?:brighten|brighter|brightness|exposure|lighting|relight|illuminate|illumination|lighten|white balance|color balance)\\b",
-            "\\b(?:declutter|clutter|tidy)\\b|\\b(?:remove|clear|erase)\\b.{0,70}\\b(?:movable|personal items?|bags?|laundry|toys?|dishes|boxes|mess|loose items?|objects?|furniture|sofas?|couches?|chairs?|tables?|beds?|rugs?|cars?)\\b",
-            "\\bsky\\b",
-            "\\b(?:add|stage|furnish|place)\\b.{0,70}\\b(?:movable furniture|furniture|sofas?|couches?|chairs?|tables?|decor|beds?|rugs?)\\b|\\b(?:virtual staging|furnish)\\b",
-            "\\b(?:lawn|grass|planting)\\b",
-            "\\b(?:remove|erase)\\b.{0,70}\\b(?:photographer|my reflection|camera reflection)\\b"
-        ]
-        let vague = clauses.contains {
-            (matches("\\b(?:nicer|better|beautiful|beautify|modernize|modernise|upgrade|transform|refresh|clean|cleaner)\\b", in: $0)
-                && !matches("\\b(?:clutter|movable|brightness|exposure|lighting|sky|grass|lawn|furniture|decor)\\b", in: $0))
-                || (matches("\\b(?:make|look|feel)\\b.{0,50}\\bmodern\\b", in: $0) && !matches("\\b(?:furniture|decor)\\b", in: $0))
-        }
-        guard !vague, specific.contains(where: { matches($0, in: actionable) }) else { return .clarify }
-        return .ready
+        return clauses.contains(where: { clause in unsafe.contains { matches($0, in: clause) } })
     }
 }
 

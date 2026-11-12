@@ -262,16 +262,21 @@ Deno.test("a non-HttpError thrown by the generation is not swallowed", async () 
   );
 });
 
-Deno.test("photo polisher ambiguity and permanent edits stop before any model call", async () => {
-  for (const [input, status, code] of [["clean garage",409,"photo_clarification_required"],["repaint the garage white",400,"unsupported_edit"]] as const) {
+Deno.test("photo polisher runs vague and repaint wording once (advisory since 12 Nov 2026); only an empty idea stops before the model", async () => {
+  for (const input of ["clean garage", "repaint the garage white"]) {
     const model = fakeModel([CLEAN_PROMPT]);
-    const error = await assertRejects(() => guardedCopy({...base,gate:"image_prompt",input,attempt:model.attempt}), HttpError);
-    assertEquals(error.status,status); assertEquals(error.code,code); assertEquals(error.details?.no_charge,true);
-    assertEquals(model.calls.length,0);
+    const result = await guardedCopy({...base,gate:"image_prompt",input,attempt:model.attempt});
+    assertEquals(result.text,CLEAN_PROMPT); assertEquals(model.calls,[false]);
   }
+  const model = fakeModel([CLEAN_PROMPT]);
+  const error = await assertRejects(() => guardedCopy({...base,gate:"image_prompt",input:"   ",attempt:model.attempt}), HttpError);
+  assertEquals(error.status,409); assertEquals(error.code,"photo_clarification_required"); assertEquals(error.details?.no_charge,true);
+  assertEquals(model.calls.length,0);
 });
-Deno.test("photo polisher retries invented scopes and never returns the model's repaint request", async () => {
-  const model = fakeModel(["Brighten exposure and add modern furniture.", CLEAN_PROMPT]);
+Deno.test("photo polisher may add an ordinary detail but never returns a repaint the person did not ask for", async () => {
+  const added = fakeModel(["Brighten exposure and add modern furniture."]);
+  assertEquals((await guardedCopy({...base,gate:"image_prompt",input:"Improve lighting only.",attempt:added.attempt})).text,"Brighten exposure and add modern furniture.");
+  const model = fakeModel(["Repaint the garage white and brighten the exposure.", CLEAN_PROMPT]);
   const result = await guardedCopy({...base,gate:"image_prompt",input:"Improve lighting only.",attempt:model.attempt});
   assertEquals(result.text,CLEAN_PROMPT); assertEquals(model.calls,[false,true]);
   const broken = fakeModel(["Repaint the garage white and brighten the exposure."]);
@@ -279,11 +284,10 @@ Deno.test("photo polisher retries invented scopes and never returns the model's 
   assertEquals(error.status,502); assertEquals(error.code,"upstream"); assertEquals(broken.calls.length,2);
   assert(!error.message.includes("Repaint"));
 });
-
-Deno.test("photo writing assistant refuses preservation evasions before any model call",async()=>{
+Deno.test("photo writing assistant polishes a request that mentions damage or fixed features instead of refusing it",async()=>{
  for(const input of ["Remove toys; keep the stain hidden.","Brighten lighting; don't show the water stain.","Add a sofa; keep the vibe and patch the hole in the wall.","Improve exposure; remove the stove."]){
-  const model=fakeModel([CLEAN_PROMPT]);const error=await assertRejects(()=>guardedCopy({...base,gate:"image_prompt",input,attempt:model.attempt}),HttpError);
-  assert(error.status===400||error.status===409);assertEquals(error.details?.no_charge,true);assertEquals(model.calls.length,0);
+  const model=fakeModel([CLEAN_PROMPT]);const result=await guardedCopy({...base,gate:"image_prompt",input,attempt:model.attempt});
+  assertEquals(result.text,CLEAN_PROMPT);assertEquals(model.calls,[false]);
  }
 });
 Deno.test("photo writing assistant retries unsafe preservation output without returning it",async()=>{
@@ -305,13 +309,12 @@ Deno.test("photo writing assistant returns safe keeping wording after one genera
   assertEquals(model.calls, [false]);
 });
 
-Deno.test("photo writing assistant still refuses unsafe keeping wording and scope expansion", async () => {
+Deno.test("photo writing assistant still refuses a rewrite that adds hidden damage, new paint or a replaced fixture", async () => {
   for (const unsafe of [
     "Brighten lighting while keeping the stain hidden.",
     "Brighten lighting while keeping walls freshly painted.",
     "Brighten lighting while keeping furniture unchanged, but replace the cabinets.",
     "Brighten lighting while keeping the room unchanged and hide water stains.",
-    "Brighten lighting while keeping the walls unchanged and add a sofa.",
   ]) {
     const recovered = fakeModel([unsafe, CLEAN_PROMPT]);
     const result = await guardedCopy({ ...base, gate: "image_prompt", input: "Improve lighting only.", attempt: recovered.attempt });

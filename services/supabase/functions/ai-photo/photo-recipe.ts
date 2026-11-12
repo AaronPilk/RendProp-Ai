@@ -14,16 +14,24 @@
 // their composition changes: ai-photo/index.ts (PROFILES, the locks and prompt
 // builders, customPrompt and the handler's prompt composition),
 // _shared/fairhousing.ts guardrails, _shared/custom-photo-prompt.ts,
-// _shared/photo-stage-prompt.ts and _shared/photo-declutter-prompt.ts.
+// _shared/photo-stage-prompt.ts, _shared/photo-edit-prompts.ts and
+// _shared/photo-declutter-prompt.ts.
 // photo-recipe.test.ts fingerprints those sources and fails until the
 // revision and its pinned fingerprint move together.
 //
 // Recording a recipe never calls a provider, never charges anything and never
 // triggers a regeneration.
+//
+// Revisions:
+//   photo-recipe/2026-10-17.1  first recorded revision.
+//   photo-recipe/2026-11-12.1  staging, twilight, sky, lawn and free-text
+//     prompts rewritten as concrete positive instructions; staging styles made
+//     specific; a request's wording no longer refuses an edit (the model is
+//     told what stays instead). Declutter text is unchanged.
 import {HttpError} from "../_shared/http.ts";
 import {photoQualityRpc,type PhotoAdmin,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
 
-export const PHOTO_RECIPE_REVISION = "photo-recipe/2026-10-17.1";
+export const PHOTO_RECIPE_REVISION = "photo-recipe/2026-11-12.1";
 /** Same bound as the SQL check on photo_edit_evidence.recipe_revision. */
 export const PHOTO_RECIPE_PATTERN = /^[a-z0-9][a-z0-9./_-]{1,79}$/;
 

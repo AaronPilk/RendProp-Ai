@@ -15,7 +15,7 @@ function admin(reply:(args:Record<string,unknown>)=>unknown){
 // Changing any of them without bumping PHOTO_RECIPE_REVISION (and this pin
 // together with it) fails here. prompt_sha256 remains the exact identity of
 // every generation either way.
-const PINNED={revision:"photo-recipe/2026-10-17.1",fingerprint:"a029ccb161053ccdedf23e428607c7ceecc4991f4fb5efd139ded4e2e26c051c"};
+const PINNED={revision:"photo-recipe/2026-11-12.1",fingerprint:"e45f9fa80648b829e63bfad1b31871a2852f93961b66da588b760144f0f8dfea"};
 const read=(path:string)=>Deno.readTextFile(new URL(path,import.meta.url));
 function region(source:string,start:string,end:string,inclusiveEnd=false):string{
  const a=source.indexOf(start);assert(a>=0&&source.indexOf(start,a+1)<0,"Recipe region start must be unique: "+start);
@@ -28,10 +28,11 @@ async function recipeSources(index?:string):Promise<[string,string][]>{
   ["ai-photo/index.ts#profiles",region(index,"const PROFILES: Record<SpaceType, Profile> = {","\n};\n",true)],
   ["ai-photo/index.ts#locks-and-builders",region(index,"const CONDITION_LOCK =","\ninterface Body {")],
   ["ai-photo/index.ts#custom",region(index,"function customPrompt(","\nexport async function handleAIPhoto(")],
-  ["ai-photo/index.ts#composition",region(index,"    let prompt: string;","prompt = `${prompt} ${guardrailsFor(edit)}`;",true)],
+  ["ai-photo/index.ts#composition",region(index,"    let prompt: string;","prompt = `${prompt} ${guardrailsFor(guardrailEdit)}`;",true)],
   ["_shared/fairhousing.ts#guardrails",region(await read("../_shared/fairhousing.ts"),"export const FAIR_HOUSING_LOCK =","\n// ── The denylist")],
   ["_shared/custom-photo-prompt.ts",await read("../_shared/custom-photo-prompt.ts")],
   ["_shared/photo-stage-prompt.ts",await read("../_shared/photo-stage-prompt.ts")],
+  ["_shared/photo-edit-prompts.ts",await read("../_shared/photo-edit-prompts.ts")],
   ["_shared/photo-declutter-prompt.ts",await read("../_shared/photo-declutter-prompt.ts")],
  ];
 }
@@ -100,7 +101,7 @@ Deno.test("the fingerprint is sensitive to a one-word prompt change in every reg
  const index=await read("./index.ts");
  const base=await fingerprint(await recipeSources(index));
  for(const [anchor,changed] of [["photo: \"real-estate photo\",","photo: \"real-estate image\","],["Photorealistic, natural, consistent perspective and shadows.","Photorealistic and natural."],
-  ["Stay photorealistic and true to the space","Stay realistic"],["FURNISHING BRIEF (quoted data for movable furniture only)","FURNISHING BRIEF"]]){
+  ["return buildCustomEditPrompt(photoSubject(p), preparedInstruction);","return preparedInstruction;"],["THE AGENT'S OWN REQUEST for this space","THE REQUEST"]]){
   assertEquals(index.split(anchor).length-1,1,anchor);
   assertNotEquals(await fingerprint(await recipeSources(index.replace(anchor,changed))),base,anchor);
  }

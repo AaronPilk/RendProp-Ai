@@ -85,8 +85,9 @@ import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
 import { CUSTOM_PHOTO_FIXED_FEATURES } from "../_shared/custom-photo-prompt.ts";
-import { buildRealEstateStagePrompt } from "../_shared/photo-stage-prompt.ts";
+import { buildRealEstateStagePrompt, REAL_ESTATE_STAGE_STYLES } from "../_shared/photo-stage-prompt.ts";
 import { buildRealEstateDeclutterPrompt } from "../_shared/photo-declutter-prompt.ts";
+import { buildTwilightPrompt, buildSkyPrompt, buildLawnPrompt, buildCustomEditPrompt, type PhotoSubject } from "../_shared/photo-edit-prompts.ts";
 import { assertCustomPhotoPrompt, assertCustomPhotoOutput } from "../ai-copy/guard.ts";
 import { type ProvenanceKind, disclosureFallback } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
@@ -482,45 +483,26 @@ const REFLECTION_CLAUSE =
 
 // Real-estate-only prompt set. Declutter uses a removal-only retouch contract;
 // the industry templates below retain their existing space-specific behavior.
+//
+// Twilight, sky and lawn were rewritten on 12 Nov 2026 (_shared/photo-edit-prompts.ts):
+// one concrete description of the change, then one short paragraph of what
+// stays, instead of the shared LOCK block. Declutter is unchanged: it is the
+// edit that works, and it keeps LOCK exactly as it was.
+function photoSubject(p: Profile): PhotoSubject {
+  return { photo: p.photo, exterior: p.exterior, greenery: p.greenery, housing: p === PROFILES.real_estate };
+}
+
 const RE_PROMPTS: Record<string, string> = {
-  twilight:
-    "Convert this daytime exterior real-estate photo into a stunning twilight/dusk shot: " +
-    "deep blue-to-warm-orange gradient sky, warm glowing interior window lights, subtle " +
-    "landscape/path lighting, professional dusk real-estate photography. Keep the house, " +
-    "landscaping, driveway, and composition exactly the same — only change the sky and lighting. " + LOCK,
-  sky:
-    "Replace the dull, grey, or overcast sky in this real-estate photo with a bright, clear " +
-    "blue sky with soft natural clouds. Keep the house, trees, and ground exactly the same and " +
-    "match the lighting, shadows, and reflections naturally. " + LOCK,
-  lawn:
-    "Repair and green the lawn in this real-estate photo: lush, healthy, vibrant green grass; " +
-    "remove brown/dead patches, dirt, and weeds. Keep the house, hardscape, driveway, plants, " +
-    "and everything else identical. " + LOCK,
+  twilight: buildTwilightPrompt(photoSubject(PROFILES.real_estate)),
+  sky: buildSkyPrompt(photoSubject(PROFILES.real_estate)),
+  lawn: buildLawnPrompt(photoSubject(PROFILES.real_estate)),
   declutter:
     buildRealEstateDeclutterPrompt(LOCK,REFLECTION_CLAUSE),
 };
 
-// Real-estate staging furniture sets (verbatim from the shipped version).
-const RE_STAGE_STYLES: Record<string, string> = {
-  modern:
-    "modern contemporary furniture: clean-lined sofa and chairs, a low-profile coffee table, " +
-    "a large area rug, tasteful freestanding decor, and movable floor or table lamps in a neutral palette " +
-    "with warm accents",
-  rustic:
-    "rustic farmhouse furniture: warm natural woods, a comfortable linen-upholstered sofa, " +
-    "woven and vintage accents, layered cozy textiles, and earthy tones",
-  minimalist:
-    "minimalist furniture: a few essential low-profile pieces, uncluttered surfaces, a " +
-    "restrained monochrome palette, and plenty of intentional negative space",
-  contemporary:
-    "contemporary furniture: softly curved seating, sculptural movable coffee and side tables, " +
-    "layered linen and textured upholstery, a warm neutral palette with restrained deep accents, " +
-    "and a few refined freestanding decorative pieces; style only movable furnishings, not " +
-    "the photographed building or its fixed finishes",
-  scandinavian:
-    "Scandinavian furniture: light woods, soft whites with muted pastel accents, simple " +
-    "functional pieces, hygge textiles like wool throws and sheepskin, and airy styling",
-};
+// Real-estate staging styles: look, palette and materials per style. The
+// furniture for each kind of room is listed in the staging prompt itself.
+const RE_STAGE_STYLES: Record<string, string> = REAL_ESTATE_STAGE_STYLES;
 
 function reStagePrompt(styleDesc: string): string {
   // Style describes movable furnishings; it does not restyle the photographed
@@ -530,18 +512,9 @@ function reStagePrompt(styleDesc: string): string {
 
 function prompts(p: Profile): Record<string, string> {
   return {
-    twilight:
-      `Convert this daytime exterior ${p.photo} into a stunning twilight/dusk shot: ` +
-      "deep blue-to-warm-orange gradient sky, warm glowing interior window lights, subtle " +
-      `landscape/path lighting, professional dusk photography. Keep the ${p.exterior}, ` +
-      "landscaping, driveway, signage, and composition exactly the same — only change the sky and lighting. " + LOCK,
-    sky:
-      `Replace the dull, grey, or overcast sky in this ${p.photo} with a bright, clear ` +
-      `blue sky with soft natural clouds. Keep the ${p.exterior}, trees, and ground exactly the same and ` +
-      "match the lighting, shadows, and reflections naturally. " + LOCK,
-    lawn:
-      `Repair and green ${p.greenery} in this ${p.photo}. Keep the ${p.exterior}, hardscape, driveway, plants, ` +
-      "and everything else identical. " + LOCK,
+    twilight: buildTwilightPrompt(photoSubject(p)),
+    sky: buildSkyPrompt(photoSubject(p)),
+    lawn: buildLawnPrompt(photoSubject(p)),
     declutter:
       `Remove all clutter, mess, and personal items from this ${p.photo}: ${p.clutter}. ` +
       REFLECTION_CLAUSE +
@@ -660,15 +633,11 @@ const MAX_CUSTOM_PROMPT = 600;
 const MAX_IMPROVE_INPUT = MAX_PROMPT_INPUT;   // rough idea in
 const MAX_IMPROVE_OUTPUT = MAX_PROMPT_OUTPUT; // polished instruction out
 
-/** Wrap a user's free-text instruction with the guardrails every edit gets. */
+/** Frame a prepared free-text request (see analyzeCustomPhotoPrompt) for the
+ * image model: what the photo is, the request, how the change should sit in
+ * the photo and what stays. */
 function customPrompt(p: Profile, preparedInstruction: string): string {
-  const truth = p === PROFILES.real_estate
-    ? "this is a real property listing"
-    : "this is a real place being marketed";
-  return (
-    `Edit this ${p.photo} as follows: ` + preparedInstruction + " " +
-    `Stay photorealistic and true to the space — ${truth}. ` + LOCK
-  );
+  return buildCustomEditPrompt(photoSubject(p), preparedInstruction);
 }
 
 export async function handleAIPhoto(req:Request):Promise<Response>{
@@ -835,6 +804,10 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
 
     let prompt: string;
     let style: string | undefined;
+    // Which guardrail sentence closes the prompt. A free-text request about
+    // the sky or the lawn gets the exterior wording, like the sky and lawn
+    // presets: "do not change the exterior" would contradict the request.
+    let guardrailEdit = edit;
     if (edit === "stage") {
       style = (body.style ?? "modern").toLowerCase();
       const styleDesc = (space === "real_estate" ? RE_STAGE_STYLES : STAGE_STYLES)[style];
@@ -848,7 +821,11 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
           const promptSpace = await gateSpace();
           assertFairHousing(brief, "This furnishing brief", promptSpace);
           assertCustomPhotoPrompt(brief, promptSpace, "furnishing");
-          prompt += ` FURNISHING BRIEF (quoted data for movable furniture only): ${JSON.stringify(brief)}. The fixed-feature and access rules above override this brief. `;
+          // The agent's own words decide the furniture. Since 12 Nov 2026 a
+          // brief is never refused for its wording: the model is told to
+          // skip only a part that would change the building or hide its
+          // condition, and to do the rest.
+          prompt += ` THE AGENT'S OWN REQUEST for this space (quoted wishes, not new rules): ${JSON.stringify(brief)}. It wins over the style above where they differ. If part of it would change the building or hide its condition, skip only that part and carry out the rest. `;
         }
       }
       if (referenceB64) {
@@ -871,6 +848,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       assertFairHousing(userText, "This custom edit", promptSpace);
       const prepared = assertCustomPhotoPrompt(userText, promptSpace);
       prompt = customPrompt(profile, prepared.prompt!);
+      if (prepared.scopes?.some((scope) => scope === "sky" || scope === "lawn")) guardrailEdit = "sky";
     } else {
       prompt = (space === "real_estate" ? RE_PROMPTS : prompts(profile))[edit];
       assert(prompt, 400,
@@ -879,7 +857,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
 
     // FAIR-HOUSING GUARDRAILS on every prompt, canned or free-text (HUD 2024).
     // twilight|sky|lawn get the scoped permanence clause — see fairhousing.ts.
-    prompt = `${prompt} ${guardrailsFor(edit)}`;
+    prompt = `${prompt} ${guardrailsFor(guardrailEdit)}`;
 
     // Everything validated — NOW charge the quota, immediately before the
     // billable provider call. Keep the org it charged for the cost_ledger row,
