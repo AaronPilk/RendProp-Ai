@@ -25,11 +25,11 @@ function preparePhotoInput(input:GenerateInput,size:"2K"|"4K"):GenerateInput {
  const images:[unknown,string][]=[[input.image_b64,String(input.extra?.image_mime??"image/jpeg")]];
  if(input.extra?.staging_reference_b64!==undefined)images.push([input.extra.staging_reference_b64,String(input.extra.staging_reference_mime)]);
  let used=new TextEncoder().encode(input.prompt??"").byteLength,preparedBytes=0;
- for(const [b64,mime]of images){const image=validatePhotoInput(b64,mime);if(Math.max(image.width,image.height)>2048)throw new HttpError(413,`Use a source no larger than 2048 pixels for this ${size} edit.`,"payload_too_large");preparedBytes+=image.bytes;used+=4096*Math.ceil((Math.max(image.width,image.height)/Math.min(image.width,image.height))/4);}
- if(size==="4K"&&preparedBytes>PHOTO_4K_PREPARED_INPUT_BYTES)throw new HttpError(413,"Keep your original photo. Prepare the editing copy and any furniture reference up to 9 MB combined, with a 2048-pixel longest edge. No edit was sent.","payload_too_large",{failure_phase:"prepared_photo_size",no_provider_dispatch:true});
+ for(const [b64,mime]of images){const image=validatePhotoInput(b64,mime);if(Math.max(image.width,image.height)>2048)throw new HttpError(413,"This photo is too large to edit. Use a copy no bigger than 2048 pixels on its longest side. You were not charged.","payload_too_large");preparedBytes+=image.bytes;used+=4096*Math.ceil((Math.max(image.width,image.height)/Math.min(image.width,image.height))/4);}
+ if(size==="4K"&&preparedBytes>PHOTO_4K_PREPARED_INPUT_BYTES)throw new HttpError(413,"These photos are too large to edit together (the limit is 9 MB combined). Your original is untouched. No edit was sent, so you were not charged. Use smaller copies and try again.","payload_too_large",{failure_phase:"prepared_photo_size",no_provider_dispatch:true});
  if(images.length>1)used+=512;
  const allowance=PHOTO_2K_INPUT_ALLOWANCES.find(cap=>used<=cap);
- if(allowance===undefined)throw new HttpError(413,`This photo and its instructions exceed the verified ${size} input bound. No edit was sent.`,"payload_too_large");
+ if(allowance===undefined)throw new HttpError(413,"This photo and instruction are too much to send in one edit. No edit was sent, so you were not charged. Shorten the instruction or use a smaller photo.","payload_too_large");
  return {...input,extra:{...input.extra,photo_quality_2k:size==="2K",photo_quality_4k:size==="4K",photo_input_token_bound:used,photo_input_allowance:allowance}};
 }
 
@@ -43,12 +43,12 @@ export function photo4KChain(steps:RouteStep[],input:GenerateInput):Array<RouteS
 }
 function photoChain(steps:RouteStep[],input:GenerateInput,size:"2K"|"4K"):Array<RouteStep & {params:Record<string,unknown>}>{
  const allowance=size==="4K"?photo4KInputAllowance(input):photo2KInputAllowance(input);
- if(allowance===null)throw new HttpError(503,`The ${size} source bound could not be verified. No edit was sent.`,"upstream");
+ if(allowance===null)throw new HttpError(503,"We couldn't prepare this photo for editing just now. No edit was sent, so you were not charged. Try again in a minute.","upstream");
  // Google standard pricing: $0.50/M input, $3/M text/thinking output,
  // $60/M image output;2K=1680 and4K=2520 image tokens (not an invoice).
  const imageTokens=size==="4K"?2520:1680;
  const chain=steps.filter(step=>step.provider==="gemini"&&step.model==="gemini-3.1-flash-image").map(step=>({...step,unit:"image",unit_cents:(allowance*.5+4096*3+imageTokens*60)/10000,params:{...paramsOf(step),image_size:size}}));
- if(!chain.length)throw new HttpError(503,"High-resolution photo edits are unavailable on the active route. No lower-resolution edit was sent.","upstream");
+ if(!chain.length)throw new HttpError(503,"Photo editing is not available right now. No edit was sent, so you were not charged. Try again in a few minutes.","upstream");
  return chain;
 }
 
@@ -59,7 +59,7 @@ export function assertPhoto2KOutput(b64:string,mime:string):void{
  assertPhoto2KGeometry(image);
 }
 export function assertPhoto2KGeometry(image:Pick<DecodedStillImage,"width"|"height">):void{
- if(image.width*image.height<3_800_000||image.width*image.height>4_800_000)throw new HttpError(502,"The provider returned an image outside the requested 2K size. That image was not saved as a high-resolution edit.","upstream");
+ if(image.width*image.height<3_800_000||image.width*image.height>4_800_000)throw new HttpError(502,"The AI service sent back a picture in the wrong size, so it was not saved. This attempt used one edit. Try the edit again.","upstream");
 }
 
 /** Official Gemini3.1 Flash Image4K dimensions for all supported aspects.

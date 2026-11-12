@@ -379,7 +379,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
 
   if (profileRes.error) throw new HttpError(503,"Your personal profile could not be verified. Please retry.");
   if (!profileRes.data) throw new HttpError(403,"Your account is unavailable. Please sign in again.");
-  if (orgRes.error) throw new HttpError(500, `Org lookup failed: ${orgRes.error.message}`);
+  if (orgRes.error) throw new HttpError(500, "We couldn't load your workspace just now. Try again in a minute.");
   if (!orgRes.data) throw new HttpError(404, "Org not found");
   if (membershipRes.error || !membershipRes.data) throw new HttpError(503, "Workspace billing permissions could not be verified. Please retry.");
   const org = { ...orgRes.data, plan:billingRes.data.plan, trial_ends_at:billingRes.data.trial_ends_at,
@@ -1316,7 +1316,7 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
 
   const { data: membership, error: mErr } = await admin
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Membership lookup failed: ${mErr.message}`);
+  if (mErr) throw new HttpError(500, "We couldn't load your team just now. Try again in a minute.");
   if (!membership || !ENTITLEMENT_ROLES.has(String(membership.role))) {
     throw new HttpError(
       403,

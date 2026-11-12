@@ -28,8 +28,8 @@ export const PHOTO_OUTPUT_POLICY = Object.freeze({
 type ImageBounds = { maxBase64Chars:number; maxDecodedBytes:number; maxPixels:number; maxEdge:number; tooLarge:()=>never };
 export interface StillImage { mime: string; bytes: number; width: number; height: number }
 export interface DecodedStillImage extends StillImage { data:Uint8Array<ArrayBuffer> }
-const invalid = (): never => { throw new HttpError(400, "Use a complete still JPEG, PNG or WebP photo. Animated images and HEIC/HEIF must be exported as a still JPEG first.", "validation"); };
-const large = (): never => { throw new HttpError(413, "Resize the photo before editing: at most 9 MB, 24 megapixels and 8192 pixels on either edge.", "payload_too_large"); };
+const invalid = (): never => { throw new HttpError(400, "This file can't be used. Use a normal JPEG, PNG or WebP photo. Save a HEIC photo or a Live Photo as a JPEG first.", "validation"); };
+const large = (): never => { throw new HttpError(413, "This photo is too large. Use a smaller copy (at most 9 MB and 24 megapixels) and try again.", "payload_too_large"); };
 const be16 = (b: Uint8Array, i: number) => b[i] * 256 + b[i + 1];
 const be32 = (b: Uint8Array, i: number) => (b[i] * 0x1000000 + (b[i + 1] << 16) + (b[i + 2] << 8) + b[i + 3]) >>> 0;
 const le32 = (b: Uint8Array, i: number) => (b[i] + (b[i + 1] << 8) + (b[i + 2] << 16) + b[i + 3] * 0x1000000) >>> 0;
@@ -138,10 +138,10 @@ export function validatePhotoOutput(value:unknown,mime:string):StillImage {
 export function decodePhotoOutput(value:unknown,mime:string):DecodedStillImage {
   const padding=typeof value==="string"?(value.endsWith("==")?2:value.endsWith("=")?1:0):0;
   if(typeof value==="string"&&(value.length>PHOTO_OUTPUT_POLICY.maxBase64Chars||value.length/4*3-padding>PHOTO_OUTPUT_POLICY.maxDecodedBytes))
-    throw new HttpError(502,"The generated photo exceeds the 25 MiB delivery limit. It could not be saved safely. This generation was already processed; no additional edit was started.","upstream",{failure_phase:"photo_output_size",provider_cost_incurred:true});
-  const tooLarge=():never=>{throw new HttpError(502,"The provider image exceeds the bounded output size.","upstream");};
+    throw new HttpError(502,"The edited picture came back too large for us to save, so there is nothing to show. It was already processed, so this attempt used one edit. No second edit was started. Try again with a smaller copy of the photo.","upstream",{failure_phase:"photo_output_size",provider_cost_incurred:true});
+  const tooLarge=():never=>{throw new HttpError(502,"The edited picture came back too large for us to save. Try again with a smaller copy of the photo.","upstream");};
   try { return validateStillImage(value,mime,{...PHOTO_OUTPUT_POLICY,tooLarge}); }
-  catch { throw new HttpError(502,"The provider returned an incomplete, unsupported or oversized image. It was not saved.","upstream"); }
+  catch { throw new HttpError(502,"The AI service sent back a picture we could not use, so it was not saved. Try the edit again.","upstream"); }
 }
 /** An owned historical result is already a bounded binary download. Inspect
  * those exact bytes without manufacturing and decoding a second base64 copy. */
@@ -175,12 +175,12 @@ export function validatePhotoInputs(image: unknown, mime: string, mask?: unknown
   if (mask === undefined) return source;
   const overlay = validatePhotoInput(mask, maskMime);
   if (source.bytes + overlay.bytes > PHOTO_INPUT_POLICY.maxDecodedBytes) large();
-  if (source.width !== overlay.width || source.height !== overlay.height) throw new HttpError(400, "The mask must have the same dimensions as the photo.", "validation");
+  if (source.width !== overlay.width || source.height !== overlay.height) throw new HttpError(400, "The area you marked must have the same dimensions as the photo. Mark the area again and retry.", "validation");
   return source;
 }
 export function validatePhotoPrompt(prompt: string, user = false) {
   if (user && prompt.length > PHOTO_INPUT_POLICY.maxUserPromptChars) throw new HttpError(400,
-    `Photo instructions are too long (maximum ${PHOTO_INPUT_POLICY.maxUserPromptChars} characters).`, "validation");
+    `Your instruction is too long. Shorten it to ${PHOTO_INPUT_POLICY.maxUserPromptChars} characters or fewer.`, "validation");
   const cap = user ? PHOTO_INPUT_POLICY.maxUserPromptBytes : PHOTO_INPUT_POLICY.maxProviderPromptBytes;
-  if (new TextEncoder().encode(prompt).byteLength > cap) throw new HttpError(400, `Photo instructions are too long (maximum ${cap} UTF-8 bytes).`, "validation");
+  if (new TextEncoder().encode(prompt).byteLength > cap) throw new HttpError(400, "Your instruction is too long. Shorten it and try again.", "validation");
 }

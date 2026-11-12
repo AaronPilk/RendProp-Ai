@@ -116,7 +116,7 @@ Deno.serve(async (req) => {
     };
     const alreadyPublished = async (job: string) => {
       const { data, error } = await db.from("renders").select("id").eq("job_id", job).maybeSingle();
-      if (error) throw new HttpError(503, "Recorded publication could not be checked.");
+      if (error) throw new HttpError(503, "We couldn't check whether this is published just now. Try again in a minute.");
       return Boolean(data);
     };
 
@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
         const { data: prior, error: priorError } = await db.from("render_jobs").select("id")
           .eq("listing_id", body.listing_id).eq("capture_asset_id", body.asset_id)
           .eq("idem_key", requestKey).eq("source", "app").maybeSingle();
-        if (priorError) throw new HttpError(503, "Recorded walkthrough could not be checked.");
+        if (priorError) throw new HttpError(503, "We couldn't check this walkthrough video just now. Try again in a minute.");
         replayPublished = prior ? await alreadyPublished(prior.id) : false;
       }
       if (!replayPublished) duration = (await attest(body.listing_id, body.asset_id))?.duration_s ?? duration;
@@ -322,7 +322,7 @@ Deno.serve(async (req) => {
         .select("id, listing_id, status, current_step, progress, cost_cents, error, source, tier")
         .eq("id", jobId)
         .maybeSingle();
-      if (error) throw new HttpError(400, `Status lookup failed: ${error.message}`);
+      if (error) throw new HttpError(400, "We couldn't check on this tour just now. Try again in a minute.");
       if (!job) throw new HttpError(404, "Render job not found");
 
       const { data: render } = await db

@@ -149,7 +149,7 @@ async function planOnlyEntitlementFor(orgId: string): Promise<Entitlement> {
 export async function entitlementForCharge(orgId: string): Promise<Entitlement> {
   const ent = await entitlementFor(orgId);
   if (ent.degraded) {
-    throw new HttpError(503, "Plan lookup is temporarily unavailable — try again in a moment.", "upstream");
+    throw new HttpError(503, "We couldn't check your plan just now. Try again in a minute.", "upstream");
   }
   return ent;
 }

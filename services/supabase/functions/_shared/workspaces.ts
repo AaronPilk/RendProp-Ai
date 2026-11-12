@@ -17,7 +17,7 @@ export function requestedWorkspace(req: Request): string | undefined {
 }
 function workspaceError(message?: string): never {
   if (message && /RP\d{3}:/.test(message)) throwRpc(message);
-  throw new HttpError(503, "Your workspaces could not be verified. Please retry.", "upstream");
+  throw new HttpError(503, "We couldn't load your workspaces just now. Try again in a minute.", "upstream");
 }
 /** Service-only SQL validates live membership, deletion and explicit selection.
  * The caller ID is always the verified session's; never read it from a body. */

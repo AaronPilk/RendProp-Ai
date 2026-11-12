@@ -18,7 +18,7 @@ const mod = await import("data:application/typescript," + encodeURIComponent(`
   const PROVIDERS:PropertyProvider[]=[rentcast],CACHE_DAYS=30,RATE_MAX=40,RATE_WINDOW_S=3600;
   export function make(state:any){
     const handleOptions=()=>new Response(null,{status:204}),preferredOrg=()=>${JSON.stringify(org)};
-    const getUser=async(req:Request)=>{if(state.authFailure||!req.headers.has("authorization"))throw new HttpError(401,"Invalid or expired token");return{id:${JSON.stringify(actor)},is_anonymous:state.anonymous};};
+    const getUser=async(req:Request)=>{if(state.authFailure||!req.headers.has("authorization"))throw new HttpError(401,"Your sign-in has expired. Sign in again to continue.");return{id:${JSON.stringify(actor)},is_anonymous:state.anonymous};};
     const orgForUser=async()=>${JSON.stringify(org)};
     const assertPaidAiIdentity=async(user:any)=>{if(user.is_anonymous)throw new HttpError(403,"Sign in before property lookup");};
     const durableRateLimit=async()=>state.rate;

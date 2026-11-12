@@ -77,11 +77,11 @@ const KIE_V1_COPY='Allow the listed AI processors for this native-4K video befor
 /** The fast refusal: 403 processor_consent_required with the current contract, and no admission. */
 function refusedWithContract(r:Result,error:string){
  assertEquals(r.status,403);
- assertEquals(r.body,{error,code:'processor_consent_required',...context,processor_consent:{token:V2,disclosure_revision:REVISION,processors:CONTRACT.processors}});
+ assertEquals(r.body,{error,code:'processor_consent_required',...context,processor_consent:{token:V2,disclosure_revision:REVISION,processors:CONTRACT.processors},next_step:'review_permission'});
  assertEquals(r.headers.get('cache-control'),'no-store');assertEquals(admits(r),[]);
 }
 function refusedUnpublished(r:Result){
- assertEquals(r.status,403);assertEquals(r.body,{error:'The AI processor disclosure for this video is not published yet. No video was created.',code:'processor_disclosure_unpublished',...context});assertEquals(admits(r),[]);
+ assertEquals(r.status,403);assertEquals(r.body,{error:'The AI processor disclosure for this video is not published yet. No video was created.',code:'processor_disclosure_unpublished',...context,next_step:'retry_later'});assertEquals(admits(r),[]);
 }
 /** Exactly one admit_v2 with exactly these arguments (never the old admit RPC). */
 function admitted(r:Result,profile:string,consent:unknown,testGrant:string|null){
@@ -182,7 +182,7 @@ Deno.test('resume: v1 only for work saved under v1; v2 resumes any job; v1 never
  }
  const refused=await invoke(job+'/resume','POST',{},{resume:true,jobConsent:V2,jobProfile:KIE_PROFILE});
  assertEquals(refused.status,403);
- assertEquals(refused.body,{error:'Allow the listed AI processors for this native-4K video before resuming it.',code:'processor_consent_required',job_id:job,required_consent:V2});
+ assertEquals(refused.body,{error:'Allow the listed AI processors for this native-4K video before resuming it.',code:'processor_consent_required',job_id:job,required_consent:V2,next_step:'review_permission'});
  assertEquals(refused.rpcs.map(x=>x.name),['property_video_job_scope','property_video_job_scope'],'the photo-motion guard and consent check only read the saved job');
  for(const consent of[null,'property-video-jobs-v3']){const r=await invoke(job+'/resume','POST',{},{resume:true,consent});assertEquals([r.status,r.body.code],[403,'consent_required']);assertEquals(r.rpcs.map(x=>x.name),['property_video_job_scope']);}
 });
@@ -193,7 +193,7 @@ Deno.test('GET /processor-consent returns the published contract or 404, for sig
  assertEquals(r.rpcs,[{name:'property_video_processor_consent_current',args:{}}]);
  for(const contract of[null,{...CONTRACT,token:V1},{...CONTRACT,disclosure_revision:7},{...CONTRACT,processors:'kie'}]){
   const u=await invoke('processor-consent','GET',null,{consent:null,contract});
-  assertEquals(u.status,404);assertEquals(u.body,{error:'The AI processor disclosure is not published yet.',code:'processor_disclosure_unpublished'});
+  assertEquals(u.status,404);assertEquals(u.body,{error:'The AI processor disclosure is not published yet.',code:'processor_disclosure_unpublished',next_step:'retry_later'});
  }
  const guest=await invoke('processor-consent','GET',null,{guest:true});assertEquals(guest.status,403);assertEquals(guest.rpcs,[]);
 });

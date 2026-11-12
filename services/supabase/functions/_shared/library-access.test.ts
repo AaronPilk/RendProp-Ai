@@ -146,6 +146,6 @@ Deno.test("without canonicalisation an uppercase listing id is a 503 identity mi
   const mutant=await import("data:application/typescript,"+encodeURIComponent(source.replaceAll("./http.ts",new URL("./http.ts",import.meta.url).href)
     .replace("function canonical(id: string): string { return id.toLowerCase(); }","function canonical(id: string): string { return id; }")));
   const e=await assertRejects(()=>mutant.listingLibraryScope(admin,sally,listing.toUpperCase(),true),HttpError);
-  assertEquals([e.status,e.message],[503,"Listing identity returned inconsistent data."]);
+  assertEquals([e.status,e.message],[503,"We couldn't open this listing just now. Refresh and try again."]);
   assertEquals((await listingLibraryScope(admin,sally,listing.toUpperCase(),true)).listing_id,listing);
 });

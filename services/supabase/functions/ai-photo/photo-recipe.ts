@@ -36,7 +36,7 @@ export async function photoPromptSha256(prompt:string):Promise<string>{
 }
 
 function recipeUnavailable():HttpError{
- return new HttpError(503,"The edit recipe could not be recorded. No edit was sent or charged. Please try again.","upstream",{no_provider_dispatch:true,failure_phase:"recipe_recording"});
+ return new HttpError(503,"We couldn't start this edit just now. No edit was sent, so you were not charged. Try again.","upstream",{no_provider_dispatch:true,failure_phase:"recipe_recording"});
 }
 
 /** Record the recipe identity on this exact new evidence row. Resolves only

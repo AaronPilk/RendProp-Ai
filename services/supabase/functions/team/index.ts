@@ -153,7 +153,7 @@ async function orgIsEmpty(admin: Admin, orgId: string): Promise<boolean> {
 async function roleInOrg(admin: Admin, userId: string, orgId: string): Promise<string | null> {
   const { data, error } = await admin
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (error) throw new HttpError(500, `Membership lookup failed: ${error.message}`);
+  if (error) throw new HttpError(500, "We couldn't load your team just now. Try again in a minute.");
   return (data?.role as string | undefined) ?? null;
 }
 
@@ -524,7 +524,7 @@ Deno.serve(async (req) => {
         .update({ revoked_at: new Date().toISOString() })
         .eq("id", seg[1]).eq("org_id", orgId).is("accepted_at", null).is("revoked_at", null)
         .select("id");
-      if (error) throw new HttpError(500, `Could not revoke the invite: ${error.message}`);
+      if (error) throw new HttpError(500, "We couldn't cancel that invite just now. Try again in a minute.");
       // Scoped to the caller's org, so another tenant's invite id is a 404 and
       // not a hint that the id exists.
       if (!data || data.length === 0) throw new HttpError(404, "No pending invite with that id", "not_found");

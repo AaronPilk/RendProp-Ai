@@ -103,7 +103,7 @@ for (const kind of ["voice","helper","chapters"] as const) {
     }
     if(kind!=="voice"){
       assert(refusal.error instanceof HttpError);const wire=await respondError(refusal.error).json();
-      assertEquals(Object.keys(wire).sort(),["code","error"]);assertEquals(wire.code,"upstream");
+      assertEquals(Object.keys(wire).filter(key=>!["next_step","charge","user_message"].includes(key)).sort(),["code","error"]);assertEquals(wire.code,"upstream");
     }
   });
 }

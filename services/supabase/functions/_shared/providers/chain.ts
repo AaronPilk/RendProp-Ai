@@ -39,10 +39,10 @@ export function asHttpError(err: unknown): HttpError {
     // Return operator-useful status/class facts, never a vendor body, prompt,
     // signed URL or key that an adapter may have embedded in its message.
     return new HttpError(err.httpStatus,
-      err.error_class === "validation" ? "The video or image service could not process these inputs. Review your media and settings." :
-      err.error_class === "nsfw" ? "The service could not process this content under its safety policy." :
-      err.error_class === "rate_limit" ? "The media service is busy. Please try again shortly." :
-      "The media service could not accept this request. Please try again later.", code, {
+      err.error_class === "validation" ? "The AI service could not work with this photo or these settings. Use a different photo, or change the settings and try again." :
+      err.error_class === "nsfw" ? "The AI service turned this one down under its content rules. Use a different photo or a different instruction." :
+      err.error_class === "rate_limit" ? "The AI service is very busy right now. Try again in a few minutes." :
+      "The AI service is not responding right now. Try again in a few minutes.", code, {
         provider: err.provider,
         provider_status: err.status ?? null,
         error_class: err.error_class,
@@ -50,7 +50,7 @@ export function asHttpError(err: unknown): HttpError {
         ...(err instanceof ProviderResponseLimitError?{failure_phase:"photo_provider_wire_size",retain_feature_charge:true,provider_cost_incurred:"possible",retained_output:false,max_response_bytes:err.max_response_bytes}:{}),
       });
   }
-  return new HttpError(502, "The media service did not return a usable response.", "upstream");
+  return new HttpError(502, "The AI service did not send back a usable result. Try again in a few minutes.", "upstream");
 }
 
 export interface ChainResult<T> {
@@ -78,7 +78,7 @@ export async function resolveChain(
   if (steps.length > 0) return steps;
   if (requiresActivePhotoRoute(task)) {
     console.warn(`router: no enabled eligible route for ${task}; refusing photo fallback`);
-    throw new HttpError(503, "This photo editing tool is temporarily unavailable. Please try again later.", "upstream");
+    throw new HttpError(503, "This photo tool is switched off for the moment. Try again later.", "upstream");
   }
   console.warn(`router: no steps for ${task}; using the function's own legacy constants`);
   return [fallback];
@@ -126,7 +126,7 @@ export async function runChain<T>(
 
   throw new HttpError(
     503,
-    `All providers for ${task} are unavailable right now.`,
+    "The AI service is not responding right now, so this was not made. Try again in a few minutes.",
     "upstream",
   );
 }

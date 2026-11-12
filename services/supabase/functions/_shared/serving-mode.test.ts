@@ -147,7 +147,7 @@ Deno.test("documented bounds: gpt-image-2, FLUX fill per rounded-up megapixel, K
 Deno.test("ceiling mode: refusals are quota the paywall can act on, name their kind, and dispatch nothing", async () => {
   mode("ceiling");
   for (const [message, expected] of [
-    ["RP402: AI usage limit reached [kind=retail] (991 of 991 cents this period)", "This workspace has used its AI allowance for the current billing period. It resets with the next period, or upgrade for more."],
+    ["RP402: AI usage limit reached [kind=retail] (991 of 991 cents this period)", "You have used all the AI included in your plan for this billing period. It resets on your next billing date, or upgrade your plan for more."],
     ["RP402: AI usage limit reached [kind=free] (300 of 300 cents this lifetime)", "Your free AI sample is used up. Subscribe to keep using AI tools."],
     ["RP402: AI usage limit reached [kind=trial] (500 of 500 cents this period)", "Your trial's AI allowance is used up. Your plan's full allowance starts with the paid period."],
     ["RP402: AI usage limit reached [kind=grace] (10 of 991 cents this period)", "AI tools are paused while Apple retries your subscription payment. They resume as soon as the renewal goes through."],
@@ -172,7 +172,7 @@ Deno.test("shared trial capacity refusal stops dispatch and emits availability i
     assert(!dispatched);
     assertEquals(error.status, 402);
     assertEquals(error.code, "trial_capacity_unavailable");
-    assertEquals(error.message, "Trial access is temporarily unavailable. Please contact support if Apple already confirmed a purchase.");
+    assertEquals(error.message, "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on. If Apple already confirmed your trial, do not buy it again.");
     assertEquals(f.calls.map(call => call.name), ["serving_cost_reserve", "serving_operation_no_dispatch"]);
   }
 });
