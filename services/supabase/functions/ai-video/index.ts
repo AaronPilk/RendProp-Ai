@@ -1127,7 +1127,10 @@ export async function propertyVideoRecipeQuote(actor:string,org:string,listing:s
 function buildKieRegisteredPrompt(identity:unknown,noun:unknown,motion:unknown,aspect:unknown):string{
  try{return buildRegisteredPropertyPrompt(identity,noun,motion,aspect);}catch{throw new HttpError(503,"The reviewed native-4K camera prompt is unavailable. No generation was sent.");}
 }
-export interface AiVideoWorkerScope {user:PaidAiCaller;listing:string;targetAspect?:'16:9'|'9:16';qualityProfile?:PropertyVideoQualityProfile;qualityIdentity?:unknown;accepted?:(receipt:{request_id:string;status_url:string;response_url:string;model_id:string;seconds:number})=>Promise<void>;authorize:()=>Promise<void>;kieDispatchAuthority?:()=>Promise<unknown>;provenance:(args:ProvenanceArgs)=>Promise<ProvenanceResult>}
+/** advisoryQuality: the property-video job path (owner decision 12 Nov 2026). The drift judge still
+ * runs, is paid for and is recorded truthfully, but its verdict gates nothing: no retry grant is
+ * consumed or offered and no plan allowance is handed back, because the clip is used. */
+export interface AiVideoWorkerScope {user:PaidAiCaller;listing:string;advisoryQuality?:boolean;targetAspect?:'16:9'|'9:16';qualityProfile?:PropertyVideoQualityProfile;qualityIdentity?:unknown;accepted?:(receipt:{request_id:string;status_url:string;response_url:string;model_id:string;seconds:number})=>Promise<void>;authorize:()=>Promise<void>;kieDispatchAuthority?:()=>Promise<unknown>;provenance:(args:ProvenanceArgs)=>Promise<ProvenanceResult>}
 export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {
   if (req.method === "OPTIONS") return handleOptions();
 
@@ -1892,11 +1895,14 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       // caller saying "this is already the retry" is believed (it refuses); a
       // caller saying "this is the first attempt" is not (the durable counter
       // decides). Fail closed in the direction that stops publishing.
+      // ADVISORY (worker.advisoryQuality): the verdict is recorded and enforces
+      // nothing, so no retry grant is consumed or offered for this photo.
+      const advisory = worker?.advisoryQuality === true;
       let attempt = 0;
       let retryGranted = false;
       if (!passed && !verdict.unavailable && verdict.judgement !== "unknown") {
         const claimed = Math.max(0, Math.round(Number(body.attempt ?? 0)) || 0);
-        if (claimed >= 1) {
+        if (claimed >= 1 || advisory) {
           attempt = claimed;
         } else {
           const lineage = await driftLineageKey(source.b64);
@@ -1909,7 +1915,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         }
       }
 
-      const decision = decideDriftAction({ verdict, attempt, retryGranted });
+      const decision = decideDriftAction({ verdict, attempt, retryGranted, advisory });
 
       // ── The money (step 6) ───────────────────────────────────────────────
       //
@@ -1917,9 +1923,13 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       // check could not run) refunds nothing: we do not know that the clip is
       // bad, and handing back an allowance for a clip that may be perfectly
       // good would make an outage in Anthropic's API into free reels.
-      const charge = decision.action === "retry" || decision.action === "refuse"
+      // Advisory: a clip the judge failed is still used in the video, so its
+      // plan allowance is NOT handed back (that would make it a free clip).
+      const charge = !advisory && (decision.action === "retry" || decision.action === "refuse")
         ? await refundRejectedClipAllowance(orgId, kind, requestId, user.id)
-        : { refunded: false, reason: "this clip was charged to your plan as usual" };
+        : { refunded: false, reason: advisory && decision.action !== "accept"
+          ? "this clip is used in your video and stays charged to your plan as usual"
+          : "this clip was charged to your plan as usual" };
 
       // ── The audit trail (step 7) ─────────────────────────────────────────
       //
@@ -1964,6 +1974,8 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
             publishable: decision.publishable,
             attempt,
             allowance_refunded: charge.refunded,
+            // What the judge found is above, unchanged. This says the finding was not enforced.
+            ...(advisory ? { enforcement: "advisory" } : {}),
           },
         });
         if (res.recorded) ledgerRows++;
@@ -1993,6 +2005,9 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
           request_id: requestId,
           source_sha256: judged.sourceHash,
           attempt,
+          // The verdict, action and publishable above are the judge's own, never
+          // upgraded. This marks that the property-video job did not enforce them.
+          ...(advisory ? { enforcement: "advisory" } : {}),
         })
         : false;
 
@@ -2016,6 +2031,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         recorded: { ledger: ledgerRows, provenance: stamped },
         ...(seconds !== null ? { seconds } : {}),
         kind,
+        ...(advisory ? { enforcement: "advisory" } : {}),
       };
       // A saved serving result is an independent crash-recovery proof if the
       // following QC-journal save is interrupted. It contains no source media.

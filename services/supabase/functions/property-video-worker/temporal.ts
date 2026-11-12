@@ -4,30 +4,26 @@
 // pumping, travel and repeated frames in the final frame (motion_qc.py,
 // profile temporal-motion-v2) when an extract_frames task carries
 // `temporal_qc`. The worker asks for it on every steady-profile shot, verifies
-// the report names this exact versioned limit set, records it through
+// the report names this exact versioned limit set and records it through
 // property_video_job_temporal (property_video_job_temporal_verdicts: one
-// immutable row per shot attempt and limit version), and only then lets the existing paid
-// drift QC decide. No report, a malformed report, foreign limits, or a
-// bob/sway/cadence-only failure HOLD the shot through the existing CPU review
-// pause (property_video_job_failure 'cpu_extract_failed': two more immediate
-// extracts, then a resumable quality pause with the paid clip retained);
-// nothing is published and nothing is bought. A travel/roll/duplicate/
-// unmeasurable failure is reported as quality_check_refused at once; without a
-// paid structural drift rejection SQL makes that the same resumable quality
-// pause, never a still-photo substitution (property_video_fallback_source_guard).
-// Either way the owner's resume re-reviews the same paid attempt and its first
-// recorded verdict stands, so a failed shot stays paused until the follow-up
-// paid-retry grant exists (see quality.test.ts, ignored case) or the limit
-// version changes. Legacy and v1 jobs never request a report and never require one.
+// immutable row per shot attempt and limit version) before the paid drift QC.
+//
+// ADVISORY since the owner decision of 12 Nov 2026 (the photo judge's policy
+// since 6 Nov): the verdict is recorded and reported, and decides nothing. A
+// failed, missing, malformed or foreign-limit report never holds, pauses or
+// fails the shot, never re-extracts it, never buys a generation and never
+// substitutes a still photo; the clip is used and the user reviews the video.
+// temporalRoute() below now only labels a recorded verdict for diagnostics.
+// Legacy and v1 jobs never request a report.
 import{isSteadyPropertyVideoProfile}from'../ai-video/property-video-quality.ts';
 export const TEMPORAL_QC_PROFILE='temporal-motion-v2'as const;
-/** Mirror of motion_qc.FINISHED_LIMITS. Change both or the worker holds every steady shot. */
+/** Mirror of motion_qc.FINISHED_LIMITS. Change both or no steady shot's scores are recorded. */
 export const TEMPORAL_LIMITS={bob_pp_px:1.2,sway_pp_px:1.2,cadence_acf:.4,cadence_min_pp_px:.6,roll_wobble_pp_deg:.08,zoom_pump_pp_pct:.11,roll_drift_deg:1,duplicate_ratio:.01,zoom_pct:40,pan_pct:20,invalid_ratio:.1}as const;
 /** sha256 of temporalLimitsCanonical(); motion_qc.LIMITS_SHA256 must equal it (both test suites pin this text). */
 export const TEMPORAL_LIMITS_SHA256='244436b765886f537bd6d3b835dc42ca06cc758dc1a3b796028aae448b21d555';
 export function temporalLimitsCanonical(limits:Record<string,number>=TEMPORAL_LIMITS):string{return Object.keys(limits).sort().map(k=>`${k}=${limits[k]}`).join('\n');}
 export async function sha256Hex(text:string):Promise<string>{return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))),x=>x.toString(16).padStart(2,'0')).join('');}
-/** Failures the stabiliser or one safer camera move could cure (held), versus failures no re-measurement cures (refused at once; still a resumable pause in SQL, see above). */
+/** Diagnostic labels only (advisory check): failures a stabiliser or a safer camera move could cure, versus failures no re-measurement cures. */
 export const TEMPORAL_RETRYABLE=['vertical_bob','lateral_sway','walking_cadence','roll_wobble','zoom_pumping']as const;
 export const TEMPORAL_TERMINAL=['walk_through_travel','horizon_roll','duplicate_frames','unmeasurable']as const;
 export type TemporalRoute='pass'|'retry'|'refuse';
@@ -39,7 +35,7 @@ export function temporalTask(profile:unknown,aspect:unknown):{temporal_qc:{profi
 }
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
 const KNOWN_REASONS=new Set<string>([...TEMPORAL_RETRYABLE,...TEMPORAL_TERMINAL,'invalid_metrics','invalid_limits']);
-/** A closed copy of a well-formed report measured against this limit version, or null (hold). */
+/** A closed copy of a well-formed report measured against this limit version, or null (nothing recordable; the shot continues). */
 export function temporalReport(raw:unknown):TemporalReport|null{
  if(!object(raw)||!object(raw.metrics)||!object(raw.verdict)||!object(raw.limits))return null;
  const{metrics,verdict,limits}=raw;

@@ -1,8 +1,10 @@
 import { assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 
 // Compile the actual quality entry point with closed transport/RPC boundaries.
-// A terminal paid verdict is synthesized here; the PostgreSQL suite separately
-// proves receipt authority, one grant, stale callbacks and concurrent recovery.
+// ADVISORY since 12 Nov 2026 (owner decision): the paid drift judge and the
+// temporal motion check are recorded and enforce nothing. Every outcome ends in
+// the one SQL call that marks the shot ready (property_video_job_qc_advisory);
+// SQL labels it passed/failed/unknown/skipped from the saved judge records.
 const engine = await Deno.readTextFile(new URL('./engine.ts', import.meta.url));
 const start = engine.indexOf('export async function quality(');
 const end = engine.indexOf('\nasync function media(', start);
@@ -14,8 +16,8 @@ const read=()=>globalThis.__videoQualityTest();
 const assert=(ok,status,message)=>{if(!ok)throw Error(String(status)+': '+message)};
 const bytesFrom=async()=>({bytes:new Uint8Array([1,2,3])});
 const base64=()=> 'AQID';
-const callAI=async(ctx,method,path,body)=>{read().calls.push({method,path,body});return read().response};
-const rpc=async(name,args)=>{read().rpc.push({name,args});if(read().rpcError)throw Error('rpc unavailable');if(name==='property_video_job_temporal')return read().temporalResult??{...args.p_report,attempt_id:args.p_attempt,clip_sha256:args.p_clip_sha256,recorded_at:'2026-10-17T12:00:00Z'};return read().retryResult};
+const callAI=async(ctx,method,path,body)=>{read().calls.push({method,path,body});if(read().callError)throw read().callError;return read().response};
+const rpc=async(name,args)=>{read().rpc.push({name,args});if(read().rpcError)throw Error('rpc unavailable');if(name==='property_video_quality_judge_mode')return read().mode??'advisory';if(name==='property_video_job_temporal'&&read().temporalStatus)throw Object.assign(Error('refused'),{status:read().temporalStatus});if(name==='property_video_job_temporal')return read().temporalResult??{...args.p_report,attempt_id:args.p_attempt,clip_sha256:args.p_clip_sha256,recorded_at:'2026-10-17T12:00:00Z'};return read().retryResult};
 const fail=async(ctx,code,ambiguous)=>read().fail.push({code,ambiguous});
 `;
 (globalThis as any).__videoQualityTest = () => state;
@@ -29,44 +31,58 @@ function reset(status: number, drift: unknown) {
   state = { response: { status, value: { drift } }, calls: [], rpc: [], fail: [], retryResult: { retry_scheduled: true } };
 }
 
-Deno.test('terminal paid retry schedules one authority RPC and never approves or substitutes', async () => {
-  reset(200, { action: 'retry', publishable: false });
-  await quality(ctx(), raw);
-  assertEquals(state.rpc, [{ name: 'property_video_job_quality_retry', args: { p_job: 'job', p_lease: 'lease', p_attempt: 'attempt' } }]);
-  assertEquals(state.fail, []);
-  assertEquals(state.calls.length, 1);
-  assertEquals(state.calls[0].body.attempt, 0);
-  assertEquals(state.calls[0].body.provenance_id, 'provenance');
+const MODE = { name: 'property_video_quality_judge_mode', args: {} };
+const ready = (review: string) => ({ name: 'property_video_job_qc_advisory', args: { p_job: 'job', p_lease: 'lease', p_attempt: 'attempt', p_review: review } });
+const names = () => state.rpc.map((x: any) => x.name);
+const FORBIDDEN = ['property_video_job_quality_retry', 'property_video_job_qc', 'property_video_job_failure'];
+const neverGated = () => { assertEquals(state.fail, []); assertEquals(names().filter((n: string) => FORBIDDEN.includes(n)), []); };
+
+Deno.test('advisory: a failed verdict (retry or refuse) uses the clip; no paid retry, no pause, no still photo', async () => {
+  for (const action of ['retry', 'refuse']) {
+    reset(200, { action, publishable: false });
+    await quality(ctx(), raw);
+    assertEquals(state.rpc, [MODE, ready('judged')]); neverGated();
+    assertEquals(state.calls.length, 1);
+    assertEquals(state.calls[0].body.attempt, 0);
+    assertEquals(state.calls[0].body.provenance_id, 'provenance');
+  }
 });
-Deno.test('safe retry is explicitly judged as final even after the lineage rate window', async () => {
+Deno.test('advisory: a shot that already had one paid retry is judged as its final attempt and still used', async () => {
   reset(200, { action: 'refuse', publishable: false });
   await quality(ctx(true), raw);
   assertEquals(state.calls[0].body.attempt, 1);
-  assertEquals(state.rpc, []);
-  assertEquals(state.fail, [{ code: 'quality_check_refused', ambiguous: false }]);
+  assertEquals(state.rpc, [MODE, ready('judged')]); neverGated();
 });
-Deno.test('only an explicit accepted publishable verdict advances the source', async () => {
+Deno.test('a passing verdict marks the shot ready through the same call; SQL, not the worker, decides the label', async () => {
   reset(200, { action: 'accept', publishable: true });
   await quality(ctx(), raw);
-  assertEquals(state.rpc[0].name, 'property_video_job_qc');
-  assertEquals(state.fail, []);
-  for (const drift of [{ publishable: true }, { action: 'retry', publishable: true }, { action: 'accept', publishable: false }]) {
-    reset(200, drift); await quality(ctx(), raw); assertEquals(state.rpc, []); assertEquals(state.fail.length, 1);
-  }
+  assertEquals(state.rpc, [MODE, ready('judged')]); neverGated();
 });
-Deno.test('hold, malformed and transport refusals cannot buy another generation', async () => {
-  for (const [status, drift] of [[200, { action: 'hold', publishable: false }], [503, {}], [402, {}], [409, {}], [200, null]] as const) {
+Deno.test('advisory: hold, malformed, refused, unavailable and thrown judge outcomes are unknown verdicts and the clip is still used', async () => {
+  for (const [status, drift] of [[200, { action: 'hold', publishable: false }], [200, { publishable: true }], [200, { action: 'accept' }], [200, { action: 'made_up', publishable: true }],
+    [503, {}], [504, {}], [402, {}], [409, {}], [429, {}], [200, null]] as const) {
     reset(status, drift); await quality(ctx(), raw);
-    assertEquals(state.rpc, []); assertEquals(state.calls.length, 1); assertEquals(state.fail.length, 1);
+    assertEquals(state.rpc, [MODE, ready('unknown')]); assertEquals(state.calls.length, 1); neverGated();
+  }
+  for (const error of [new Error('timeout'), Object.assign(new Error('aborted'), { name: 'TimeoutError' }), new TypeError('network')]) {
+    reset(200, { action: 'accept', publishable: true }); state.callError = error;
+    await quality(ctx(), raw);
+    assertEquals(state.rpc, [MODE, ready('unknown')]); assertEquals(state.calls.length, 1); neverGated();
   }
 });
-Deno.test('lost or refused grant acknowledgement never becomes an approval or repeated judge call', async () => {
+Deno.test('owner switch: mode off skips the paid judge entirely and the shot is still used', async () => {
+  reset(200, { action: 'refuse', publishable: false }); state.mode = 'off';
+  await quality(ctx(), raw);
+  assertEquals(state.calls, []); assertEquals(state.rpc, [MODE, ready('skipped')]); neverGated();
+  for (const mode of ['advisory', 'enforced', true, null, {}]) { // anything but the exact word runs the judge
+    reset(200, { action: 'accept', publishable: true }); state.mode = mode;
+    await quality(ctx(), raw); assertEquals(state.calls.length, 1); assertEquals(state.rpc, [MODE, ready('judged')]);
+  }
+});
+Deno.test('a lost ready-write rejects so the controller repeats its saved callback; the judge is not asked twice by this call', async () => {
   reset(200, { action: 'retry', publishable: false }); state.rpcError = true;
   await assertRejects(() => quality(ctx(), raw));
-  assertEquals(state.calls.length, 1); assertEquals(state.rpc.length, 1); assertEquals(state.fail, []);
-  reset(200, { action: 'retry', publishable: false }); state.retryResult = { retry_scheduled: false };
-  await assertRejects(() => quality(ctx(), raw));
-  assertEquals(state.calls.length, 1); assertEquals(state.rpc.length, 1); assertEquals(state.fail, []);
+  assertEquals(state.calls.length, 1); assertEquals(names(), ['property_video_quality_judge_mode', 'property_video_job_qc_advisory']); assertEquals(state.fail, []);
 });
 Deno.test('changed clip or missing frames stop before the judge or any state mutation', async () => {
   reset(200, { action: 'retry', publishable: false });
@@ -90,15 +106,16 @@ Deno.test('the worker and the renderer pin the same versioned temporal limit set
   assertEquals(temporalLimitsCanonical().split('\n')[0], 'bob_pp_px=1.2');
   assertEquals(temporalLimitsCanonical({ a: 1.0, b: .4 }), 'a=1\nb=0.4'); // %g parity with motion_qc.limits_canonical
 });
-const HOLD = [{ code: 'cpu_extract_failed', ambiguous: false }]; // the existing CPU review pause: re-extract, then a resumable quality pause
-Deno.test('a steady shot without a temporal report is HELD: no judge call, nothing recorded, no purchase', async () => {
+// ADVISORY (owner decision 12 Nov 2026): the temporal verdict is recorded and never decides.
+const judged = () => { assertEquals(state.calls.length, 1); assertEquals(state.calls[0].path, 'drift'); assertEquals(state.fail, []); };
+Deno.test('advisory: a steady shot without a temporal report still goes to the judge and is used; nothing is recorded, held or bought', async () => {
   for (const profile of [PROPERTY_VIDEO_STEADY_PROFILE, KIE_PROPERTY_PROFILE]) {
     reset(200, { action: 'accept', publishable: true });
     await quality(steadyCtx(profile), raw);
-    assertEquals(state.calls, []); assertEquals(state.rpc, []); assertEquals(state.fail, HOLD);
+    judged(); assertEquals(state.rpc.map((x: any) => x.name), ['property_video_quality_judge_mode', 'property_video_job_qc_advisory']);
   }
 });
-Deno.test('malformed, foreign-limit or inconsistent temporal reports are held, never recorded', async () => {
+Deno.test('advisory: malformed, foreign-limit or inconsistent temporal reports are never recorded and never stop the shot', async () => {
   const good = report();
   for (const bad of [
     null, 42, 'pass', {}, { ...good, limits: { profile: 'temporal-motion-v2', sha256: 'f'.repeat(64) } }, { ...good, limits: { profile: 'temporal-motion-v1', sha256: TEMPORAL_LIMITS_SHA256 } },
@@ -109,74 +126,71 @@ Deno.test('malformed, foreign-limit or inconsistent temporal reports are held, n
     assertEquals(temporalReport(bad), null);
     reset(200, { action: 'accept', publishable: true });
     await quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: bad });
-    assertEquals(state.calls, []); assertEquals(state.rpc, []); assertEquals(state.fail, HOLD);
+    judged(); assertEquals(state.rpc.map((x: any) => x.name), ['property_video_quality_judge_mode', 'property_video_job_qc_advisory']);
   }
 });
-Deno.test('a passing temporal report is recorded on the shot first, then the existing paid drift judge decides', async () => {
+Deno.test('a passing temporal report is recorded on the shot first, then the paid drift judge runs (advisory)', async () => {
   for (const profile of [PROPERTY_VIDEO_STEADY_PROFILE, KIE_PROPERTY_PROFILE]) {
     reset(200, { action: 'accept', publishable: true });
     await quality(steadyCtx(profile), { ...raw, temporal: { ...report(), series: { dy: [1, 2, 3] } } });
-    assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_job_qc']);
+    assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_quality_judge_mode', 'property_video_job_qc_advisory']);
     assertEquals(state.rpc[0], temporalRpc(report()));
     assertEquals(Object.keys(state.rpc[0].args.p_report).sort(), ['limits', 'metrics', 'profile', 'verdict']); // series never persists
-    assertEquals(state.calls.length, 1); assertEquals(state.calls[0].path, 'drift'); assertEquals(state.fail, []);
+    judged();
     reset(200, { action: 'retry', publishable: false });
     await quality(steadyCtx(profile), { ...raw, temporal: report() });
-    assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_job_quality_retry']);
+    assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_quality_judge_mode', 'property_video_job_qc_advisory']);
   }
 });
-Deno.test('the RECORDED verdict decides: an earlier stored verdict for this attempt outranks a fresh re-measurement', async () => {
-  reset(200, { action: 'accept', publishable: true }); state.temporalResult = { ...report(['vertical_bob']), attempt_id: 'attempt', clip_sha256: 'clip', recorded_at: '2026-10-17T11:00:00Z' };
-  await quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report() });
-  assertEquals(state.rpc.length, 1); assertEquals(state.calls, []); assertEquals(state.fail, HOLD);
-  reset(200, { action: 'accept', publishable: true }); state.temporalResult = { ...report(['walk_through_travel']), attempt_id: 'attempt', clip_sha256: 'clip', recorded_at: '2026-10-17T11:00:00Z' };
-  await quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report() });
-  assertEquals(state.fail, [{ code: 'quality_check_refused', ambiguous: false }]); assertEquals(state.calls, []);
-  reset(200, { action: 'accept', publishable: true }); state.temporalResult = { not: 'a record' };
-  await assertRejects(() => quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report() }), Error, '503');
-  assertEquals(state.calls, []); assertEquals(state.fail, []);
+Deno.test('advisory: every failed motion verdict is recorded exactly as measured and the clip is still used', async () => {
+  for (const reasons of [['walk_through_travel'], ['horizon_roll'], ['duplicate_frames'], ['unmeasurable'], ['vertical_bob', 'walk_through_travel'], ['walking_cadence', 'duplicate_frames'], ['invalid_metrics'],
+    ['vertical_bob'], ['lateral_sway'], ['walking_cadence'], ['roll_wobble'], ['zoom_pumping'], ['vertical_bob', 'walking_cadence', 'zoom_pumping']]) {
+    for (const profile of [PROPERTY_VIDEO_STEADY_PROFILE, KIE_PROPERTY_PROFILE]) {
+      reset(200, { action: 'accept', publishable: true });
+      await quality(steadyCtx(profile), { ...raw, temporal: report(reasons) });
+      assertEquals(state.rpc[0], temporalRpc(report(reasons)));
+      // Never a hold, a pause, a still-photo substitution or a purchase: only the record and the normal judge.
+      assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_quality_judge_mode', 'property_video_job_qc_advisory']); judged();
+    }
+  }
 });
-Deno.test('a lost temporal record never reaches the paid judge', async () => {
+Deno.test('advisory: a failed motion verdict alone never schedules the paid retry', async () => {
+  reset(200, { action: 'accept', publishable: true });
+  await quality(steadyCtx(KIE_PROPERTY_PROFILE), { ...raw, temporal: report(['vertical_bob', 'walk_through_travel']) });
+  assertEquals(state.rpc.some((x: any) => x.name === 'property_video_job_quality_retry'), false);
+});
+Deno.test('advisory: an earlier stored verdict or an unreadable stored record changes nothing about the shot', async () => {
+  for (const stored of [{ ...report(['vertical_bob']), attempt_id: 'attempt', clip_sha256: 'clip', recorded_at: '2026-10-17T11:00:00Z' },
+    { ...report(['walk_through_travel']), attempt_id: 'attempt', clip_sha256: 'clip', recorded_at: '2026-10-17T11:00:00Z' }, { not: 'a record' }]) {
+    reset(200, { action: 'accept', publishable: true }); state.temporalResult = stored;
+    await quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report() });
+    assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_quality_judge_mode', 'property_video_job_qc_advisory']); judged();
+  }
+});
+Deno.test('a lost temporal record or a superseded lease stops the callback before the paid judge; only a closed shape refusal is skipped', async () => {
   reset(200, { action: 'accept', publishable: true }); state.rpcError = true;
   await assertRejects(() => quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report() }));
   assertEquals(state.rpc.length, 1); assertEquals(state.calls, []); assertEquals(state.fail, []);
-});
-Deno.test('travel, horizon roll, repeated frames or an unmeasurable clip are recorded then refused without a judge call', async () => {
-  for (const reasons of [['walk_through_travel'], ['horizon_roll'], ['duplicate_frames'], ['unmeasurable'], ['vertical_bob', 'walk_through_travel'], ['walking_cadence', 'duplicate_frames'], ['invalid_metrics']]) {
-    assertEquals(temporalRoute(report(reasons).verdict), 'refuse');
-    reset(200, { action: 'accept', publishable: true });
-    await quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report(reasons) });
-    assertEquals(state.rpc, [temporalRpc(report(reasons))]); assertEquals(state.calls, []);
-    assertEquals(state.fail, [{ code: 'quality_check_refused', ambiguous: false }]);
-  }
-});
-Deno.test('a bob, sway, cadence, wobble or pumping-only failure is recorded and HELD: no judge, no terminal refusal, no purchase', async () => {
-  for (const reasons of [['vertical_bob'], ['lateral_sway'], ['walking_cadence'], ['roll_wobble'], ['zoom_pumping'], ['vertical_bob', 'walking_cadence', 'zoom_pumping']]) {
-    assertEquals(temporalRoute(report(reasons).verdict), 'retry');
-    reset(200, { action: 'accept', publishable: true });
-    await quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report(reasons) });
-    assertEquals(state.rpc, [temporalRpc(report(reasons))]); assertEquals(state.calls, []); assertEquals(state.fail, HOLD);
-  }
-});
-Deno.test.ignore('FOLLOW-UP V2 retry routing: a bob/cadence-only temporal failure routes into the one paid retry (needs a temporal grant in property_video_quality_retry_evidence; the SQL grant is drift-only today, so this fails by design)', async () => {
-  reset(200, { action: 'accept', publishable: true });
-  await quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report(['vertical_bob']) });
-  assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_job_quality_retry']);
+  reset(200, { action: 'accept', publishable: true }); state.temporalStatus = 409;
+  await assertRejects(() => quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report(['vertical_bob']) }));
   assertEquals(state.calls, []); assertEquals(state.fail, []);
+  reset(200, { action: 'accept', publishable: true }); state.temporalStatus = 400;
+  await quality(steadyCtx(PROPERTY_VIDEO_STEADY_PROFILE), { ...raw, temporal: report(['vertical_bob']) });
+  assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_quality_judge_mode', 'property_video_job_qc_advisory']); judged();
 });
 Deno.test('legacy and v1 jobs neither require nor record a temporal report, even when one arrives', async () => {
   for (const profile of [undefined, 'legacy', 'fal-kling3-4k-v1']) {
     reset(200, { action: 'accept', publishable: true });
     await quality({ ...ctx(), job: { id: 'job', listing_id: 'listing', quality_profile: profile } }, { ...raw, temporal: report(['walk_through_travel']) });
-    assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_qc']); assertEquals(state.calls.length, 1); assertEquals(state.fail, []);
+    assertEquals(state.rpc.map((x: any) => x.name), ['property_video_quality_judge_mode', 'property_video_job_qc_advisory']); assertEquals(state.calls.length, 1); assertEquals(state.fail, []);
   }
 });
-Deno.test('deliberate defect control: without the profile check a legacy job starts demanding a report', async () => {
+Deno.test('deliberate defect control: without the profile check a legacy job starts recording temporal reports', async () => {
   const defect = prefix.replace('import{temporalReport,temporalRequired,temporalRoute}', 'import{temporalReport,temporalRoute}') + 'const temporalRequired=()=>true;\n';
   const { quality: broken } = await import('data:application/typescript,' + encodeURIComponent(defect + engine.slice(start, end) + '\n// defect control'));
   reset(200, { action: 'accept', publishable: true });
-  await broken(ctx(), raw);
-  assertEquals(state.calls, []); assertEquals(state.rpc, []); assertEquals(state.fail, HOLD);
+  await broken(ctx(), { ...raw, temporal: report() });
+  assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_temporal', 'property_video_quality_judge_mode', 'property_video_job_qc_advisory']);
   reset(200, { action: 'accept', publishable: true });
-  await quality(ctx(), raw); assertEquals(state.rpc.map((x: any) => x.name), ['property_video_job_qc']);
+  await quality(ctx(), { ...raw, temporal: report() }); assertEquals(state.rpc.map((x: any) => x.name), ['property_video_quality_judge_mode', 'property_video_job_qc_advisory']);
 });

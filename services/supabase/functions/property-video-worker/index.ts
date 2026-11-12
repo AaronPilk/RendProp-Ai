@@ -14,9 +14,15 @@ import{rpc,reply,bytesFrom}from'../property-video-jobs/runtime.ts';
 import{putCapability,outputHead}from'../property-video-jobs/storage.ts';
 import{preparationTick,preparationWorker}from'../property-video-jobs/prepared.ts';
 import{action,dispatch,poll,quality,scope}from'./engine.ts';
+import{followUpWakeDue,wakePropertyVideoRenderLater}from'../_shared/property-video-wake.ts';
 import{releaseCancelledProviderSlots}from'./reconcile.ts';
 import{consumeAcceptedResultRetention}from'./accepted-result-retention.ts';
 import{providerDiagnostic}from'./provider-diagnostic.ts';
+/** Supplier steps (dispatch/poll) one worker tick may chain before it answers. */
+export const TICK_MAX_SUPPLIER_STEPS=8;
+/** No further supplier step starts after this much of the controller's 50 s bridge timeout. */
+export const TICK_SUPPLIER_BUDGET_MS=20_000;
+export const tickMayContinue=(step:number,elapsedMs:number)=>step+1<TICK_MAX_SUPPLIER_STEPS&&elapsedMs<TICK_SUPPLIER_BUDGET_MS;
 // Terminal credit outcomes are best-effort here; the bounded database cron
 // reconciles them again after a worker crash or network loss.
 async function reconcileCreditJob(job:string){await rpc('credit_photo_motion_reconcile',{p_job:job}).catch(()=>{});}
@@ -27,8 +33,32 @@ export async function handler(req:Request){try{
  if(req.method==='POST'&&seg.length===2&&['aerial-input','aerial-qualify'].includes(seg[0])){const response=await aerialWorker(req,seg,await readJsonLimited<Record<string,any>>(req,2*1024*1024));assert(response,405,'Use an exact aerial callback.');return response;}
  assert(req.method==='POST'&&seg.length===1,405,'Use an explicit video-worker action.');const b=await readJsonLimited<Record<string,any>>(req,seg[0]==='qc'?2*1024*1024:16*1024),job=uuid(b.job_id);
  const preparation=await adminClient().from('property_video_preparations').select('id').eq('id',job).maybeSingle();assert(!preparation.error,503,'Video work identity could not be verified.');if(preparation.data){if(seg[0]==='tick'){assert(b.worker_id==='slot-0'||b.worker_id==='slot-1',400,'Use a dedicated worker slot.');return json(await preparationTick(job));}return await preparationWorker(req,seg[0],b);}
- if(seg[0]==='tick'){assert(b.worker_id==='slot-0'||b.worker_id==='slot-1',400,'Use a bounded dedicated worker slot.');const aerial=await aerialTick(job,b.worker_id);if(aerial)return json(aerial);let ctx;try{ctx=await rpc('property_video_job_claim',{p_job:job,p_worker:b.worker_id});}catch(error){const current=await adminClient().from('property_video_jobs').select('state').eq('id',job).maybeSingle();if(current.data&&['ready','cancelled','failed','needs_reconciliation'].includes(current.data.state))return json({job_id:job,state:current.data.state,action:'done'});throw error;}
-  if(ctx.action==='dispatch'){await dispatch(ctx);return json({job_id:job,state:'generating',action:'wait'});}if(ctx.action==='poll'){await poll(ctx);return json({job_id:job,state:'generating',action:'wait'});}return json(await action(ctx));}
+ if(seg[0]==='tick'){assert(b.worker_id==='slot-0'||b.worker_id==='slot-1',400,'Use a bounded dedicated worker slot.');const aerial=await aerialTick(job,b.worker_id);if(aerial)return json(aerial);// Read before the claim stamps a new status check: was any supplier receipt of this job checked recently?
+  const checked=await adminClient().from('property_video_job_sources').select('provider_status_checked_at').eq('job_id',job).in('state',['dispatching','processing']).then(r=>r.error?null:(r.data??[]).map((row:any)=>row.provider_status_checked_at),()=>null);
+  let ctx;try{ctx=await rpc('property_video_job_claim',{p_job:job,p_worker:b.worker_id});}catch(error){const current=await adminClient().from('property_video_jobs').select('state').eq('id',job).maybeSingle();if(current.data&&['ready','cancelled','failed','needs_reconciliation'].includes(current.data.state))return json({job_id:job,state:current.data.state,action:'done'});throw error;}
+  // One tick drains every supplier step that is already due: each dispatch or
+  // status poll is followed by a fresh SQL claim, so the next unpaid clip, the
+  // other accepted receipt and a just-retained clip's review start in this same
+  // request instead of one step per controller cron minute. SQL still owns
+  // every decision (capacity, burst gate, one attempt per claim); nothing here
+  // can buy, repeat or skip a generation. Each accepted receipt is polled at
+  // most once per tick, inside a bounded step count and time budget.
+  // The controller frees its CPU slot on this wait. One follow-up wake keeps
+  // the supplier poll at about 20 s instead of the 60 s cron (never stacked:
+  // it is skipped when another tick checked this job's receipts moments ago).
+  const followUp=checked!==null&&followUpWakeDue(checked);
+  const waiting=()=>{if(followUp)wakePropertyVideoRenderLater();return json({job_id:job,state:'generating',action:'wait'});},begun=Date.now(),polled=new Set<string>();
+  for(let step=0;ctx.action==='dispatch'||ctx.action==='poll';step++){
+   if(ctx.action==='dispatch')await dispatch(ctx);
+   else{const attempt=String(ctx.source?.attempt_id);
+    if(polled.has(attempt)){await rpc('property_video_job_poll_release',{p_job:job,p_lease:ctx.source.lease_token,p_attempt:ctx.source.attempt_id}).catch(()=>{});return waiting();}
+    polled.add(attempt);await poll(ctx);}
+   if(!tickMayContinue(step,Date.now()-begun))return waiting();
+   // A stopped job, a lost claim or a database refusal ends this tick as an
+   // ordinary wait; the next controller wake reads the saved state again.
+   try{ctx=await rpc('property_video_job_claim',{p_job:job,p_worker:b.worker_id});}catch{return waiting();}
+  }
+  return json(await action(ctx));}
  const lease=uuid(b.lease_token),attempt=b.attempt_id==null?undefined:uuid(b.attempt_id);
  if(seg[0]==='heartbeat')return json({current:await rpc('property_video_job_heartbeat',{p_job:job,p_lease:lease,p_attempt:attempt??null})});
  if(seg[0]==='audio-preflight'){const prior=await scope(job,lease);if(isPhotoMotion(prior.job))await rpc('property_video_photo_motion_observe',photoMotionObservation(prior.job,b,'inspect_audio','completed'));assert(typeof b.manifest_sha256==='string'&&typeof b.source_sha256==='string'&&/^[a-f0-9]{64}$/.test(b.source_sha256)&&Number.isFinite(b.duration_s)&&b.duration_s>0&&b.duration_s<=7200&&b.audio_streams===1,400,'Use actual measured saved-narration facts.');const j=await rpc('property_video_job_audio_preflight',{p_job:job,p_lease:lease,p_manifest:b.manifest_sha256,p_source_sha:b.source_sha256,p_duration:b.duration_s,p_streams:b.audio_streams});return json(await reply(j));}
