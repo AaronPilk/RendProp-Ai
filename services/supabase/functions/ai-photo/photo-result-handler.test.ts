@@ -86,7 +86,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {DECLUTTER_ASSESSMENT_PROTOCOL,DECLUTTER_ASSESSMENT_INSTRUCTION,parseDeclutterAssessment,unavailableDeclutterAssessment} from ${url("./declutter-assessment.ts")};
  import {decodeBase64Bytes} from ${url("../_shared/base64-bytes.ts")};
  import {PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from ${url("./photo-qc-wait.ts")};
- import {preparePhoto2KInput,photo2KChain,assertPhoto2KGeometry,assertPhotoPro4KGeometry} from ${url("./photo-quality.ts")};
+ import {preparePhoto2KInput,photo2KChain,assertPhoto2KGeometry,assertPhotoPro4KGeometry,deliverableOffSizePhoto} from ${url("./photo-quality.ts")};
  import {normalPhotoQualityProfile as actualNormalProfile,normalPhotoQualityRoutes as actualNormalRoutes,prepareNormalPhotoPro4KInput,priceNormalPhotoQualityRoute} from ${url("./normal-photo-quality.ts")};
  import {orderSteps} from ${url("../_shared/router.ts")};
  const normalPhotoQualityProfile=(task,masked)=>actualNormalProfile(task,masked,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>{state.normalLookups=(state.normalLookups??0)+1;return{data:{value:state.normalWithdraw&&state.normalLookups>1?{enabled:false}:state.normalProfile??null},error:null};}})})})});
@@ -202,17 +202,27 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  };
  const retainPhotoCandidate=actualEvidence?actualQualityStore.retainPhotoCandidate:async(_admin,row,decoded)=>{
   row.saved=await persistOwnedPhotoResult(admin,row.identity,{status:"done",mime:decoded.mime,result_url:"data:"+decoded.mime+";base64,"+state.output},undefined,decoded.data);
-  row.evidence.output_etag="synthetic-confirmed";
+  row.evidence.output_etag="synthetic-confirmed";row.evidence.provenance_id="synthetic-provenance";
   row.evidence.output={key:row.saved.key,mime:decoded.mime,bytes:decoded.bytes,sha256:"a".repeat(64)};
   row.check.state=state.qualityPending?"pending":"accept";return row;
  };
  const failPhotoQuality=actualEvidence?actualQualityStore.failPhotoQuality:async(_admin,row,phase,facts)=>{row.check.state="hold";row.failure={phase,facts};return row;};
  const continuePhotoQuality=async(_admin,row)=>row;
  const waitForPhotoQuality=async(...args)=>{state.waits=(state.waits??0)+1;state.waitDeadline=args[2].deadline;state.waitRemaining=args[2].deadline-Date.now();return await continuePhotoQuality(...args);};
+ // Early private release is off unless a test opts in, so every pre-existing
+ // case keeps exercising the unchanged wait-for-the-check path. The opt-in
+ // models SQL: only a retained candidate with its disclosure can be released.
+ const photoReleased=row=>!!row?.release;
+ const releasePhotoQuality=async(_admin,row,facts)=>{
+  state.releaseCalls=(state.releaseCalls??0)+1;state.releaseFacts=facts;
+  if(!state.earlyRelease||!row.evidence?.output_etag)return null;
+  row.release={released_at:new Date().toISOString(),output_sha256:row.evidence.output?.sha256??"a".repeat(64),facts};return row;
+ };
+ const continuePhotoQualityAfterResponse=(_admin,_row,args)=>{state.backgroundChecks=(state.backgroundChecks??0)+1;state.backgroundDeadline=args.deadline;};
  const calibrationRequest=body=>body;
  const beginPhotoCalibration=async()=>{state.calibrationCalls=(state.calibrationCalls??0)+1;return{evidence:{id:"synthetic-calibration"},check:{state:"pending"}};};
  const photoQualityResponse=actualEvidence?actualQualityStore.photoQualityResponse:async(_admin,row)=>{
-  if(row.check.state!=="accept")throw new HttpError(409,"Saved photo is private pending review.",row.check.state==="hold"?"photo_quality_hold":"photo_quality_pending",{check_id:"synthetic-check",evidence_id:"synthetic-evidence",retry_existing_job:true,failure_phase:row.failure?.phase,...row.failure?.facts});
+  if(row.check.state!=="accept"&&!row.release)throw new HttpError(409,"Saved photo is private pending review.",row.check.state==="hold"?"photo_quality_hold":"photo_quality_pending",{check_id:"synthetic-check",evidence_id:"synthetic-evidence",retry_existing_job:true,failure_phase:row.failure?.phase,...row.failure?.facts});
   const metadata={edit:row.args.edit,...(row.args.style?{style:row.args.style}:{}),disclosure:"Synthetic disclosure",provenance:{id:"synthetic-provenance",recorded:true}};
   if(!row.responded){row.responded=true;return photoJsonResponse(metadata,state.output,row.saved.mime,row.saved.key);}
   const saved=await restorePhotoResult(admin,row.identity);if(!saved)throw new HttpError(503,"Saved photo is not available.");
@@ -935,4 +945,40 @@ Deno.test("declutter assessment invalid protocol or changed prepared bytes refus
  for(const extra of[{declutter_assessment_protocol:"unknown",source_sha256:"a".repeat(64)},{declutter_assessment_protocol:"declutter-assessment-v1"},{declutter_assessment_protocol:"declutter-assessment-v1",source_sha256:"a".repeat(64)}]){
   const f=await fixture();try{const response=await f.run(f.request({edit:"suggest",...extra}));assertEquals(response.status,400);assertEquals([f.state.helperDispatch,f.state.submits,f.state.puts],[0,0,0]);assertEquals(f.state.costs,[]);}finally{f.close();}
  }
+});
+
+Deno.test("early private release answers with the image before the advisory check and never waits for it",async()=>{
+ const f=await fixture();try{
+  f.state.qualityPending=true;f.state.earlyRelease=true;
+  const response=await f.run(f.request());assertEquals(response.status,200);
+  const body=await response.json();assertEquals(body.image_b64,f.state.output);assertEquals(body.provenance.recorded,true);
+  assertEquals(f.state.waits??0,0,"The reply must not wait for the comparison or the judge");
+  assertEquals(f.state.backgroundChecks,1,"The saved check continues exactly once after the reply");
+  assertEquals(f.state.releaseCalls,1);assertEquals(f.state.releaseFacts.geometry.meets_request,true);assertEquals(f.state.releaseFacts.geometry.requested,"2K");
+  // Money and provenance order is unchanged: one hold, one provider call,
+  // one ledger row, and the operation journal completed before the release.
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.completes,1);
+ }finally{f.close();}
+});
+Deno.test("without a release receipt the pending edit stays private exactly as before",async()=>{
+ const f=await fixture();try{
+  f.state.qualityPending=true;
+  const response=await f.run(f.request());assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");
+  assertEquals(f.state.releaseCalls,1);assertEquals(f.state.waits,1);assertEquals(f.state.backgroundChecks??0,0);
+ }finally{f.close();}
+});
+Deno.test("an off-size but complete paid photo is delivered with its real size only when its release is recorded",async()=>{
+ const refused=await fixture();try{
+  refused.state.output=outputJPEG(1024,1024);
+  assertEquals((await refused.run(refused.request())).status,409);assertEquals(refused.state.quality.failure.phase,"photo_output_geometry");assertEquals(refused.state.submits,1);
+ }finally{refused.close();}
+ const delivered=await fixture();try{
+  delivered.state.output=outputJPEG(1024,1024);delivered.state.earlyRelease=true;delivered.state.qualityPending=true;
+  const response=await delivered.run(delivered.request());assertEquals(response.status,200);assertEquals((await response.json()).image_b64,delivered.state.output);
+  assertEquals(delivered.state.releaseFacts.geometry,{requested:"2K",width:1024,height:1024,meets_request:false});assertEquals(delivered.state.submits,1);assertEquals(delivered.state.waits??0,0);
+ }finally{delivered.close();}
+ const tiny=await fixture();try{
+  tiny.state.output=outputJPEG(640,480);tiny.state.earlyRelease=true;
+  assertEquals((await tiny.run(tiny.request())).status,409);assertEquals(tiny.state.releaseCalls??0,0,"A frame below a real 1K class is never released");
+ }finally{tiny.close();}
 });

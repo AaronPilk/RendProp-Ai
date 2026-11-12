@@ -64,3 +64,20 @@ export async function waitForPhotoQuality(admin:PhotoAdmin,initial:PhotoQualityE
   return row;
  }
 }
+/** After an early private release the reply no longer waits for the advisory
+ * check, so the check continues here: one controller wake, scoped status
+ * reads, then the single funded judge, all inside the SAME request budget the
+ * synchronous path used. The client connection and its abort signal end with
+ * the reply, so this uses a detached request. If the runtime ends the isolate
+ * early nothing is lost: the per-minute controller queue owns every saved
+ * pending check and prepared judge, and the SQL lease/bind journal still
+ * allows exactly one comparison and one judge. Never throws. */
+export function continuePhotoQualityAfterResponse(admin:PhotoAdmin,row:PhotoQualityEnvelope,args:{actor:string;selected:string|null;url:string;instruction?:string;deadline:number},wait:typeof waitForPhotoQuality=waitForPhotoQuality):void{
+ let task:Promise<void>;
+ try{
+  const request=new Request(args.url,{method:"POST"});
+  task=wait(admin,row,{actor:args.actor,selected:args.selected,request,instruction:args.instruction,deadline:args.deadline}).then(()=>{},()=>{});
+ }catch{return;}
+ const runtime=(globalThis as {EdgeRuntime?:{waitUntil?:(work:Promise<unknown>)=>void}}).EdgeRuntime;
+ try{if(runtime&&typeof runtime.waitUntil==="function")runtime.waitUntil(task);}catch{/* The controller queue still completes the saved check. */}
+}

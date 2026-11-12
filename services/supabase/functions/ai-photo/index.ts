@@ -96,7 +96,7 @@ import { adapterFor } from "../_shared/providers/index.ts";
 import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, inputHash, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput, ownerQaPhotoPro4KStep, prepareOwnerQaPhotoPro4KInput } from "./owner-photo-qa.ts";
-import { preparePhoto2KInput, photo2KChain, assertPhoto2KGeometry, assertPhotoPro4KGeometry } from "./photo-quality.ts";
+import { preparePhoto2KInput, photo2KChain, assertPhoto2KGeometry, assertPhotoPro4KGeometry, deliverableOffSizePhoto } from "./photo-quality.ts";
 import { priceMaskedPhotoChain, isMaskedFillStep } from "./masked-photo-pricing.ts";
 import { supportsStagingReference,submitPreparedGeminiPhoto } from "../_shared/providers/gemini.ts";
 import {
@@ -121,8 +121,8 @@ import { validatePhotoInputs, validatePhotoPrompt, decodePhotoOutput } from "./i
 import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from "./helper-policy.ts";
 import {DECLUTTER_ASSESSMENT_PROTOCOL,DECLUTTER_ASSESSMENT_INSTRUCTION,parseDeclutterAssessment,unavailableDeclutterAssessment,type DeclutterAssessment} from "./declutter-assessment.ts";
 import {decodeBase64Bytes} from "../_shared/base64-bytes.ts";
-import {lookupPhotoQuality,statusPhotoQuality,requestPhotoQualityStatus,photoUUID,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
-import {waitForPhotoQuality,PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from "./photo-qc-wait.ts";
+import {lookupPhotoQuality,statusPhotoQuality,requestPhotoQualityStatus,photoUUID,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,releasePhotoQuality,photoReleased,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
+import {waitForPhotoQuality,continuePhotoQualityAfterResponse,PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from "./photo-qc-wait.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from "./protocol.ts";
 import {recordPhotoRecipe} from "./photo-recipe.ts";
@@ -896,7 +896,11 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         if(quality){
           assert(quality.evidence.request_sha256===await inputHash(body),409,"This request identifier belongs to different photo instructions.","conflict");
           await photoQualityScope(adminClient(),quality,user.id,preferredOrg(req)??null);
-          const continued=hasPhotoRecoveryProtocol(req)?await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt,deadline:qualityDeadline}):quality;
+          // A privately released edit is answered at once with its honest
+          // review state. Its saved check is only nudged, never awaited.
+          const releasedReplay=photoReleased(quality);
+          if(releasedReplay&&hasPhotoRecoveryProtocol(req)&&quality.can_continue)continuePhotoQualityAfterResponse(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,url:req.url,instruction:body.prompt,deadline:qualityDeadline});
+          const continued=!releasedReplay&&hasPhotoRecoveryProtocol(req)?await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt,deadline:qualityDeadline}):quality;
           return await photoQualityResponse(adminClient(),continued,user.id,preferredOrg(req)??null,{space_type:space});
         }
         const stored=error instanceof SavedFundingResponse?error.saved_response:undefined;
@@ -1125,8 +1129,13 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     // bytes, then evaluate requested geometry. Even a wrong-size valid photo
     // remains private evidence rather than being silently discarded.
     let phase="photo_output_validation";
+    // A complete, readable photo that is merely not the requested 2K size is
+    // kept for delivery with an honest resolution note (see below) instead of
+    // ending the paid edit without an image. It is never reported as 2K.
+    let offSize=false,measured:{width:number;height:number}|null=null;
     try{
       const decoded=decodePhotoOutput(outB64,outMime);
+      measured={width:decoded.width,height:decoded.height};
       phase="evidence_persistence";
       quality=await retainPhotoCandidate(adminClient(),quality,decoded,{stage:`${task}:${chain.indexOf(step)}`,provider:step.provider,model:step.model});
       phase="photo_output_geometry";
@@ -1135,14 +1144,40 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       else if(normalPhoto2K)assertPhoto2KGeometry(decoded);
     }catch(error){
       const over=error instanceof HttpError&&error.details?.failure_phase==="photo_output_size";
-      quality=await failPhotoQuality(adminClient(),quality,over?"photo_output_size":phase,{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:over?"The paid image exceeded the safe25MiB output bound and could not be retained.":"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
-      return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
+      // Only the ordinary 2K size window is soft, and only once the exact
+      // bytes and their disclosure record are retained. Owner comparisons,
+      // undecodable output, storage failures and the 25 MiB bound stay hard.
+      offSize=phase==="photo_output_geometry"&&normalPhoto2K&&!over&&error instanceof HttpError&&measured!==null&&deliverableOffSizePhoto(measured)&&!!quality.evidence.output_etag&&!!quality.evidence.provenance_id;
+      if(!offSize){
+        quality=await failPhotoQuality(adminClient(),quality,over?"photo_output_size":phase,{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:over?"The paid image exceeded the safe25MiB output bound and could not be retained.":"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
+        return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
+      }
     }
+    const releaseFacts:Record<string,unknown>={delivered:"before_advisory_check",stage:`${task}:${chain.indexOf(step)}`,
+      geometry:{requested:ownerPhotoPro4KStep?"4K":normalPhoto2K?"2K":null,width:measured?.width??null,height:measured?.height??null,meets_request:!offSize}};
     // The heavy judge runs in its separate service function. Retain this exact
     // already-validated base64 for the eventual accepted reply, avoiding another
     //whole-photo download/decode/encode in the generation isolate.
     const inlineCandidate={imageB64:outB64,key:quality.evidence.output!.key,mime:outMime,sha256:quality.evidence.output!.sha256,bytes:quality.evidence.output!.bytes};
     attempt.value.b64="";attempt.value.local={status:"done",mime:outMime,result_url:""};
+    // FAST DELIVERY. The ledger row, the settled charge, the exact retained
+    // bytes and the disclosure record all exist at this point. The judge is
+    // advisory (owner decision, 6 Nov), so the requester gets the image now;
+    // SQL records the release and writes the same private delivery receipts
+    // as acceptance, while listing publication stays closed until the check
+    // has attached its verdict to the disclosure record. The check continues
+    // after the reply. When release is unavailable (migration not applied,
+    // switch off, SQL refusal) the previous wait-for-the-check path runs.
+    const released=await releasePhotoQuality(adminClient(),quality,releaseFacts);
+    if(released){
+      continuePhotoQualityAfterResponse(adminClient(),released,{actor:user.id,selected:preferredOrg(req)??null,url:req.url,instruction:body.prompt,deadline:qualityDeadline});
+      return await photoQualityResponse(adminClient(),released,user.id,preferredOrg(req)??null,{space_type:space,...(routerOn?{route:{provider:step.provider,model:step.model,route_id:step.route_id}}:{})},undefined,inlineCandidate);
+    }
+    if(offSize){
+      // No release receipt means no honest way to hand over an off-size image.
+      quality=await failPhotoQuality(adminClient(),quality,"photo_output_geometry",{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
+      return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
+    }
     quality=await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt,deadline:qualityDeadline});
     return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space,...(routerOn?{route:{provider:step.provider,model:step.model,route_id:step.route_id}}:{})},undefined,inlineCandidate);
   } catch (err) {

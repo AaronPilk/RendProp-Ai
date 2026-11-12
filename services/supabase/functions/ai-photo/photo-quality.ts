@@ -61,6 +61,16 @@ export function assertPhoto2KOutput(b64:string,mime:string):void{
 export function assertPhoto2KGeometry(image:Pick<DecodedStillImage,"width"|"height">):void{
  if(image.width*image.height<3_800_000||image.width*image.height>4_800_000)throw new HttpError(502,"The provider returned an image outside the requested 2K size. That image was not saved as a high-resolution edit.","upstream");
 }
+/** A complete supplier photo that missed the 2K pixel window can still be
+ * handed to its requester, flagged as off-size, once it is retained and its
+ * private release is recorded: at least a real 1K-class frame (the smallest
+ * documented output is 1024x1024) and within the retained-evidence pixel cap
+ * enforced by photo_quality_evidence_reserve. Anything smaller is not a
+ * usable listing photo and stays held. This never relabels the image as 2K. */
+export function deliverableOffSizePhoto(image:Pick<DecodedStillImage,"width"|"height">):boolean{
+ const pixels=image.width*image.height;
+ return Number.isSafeInteger(image.width)&&Number.isSafeInteger(image.height)&&Math.min(image.width,image.height)>=512&&pixels>=900_000&&pixels<=24_000_000;
+}
 
 /** Official Gemini3.1 Flash Image4K dimensions for all supported aspects.
  * Allow1% supplier rounding per edge (the live2K portrait was2390 vs2400).

@@ -39,7 +39,8 @@ try {
 
 type Mode = "owned" | "foreign-listing" | "revoked-team" | "marketing" |
   "wrong-org" | "wrong-library" | "hidden-unbound" | "missing" |
-  "held" | "foreign-actor" | "unrelated-hidden" | "invalid-asset";
+  "held" | "foreign-actor" | "unrelated-hidden" | "invalid-asset" |
+  "released-pending" | "released-wrong-file";
 
 async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_asset_id: ASSET }): Promise<{ status: number; body: Record<string, unknown>; calls: string[] }> {
   const previous = globalThis.fetch;
@@ -65,6 +66,12 @@ async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_as
     if (url.pathname === "/rest/v1/media_provenance") {
       assertEquals(url.searchParams.get("id"), `eq.${PROOF}`);
       const serviceRead = req.headers.get("authorization") === "Bearer fixture-service";
+      if (serviceRead && url.searchParams.get("select") === "id,listing_id,kind,label,disclosure,created_at") {
+        // Summary of a deferred attachment; never the media or its keys.
+        assertEquals(url.searchParams.get("org_id"), `eq.${ORG}`);
+        return json({ id: PROOF, listing_id: LISTING, kind: "declutter", label: null,
+          disclosure: "Digitally decluttered; compare with the original.", created_at: "2026-11-05T15:00:00Z" });
+      }
       // Presenter RLS hides this row from the user until its altered key is
       // attached; the service fallback reads bounded proof fields for an
       // accepted result only, never its media contents.
@@ -90,9 +97,16 @@ async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_as
       return json([{
         id: EVIDENCE, actor_id: mode === "foreign-actor" ? OTHER_ACTOR : ACTOR,
         org_id: ORG, library_org_id: ORG, listing_id: LISTING,
-        provenance_id: PROOF, state: "accept", purpose: "prospective",
+        provenance_id: PROOF, state: mode === "released-pending" || mode === "released-wrong-file" ? "evidence_ready" : "accept", purpose: "prospective",
         output: { key: prior?.altered_key },
       }]);
+    }
+    if (url.pathname === "/rest/v1/rpc/photo_quality_defer_altered") {
+      assertEquals(req.headers.get("authorization"), "Bearer fixture-service");
+      const body = await req.json();
+      assertEquals(body, { p_actor: ACTOR, p_evidence: EVIDENCE, p_asset: ASSET });
+      if (mode === "released-wrong-file") return json({ message: "RP409: The selected version is not the exact checked photo" }, 400);
+      return json({ deferred: true, state: "evidence_ready", provenance_id: PROOF, listing_id: LISTING });
     }
     if (url.pathname === "/rest/v1/photo_quality_checks") {
       assertEquals(req.headers.get("authorization"), "Bearer fixture-service");
@@ -174,4 +188,26 @@ Deno.test("hidden provenance cannot be relabeled or have its original reassigned
     assertEquals(result.calls.some((x) => x.endsWith("/set_provenance_media")), false);
     assertEquals(result.calls.some((x) => x.endsWith("/photo_edit_evidence")), false);
   }
+});
+
+Deno.test("a released, still-unchecked edit defers its exact saved copy without publishing or failing", async () => {
+  const result = await attempt("released-pending");
+  assertEquals(result.status, 200);
+  assertEquals(result.body.ok, true);
+  assertEquals(result.body.deferred, true);
+  assertEquals((result.body.provenance as Record<string, unknown>).id, PROOF);
+  assertEquals(result.calls.filter((x) => x.endsWith("/photo_quality_defer_altered")).length, 1);
+  // Publication authority is untouched: the public attachment RPC never runs.
+  assertEquals(result.calls.some((x) => x.endsWith("/set_provenance_media")), false);
+  assertEquals(result.calls.filter((x) => x.endsWith("/listing_library_scope")).length, 1);
+
+  const wrong = await attempt("released-wrong-file");
+  assertEquals(wrong.status, 409);
+  assertEquals(wrong.body.ok, undefined);
+  assertEquals(wrong.calls.some((x) => x.endsWith("/set_provenance_media")), false);
+
+  // Only the exact single-field attachment may be deferred.
+  const relabel = await attempt("released-pending", { altered_asset_id: ASSET, label: "Unsafe replacement" });
+  assertEquals(relabel.calls.some((x) => x.endsWith("/photo_quality_defer_altered")), false);
+  assertEquals(relabel.calls.some((x) => x.endsWith("/set_provenance_media")), false);
 });

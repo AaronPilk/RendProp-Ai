@@ -4,7 +4,7 @@ import {HttpError} from "../_shared/http.ts";
 import {inputHash,resetServingModeCache} from "../_shared/funded-serving.ts";
 import {decodePhotoOutput} from "./input-policy.ts";
 import {PHOTO_QC_POLICY,PHOTO_QC_JSON_SCHEMA,unavailablePhotoQuality,parsePhotoQuality,type PhotoQualityVerdict} from "./photo-qc-verdict.ts";
-import {beginPhotoQuality,retainPhotoCandidate,statusPhotoQuality,photoQualityResponse,photoBytesHash,failPhotoQuality,throwPhotoQualityState,type PhotoQualityEnvelope,type PhotoEvidenceIO} from "./photo-qc-store.ts";
+import {beginPhotoQuality,retainPhotoCandidate,statusPhotoQuality,photoQualityResponse,photoBytesHash,failPhotoQuality,throwPhotoQualityState,releasePhotoQuality,photoReleased,type PhotoQualityEnvelope,type PhotoEvidenceIO} from "./photo-qc-store.ts";
 import {continuePhotoQuality,photoJudgeQuote,photoJudgeRubric,photoJudgeTimeout,PHOTO_QC_MAX_OUTPUT_TOKENS,PHOTO_QC_JUDGE_CONTRACT,PHOTO_QC_OUTPUT_FORMAT,photoDerivatives,type PhotoJudgeDependencies} from "./photo-qc-runner.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {photoResultKeys} from "./photo-result.ts";
@@ -16,12 +16,12 @@ const step={route_id:"existing-approved-sonnet",task:"judge.qc_drift",provider:"
 async function fixture(){
  const input=jpeg(),output=jpeg(3584,4780),inputSHA=await photoBytesHash(input),outputSHA=await photoBytesHash(output);
  const identity={actorId:actor,orgId:org,requestKey:"photo-qc-runtime-fixture",listingId:listing};
- const state={row:null as PhotoQualityEnvelope|null,enabled:true,current:true,library:org,creditHold:null as null|{org_id:string;actor_id:string;environment:"Production"|"Sandbox";request_key:string;operation:string;state:"reserved"|"settled"},readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,operationInputSHA:"",verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,calledTimeout:0,stopReason:"end_turn" as import("../_shared/providers/anthropic.ts").AnthropicStopReason,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
+ const state={row:null as PhotoQualityEnvelope|null,earlyRelease:undefined as boolean|undefined,enabled:true,current:true,library:org,creditHold:null as null|{org_id:string;actor_id:string;environment:"Production"|"Sandbox";request_key:string;operation:string;state:"reserved"|"settled"},readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,operationInputSHA:"",verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,calledTimeout:0,stopReason:"end_turn" as import("../_shared/providers/anthropic.ts").AnthropicStopReason,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
  const view=()=>{const row=structuredClone(state.row!);row.can_continue=!!row.evidence.output_etag&&["pending","derivative_ready"].includes(row.check.state)&&row.check.judge_started_at===null&&(!state.attempt||state.attempt.state==="rejected");return row;};
  const unavailable=()=>({data:null,error:{message:"RP404: Current selected library is unavailable"}});
  const admin:any={from:(table:string)=>{const filters:Record<string,unknown>={};const query:any={select:()=>query,eq:(field:string,value:unknown)=>{filters[field]=value;return query;},in:(field:string,values:unknown[])=>{filters[field]=values;return query;},limit:async()=>({data:table==="credit_holds"&&state.creditHold&&Object.entries(filters).every(([field,value])=>Array.isArray(value)?value.includes((state.creditHold as Record<string,unknown>)[field]):(state.creditHold as Record<string,unknown>)[field]===value)?[state.creditHold]:[],error:null}),maybeSingle:async()=>{
-  if(table==="app_config")return{data:{value:{enabled:state.enabled,approved_judge:{provider:"anthropic",model:"claude-sonnet-5"}}},error:null};
-  if(table==="private_ai_outputs"){const e=state.row!.evidence,file=e.output!;return{data:state.row!.check.state==="accept"?{org_id:org,user_id:actor,listing_id:listing,bucket:"renders",storage_key:file.key,bytes:file.bytes}:null,error:null};}
+  if(table==="app_config")return{data:{value:{enabled:state.enabled,approved_judge:{provider:"anthropic",model:"claude-sonnet-5"},...(state.earlyRelease===undefined?{}:{early_release:state.earlyRelease})}},error:null};
+  if(table==="private_ai_outputs"){const e=state.row!.evidence,file=e.output!;return{data:state.row!.check.state==="accept"||state.row!.release?{org_id:org,user_id:actor,listing_id:listing,bucket:"renders",storage_key:file.key,bytes:file.bytes}:null,error:null};}
   throw Error("Unexpected table "+table);
  }};return query;},rpc:async(name:string,args:any)=>{
   state.rpcs.push(name);
@@ -49,6 +49,13 @@ async function fixture(){
    const {generation_stage,provider,model,...facts}=args.p_output,e=state.row!.evidence;
    e.output={...facts,bucket:"renders",key:`ai-router/${org}/photo-evidence/${actor}/${evidence}/candidate.jpg`};e.generation_stage=generation_stage;e.generation_provider=provider;e.generation_model=model;
    return{data:structuredClone(e),error:null};
+  }
+  if(name==="photo_quality_release"){
+   // Mirrors the SQL contract: only a retained candidate with its disclosure
+   // row, not yet held or refused, is released; a replay returns the same row.
+   const e=state.row!.evidence;
+   if(!e.output||!e.output_etag||!e.input_etag||!e.provenance_id||!["evidence_ready","checking","accept"].includes(e.state)||["hold","refuse"].includes(state.row!.check.state))return{data:null,error:{message:"RP409: This photo operation cannot be released for private review"}};
+   state.row!.release??={released_at:new Date().toISOString(),output_sha256:e.output.sha256,facts:args.p_facts};return{data:view(),error:null};
   }
   if(name==="photo_quality_failure"){state.row!.evidence.state="hold";state.row!.evidence.failure={phase:args.p_phase,facts:args.p_facts};state.row!.check.state="hold";return{data:view(),error:null};}
   if(name==="photo_quality_claim"){
@@ -356,4 +363,41 @@ Deno.test("background judge refuses a withdrawn actor/library before funding and
  const gone=await fixture(),ready=await gone.prepare();gone.state.current=false;await assertRejects(()=>gone.run(ready),HttpError,"unavailable");assertEquals(gone.state.holds,0);assertEquals(gone.state.binds,0);assertEquals(gone.state.calls,0);
  const withdrawn=await fixture(),before=await withdrawn.prepare(),read=withdrawn.deps.read;withdrawn.deps.read=async(...args)=>{const value=await read(...args);withdrawn.state.current=false;return value;};
  await assertRejects(()=>withdrawn.run(before),HttpError,"unavailable");assertEquals(withdrawn.state.holds,0);assertEquals(withdrawn.state.binds,0);assertEquals(withdrawn.state.calls,0);
+});
+
+Deno.test("private release delivers the exact retained candidate with its honest review state; publication stays closed until accept",async()=>{
+ const f=await fixture(),row=await f.retain();
+ const released=await releasePhotoQuality(f.admin,row,{delivered:"before_advisory_check",geometry:{requested:"2K",width:3584,height:4780,meets_request:true}});
+ assert(released&&photoReleased(released));assertEquals(released.check.state,"pending");assertEquals(released.evidence.state,"evidence_ready");
+ const file=released.evidence.output!,inline={imageB64:b64(f.output),key:file.key,mime:file.mime,sha256:file.sha256,bytes:file.bytes};
+ const first=await(await photoQualityResponse(f.admin,released,actor,org,{},f.io,inline)).json();
+ assertEquals(first.image_b64,b64(f.output));assertEquals(first.provenance,{id:"ea100606-0000-4000-8000-000000000008",recorded:true});
+ assertEquals(first.photo_quality,{policy:PHOTO_QC_POLICY,check_id:check,state:"pending",advisory:true,delivery:"private_review",publishable:false});
+ assertEquals(f.state.reads,0);assertEquals(f.state.calls,0,"Delivery never dispatches or waits for the judge");
+ // A later saved-status read re-hashes the stored bytes, still without a verdict.
+ const saved=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(saved.image_b64,b64(f.output));assertEquals(saved.photo_quality.publishable,false);
+ f.state.corruptGet=true;await assertRejects(()=>photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),HttpError,"bytes changed");f.state.corruptGet=false;
+ f.state.row!.evidence.state="accept";f.state.row!.check.state="accept";
+ const accepted=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(accepted.photo_quality.state,"accept");assertEquals(accepted.photo_quality.publishable,true);
+ // A check that later cannot produce a verdict no longer takes the image away;
+ // it is reported as held and unpublishable instead of ending in an error.
+ f.state.row!.evidence.state="hold";f.state.row!.check.state="hold";f.state.row!.evidence.failure={phase:"quality_check"};
+ const held=await(await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io)).json();assertEquals(held.image_b64,b64(f.output));assertEquals(held.photo_quality.state,"hold");assertEquals(held.photo_quality.publishable,false);assertEquals(held.photo_quality.failure_phase,"quality_check");
+ f.state.current=false;await assertRejects(()=>photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),HttpError);
+});
+Deno.test("release is unavailable for held, unretained or switched-off edits, and a release of other bytes never delivers",async()=>{
+ const off=await fixture(),offRow=await off.retain();off.state.earlyRelease=false;
+ assertEquals(await releasePhotoQuality(off.admin,offRow,{}),null);assert(!off.state.rpcs.includes("photo_quality_release"));
+ const held=await fixture(),heldRow=await held.retain();await failPhotoQuality(held.admin,heldRow,"photo_output_geometry",{provider_cost_incurred:true});
+ assertEquals(await releasePhotoQuality(held.admin,held.view(),{}),null);assertEquals(held.state.row!.release,undefined);
+ const begun=await fixture();assertEquals(await releasePhotoQuality(begun.admin,await begun.begin(),{}),null);assert(!begun.state.rpcs.includes("photo_quality_release"));
+ const foreign=await fixture(),pending=await foreign.retain();
+ const forged:PhotoQualityEnvelope={...pending,release:{released_at:new Date().toISOString(),output_sha256:"f".repeat(64)}};assertEquals(photoReleased(forged),false);
+ const error=await assertRejects(()=>photoQualityResponse(foreign.admin,forged,actor,org,{},foreign.io),HttpError);assertEquals(error.code,"photo_quality_pending");assertEquals(foreign.state.reads,0);
+});
+Deno.test("an off-size released photo reports its real size beside the image",async()=>{
+ const f=await fixture(),row=await f.retain();
+ const released=await releasePhotoQuality(f.admin,row,{geometry:{requested:"2K",width:1024,height:1024,meets_request:false}});assert(released);
+ const body=await(await photoQualityResponse(f.admin,released,actor,org,{},f.io)).json();
+ assertEquals(body.photo_quality.resolution,{requested:"2K",width:1024,height:1024,meets_request:false});
 });
