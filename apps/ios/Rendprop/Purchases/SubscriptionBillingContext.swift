@@ -323,7 +323,9 @@ struct TrialOfferSummary: Codable, Hashable, Sendable {
         guard let walkthroughs, let photoEdits, let publishedListings,
               maxDays == 7, let maxVideoSeconds, let uploadBudgetBytes,
               photoEdits > 0, photoEdits <= 20,
-              ((walkthroughs == 0 && publishedListings == 0 && maxVideoSeconds == 0 && photoEdits == 5)
+              // The photo-only trial's edit count is the server's per-user
+              // allowance (subscription_trial_config.photo_edits, 5 to 20).
+              ((walkthroughs == 0 && publishedListings == 0 && maxVideoSeconds == 0 && (5...20).contains(photoEdits))
                || (walkthroughs == 1 && publishedListings == 1 && maxVideoSeconds > 0 && maxVideoSeconds <= 90)),
               uploadBudgetBytes > 0, uploadBudgetBytes <= 1_073_741_824 else { return nil }
         return self

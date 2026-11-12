@@ -58,6 +58,10 @@ REFLECTION_FIXTURES = (
     ("paid_media_budget_cap.sql", '"assertions": 19', 19),
     ("reviewer_sandbox_shared_credit.sql", '"assertions": 42', 42),
     ("trial_card_backed_authority.sql", '"assertions": 25', 25),
+    # Per-user trial allowance (20261112223000): dormant by default, so the
+    # first-100 fixtures above are unchanged; this one switches the mode inside
+    # its own rolled-back transaction.
+    ("trial_per_user_allowance.sql", '"assertions": 63', 63),
 )
 
 # These already-shipped transactional Studio migrations intentionally create
