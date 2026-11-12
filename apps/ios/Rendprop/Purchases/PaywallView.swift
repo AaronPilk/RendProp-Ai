@@ -122,7 +122,7 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             } else if purchases.billingContext?.isCeilingMode == true {
-                Text("An eligible, funded 7-day trial lets you create one listing, add photos, and use limited AI edits for decluttering or staging. Video, aerial openings, hosted walkthroughs, and website publishing begin with a paid plan. Apple handles billing and cancellation.")
+                Text("Your 7-day free trial lets you create one listing, add photos and try AI photo edits for decluttering or staging. Video, aerial openings, hosted walkthroughs and website publishing start with a paid plan. Apple handles billing and cancelling.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             } else {
@@ -465,7 +465,7 @@ struct PaywallView: View {
                 }
                 if purchases.activeProductID != product.id, !purchases.canStartNewPurchase(for: product) {
                     Text(purchases.canCheckTrialAvailability(for: product)
-                         ? "Check availability to reserve this plan's trial terms before Apple's confirmation. Checking does not start Apple billing."
+                         ? "Tap to set up your free trial for this plan. Nothing is charged, and Apple asks you to confirm before the trial starts."
                          : purchases.trialEligibility(for: product) == false
                             ? PurchaseDispatchAdmission.paidUnavailableMessage
                             : TrialPurchaseAdmission.unavailableMessage)
@@ -555,14 +555,14 @@ struct PaywallView: View {
         if purchases.activeProductID == product.id { return "Manage current subscription" }
         if purchases.billingContext?.isCeilingMode == true {
             if purchases.showsIntroOffer(for: product) { return "Continue with Apple" }
-            if purchases.canCheckTrialAvailability(for: product) && !purchases.canStartNewPurchase(for: product) { return "Check trial availability" }
+            if purchases.canCheckTrialAvailability(for: product) && !purchases.canStartNewPurchase(for: product) { return "Set up my free trial" }
             if purchases.activePlan != nil { return "Confirm plan change with Apple" }
             return "Subscribe with Apple"
         }
         if Config.useLiveBackend && !Config.isUITesting,
            purchases.trialEligibility(for: product) == false { return "Paid subscriptions unavailable" }
         if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
-            return purchases.canCheckTrialAvailability(for: product) ? "Check trial availability" : "Trial unavailable"
+            return purchases.canCheckTrialAvailability(for: product) ? "Set up my free trial" : "Free trial can't start yet"
         }
         if purchases.showsIntroOffer(for: product) { return "Continue with Apple" }
         if purchases.activePlan != nil { return "Confirm plan change with Apple" }
@@ -573,7 +573,7 @@ struct PaywallView: View {
         if purchases.activeProductID == product.id { return "This is the subscription on this Apple ID. Apple shows its renewal date and cancellation options; its original workspace keeps the plan." }
         if purchases.billingContext?.isCeilingMode == true {
             if purchases.canCheckTrialAvailability(for: product) && !purchases.canStartNewPurchase(for: product) {
-                return "A seven-day free trial needs an exact funded reservation and Apple's eligibility. Checking does not start billing; you can review its terms before Apple's confirmation."
+                return "Your seven-day free trial is ready to set up. Setting it up does not charge you. You see what is included, and Apple asks you to confirm before it starts."
             }
             return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.showsIntroOffer(for: product),
                 price: product.displayPrice, period: period.priceSuffix)
@@ -581,7 +581,7 @@ struct PaywallView: View {
         if Config.useLiveBackend && !Config.isUITesting,
            purchases.trialEligibility(for: product) == false { return PurchaseDispatchAdmission.paidUnavailableMessage }
         if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
-            return "Trial availability depends on a funded reservation and Apple's current eligibility. Checking does not start Apple billing. Review the reserved terms and Apple's confirmation before continuing."
+            return "Setting up the free trial does not charge you. You see what is included, and Apple asks you to confirm before it starts. Apple decides whether this Apple ID can still have a free trial."
         }
         return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.showsIntroOffer(for: product),
             price: product.displayPrice, period: period.priceSuffix)

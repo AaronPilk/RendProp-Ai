@@ -167,8 +167,8 @@ struct ServingEnvelopeSummary: Codable, Hashable, Sendable {
               cap.isFinite, spent.isFinite, cap > 0, spent >= 0, spent < cap,
               let start = pool.startsAt.flatMap(TrialUsageSummary.date),
               let end = pool.endsAt.flatMap(TrialUsageSummary.date),
-              start <= now, end > now, end > start else { return "Trial AI capacity is unavailable right now." }
-        return "Trial AI is available until \(end.formatted(date: .abbreviated, time: .omitted)), while trial capacity remains."
+              start <= now, end > now, end > start else { return "Trial AI is not available right now." }
+        return "Trial AI is available until \(end.formatted(date: .abbreviated, time: .omitted))."
     }
     var heldLine: String? {
         guard let heldCents, heldCents > 0 else { return nil }
@@ -286,7 +286,7 @@ struct TrialUsageSummary: Codable, Hashable, Sendable {
     }
     var creationScope: String {
         walkthroughs.cap == 0
-            ? "Create one listing, add photos, and use limited AI edits for decluttering or staging. Video, aerial openings, hosted walkthroughs, and website publishing begin with a paid plan."
+            ? "Create one listing, add photos, and use your AI photo edits for decluttering or staging. Video, aerial openings, hosted walkthroughs, and website publishing begin with a paid plan."
             : "Your recorded trial includes the earlier hosted walkthrough and publishing allowances shown above."
     }
     static let explanation = "These trial allowances belong to the account that started the trial in this workspace. The same counters apply on iPhone and Studio. Each allowance is separate and does not reset. Your saved work stays available to view and download under your workspace's access and retention terms. Using your allowance does not change Apple's renewal date."
@@ -507,7 +507,7 @@ enum PurchaseDispatchAdmission {
 }
 
 enum TrialPurchaseAdmission {
-    static let unavailableMessage = "Free trials are not available in this workspace yet. No Apple billing has started. Your saved work remains available under your workspace's access and retention terms."
+    static let unavailableMessage = "The free trial can't be started here right now. Nothing has been charged, and your saved work is still here. If this continues, contact support in Settings → Legal & support."
     static let capacityUnavailableMessage = "The free trial cannot be started right now. That is a problem on our side. No new Apple purchase has started. Anything Apple already confirmed stays with this workspace. Do not purchase again or switch accounts. Contact support in Settings → Legal & support, then tap Restore purchases once support confirms it is fixed."
     static let unknownEnvironmentMessage = "Rendprop could not confirm your App Store account just now. No new Apple purchase has started. Anything Apple already confirmed stays with this workspace. Reopen the app and check this plan again, or contact support in Settings → Legal & support."
     static let unsupportedRegionMessage = "The free trial is currently offered only in the United States with a US dollar subscription. No Apple purchase has started. Anything Apple already confirmed is kept. You can still restore purchases and manage your subscription."
