@@ -79,11 +79,23 @@ enum PhotoExportRenderer {
         return max(1, min(byMemory, info.activeProcessorCount))
     }
 
+    /// Lets the person stop an export that is taking too long. The sheet
+    /// sets it; the worker threads and the ZIP writer read it between photos,
+    /// saved versions and megabyte chunks. Stopping only ever abandons the
+    /// temporary export copies; stored photos and history are never touched.
+    final class Cancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+        func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    }
+
     /// Runs `work` for every index on a small pool of threads and returns the
     /// results in input order, so the package is byte-for-byte the one the old
     /// sequential loop produced. The lowest failing index wins; once anything
     /// fails, no new work starts. `work` must only touch its own photo.
-    static func mapConcurrently<T>(count: Int, workers: Int = exportWorkers, _ work: (Int) throws -> T) throws -> [T] {
+    static func mapConcurrently<T>(count: Int, workers: Int = exportWorkers, cancellation: Cancellation? = nil,
+                                   _ work: (Int) throws -> T) throws -> [T] {
         guard count > 0 else { return [] }
         let lock = NSLock()
         var results = [T?](repeating: nil, count: count)
@@ -92,7 +104,7 @@ enum PhotoExportRenderer {
         DispatchQueue.concurrentPerform(iterations: max(1, min(workers, count))) { _ in
             while true {
                 lock.lock()
-                guard failure == nil, next < count else { lock.unlock(); return }
+                guard failure == nil, next < count, cancellation?.isCancelled != true else { lock.unlock(); return }
                 let index = next
                 next += 1
                 lock.unlock()
@@ -106,13 +118,15 @@ enum PhotoExportRenderer {
                 }
             }
         }
+        // A stopped export has gaps in `results`; it never returns them.
+        if cancellation?.isCancelled == true { throw CancellationError() }
         if let failure { throw failure.error }
         return results.map { $0! }
     }
 
     static func prepare(_ photos: [EnhancedPhoto], options: Options,
                         readRetained: (URL) throws -> Data = { try Data(contentsOf: $0) },
-                        progress: Progress? = nil) throws -> Prepared {
+                        progress: Progress? = nil, cancellation: Cancellation? = nil) throws -> Prepared {
         guard !photos.isEmpty else { throw Failure(message: "There are no photos to export.") }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-photos-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -126,7 +140,7 @@ enum PhotoExportRenderer {
             // the per-photo lists are joined in gallery order afterwards, so
             // the output order is unchanged: originals and versions before
             // the current edit, photo by photo.
-            let outputs = try mapConcurrently(count: photos.count) { offset -> (url: URL, urls: [URL], deliveryFiles: [URL]) in
+            let outputs = try mapConcurrently(count: photos.count, cancellation: cancellation) { offset -> (url: URL, urls: [URL], deliveryFiles: [URL]) in
                 let photo = photos[offset]
                 var urls: [URL] = []
                 var deliveryFiles: [URL] = []
@@ -266,7 +280,7 @@ enum PhotoExportRenderer {
 
     static func prepareCoordinator(_ photos: [EnhancedPhoto],
                                    readRetained: (URL) throws -> Data = { try Data(contentsOf: $0) },
-                                   progress: Progress? = nil) throws -> Prepared {
+                                   progress: Progress? = nil, cancellation: Cancellation? = nil) throws -> Prepared {
         let empty = try prepareEmpty()
         let directory = empty.directory
         do {
@@ -296,7 +310,7 @@ enum PhotoExportRenderer {
             struct Output { var files: [URL] = [], images: [URL] = [], notes: [String] = [] }
             let finished = NSLock()
             var done = 0
-            let outputs = try mapConcurrently(count: work.count) { item -> Output in
+            let outputs = try mapConcurrently(count: work.count, cancellation: cancellation) { item -> Output in
                 let (offset, photo) = work[item]
                 var output = Output()
                 func write(_ data: Data, _ path: String) throws -> URL {
@@ -335,6 +349,9 @@ enum PhotoExportRenderer {
                         output.notes.append("Photo \(offset + 1): earlier source history is unverified; it is in EarlierSources, not Originals.")
                     }
                     for (position, version) in saved.enumerated() {
+                        // Each saved version is several full-size renders; a
+                        // stop request does not wait for the whole photo.
+                        if cancellation?.isCancelled == true { throw CancellationError() }
                         // Custom review is an exact persisted file permission,
                         // including descendants. Export never marks it reviewed.
                         if version.needsCustomReview { continue }
@@ -416,7 +433,8 @@ enum PhotoExportRenderer {
         return ZipArchive.safeFileName(leaf, fallback: "") == leaf
     }
 
-    static func packageCoordinator(_ prepared: Prepared, archiveName: String, extras: [Extra] = [], now: Date = Date()) throws -> URL {
+    static func packageCoordinator(_ prepared: Prepared, archiveName: String, extras: [Extra] = [], now: Date = Date(),
+                                   progress: ZipArchive.Progress? = nil, cancellation: Cancellation? = nil) throws -> URL {
         guard !prepared.files.isEmpty || !extras.isEmpty else { throw Failure(message: "There are no files to package.") }
         let title = ZipArchive.safeFileName(archiveName, fallback: "Rendprop")
         var readme = "\(title)\nRendprop coordinator handoff package. Only files saved on this iPhone are included; cloud-only media is not fetched.\n\nMasters: Originals contains the source files retained by Rendprop. New library imports preserve the file bytes and format supplied by Photos before enhancement. Camera captures and older library imports retain full-resolution JPEG copies made before enhancement, with camera metadata not preserved. Decluttered and Staged contain every eligible saved version separately. Enhanced, Edited and EarlierSources retain other saved sources. Masters are exact saved bytes in their real format, without cropping or re-encoding. Imported sources may contain edits made before Rendprop. Only files saved on this iPhone are included; cloud-only photos, tours and videos are not downloaded for this package.\n\nDelivery aspect presets, not platform rules: the MLS and Zillow folders use landscape 4:3; Instagram/Feed4x5 uses portrait 4:5; Instagram/Stories9x16 uses portrait 9:16. Each platform separates Decluttered, Staged, Enhanced and Edited versions. Copies are clean JPEGs encoded at quality 0.97, center-cropped at full available resolution without borders or upscaling. Cropping removes edges; review the master before uploading. No resolution or detail is invented. A short edge below 1080 pixels is flagged as limited available resolution, not a platform eligibility guarantee.\n\nThe same photo/version number maps a master to its platform copies and individual disclosure notes. All eligible saved predecessors stay accessible. Unreviewed custom edits and their unreviewed descendants are withheld. StagingPreviews contains pending staging masters, explicitly not approved for publication, with no platform copies. No export grants approval. This package is a handoff, not an automatic publication. Add each matching disclosure in your MLS/advertising platform and check its rules.\n\n"
@@ -448,7 +466,8 @@ enum PhotoExportRenderer {
         try Data(readme.utf8).write(to: note, options: .atomic)
         entries.insert(ZipArchive.Entry(name: "README.txt", url: note), at: 0)
         let archive = prepared.directory.appendingPathComponent(title + " listing.zip")
-        try ZipArchive.write(entries, to: archive, modified: now)
+        try ZipArchive.write(entries, to: archive, modified: now, progress: progress,
+                             isCancelled: { cancellation?.isCancelled == true })
         return archive
     }
 
@@ -459,7 +478,8 @@ enum PhotoExportRenderer {
     /// that says what the numbers and the disclosure files are. The prepared
     /// files stay in place; the archive sits beside them in the same temporary
     /// directory so the usual cleanup removes both.
-    static func package(_ prepared: Prepared, archiveName: String, extras: [Extra] = [], now: Date = Date()) throws -> URL {
+    static func package(_ prepared: Prepared, archiveName: String, extras: [Extra] = [], now: Date = Date(),
+                        progress: ZipArchive.Progress? = nil, cancellation: Cancellation? = nil) throws -> URL {
         guard !prepared.files.isEmpty || !extras.isEmpty else { throw Failure(message: "There are no photos to package.") }
         let versionCount = prepared.files.filter { $0.lastPathComponent.contains("-version-") && !$0.lastPathComponent.hasSuffix("-disclosure.txt") }.count
         let photoCount = prepared.files.filter { ["jpg", "jpeg"].contains($0.pathExtension.lowercased()) && !$0.lastPathComponent.contains("retained-original") && !$0.lastPathComponent.contains("-version-") }.count
@@ -511,7 +531,8 @@ enum PhotoExportRenderer {
             entries.append(ZipArchive.Entry(name: name, url: extra.url))
         }
         let archiveURL = prepared.directory.appendingPathComponent(whole ? "\(title) listing.zip" : "\(title) photos.zip")
-        try ZipArchive.write(entries, to: archiveURL, modified: now)
+        try ZipArchive.write(entries, to: archiveURL, modified: now, progress: progress,
+                             isCancelled: { cancellation?.isCancelled == true })
         return archiveURL
     }
 
@@ -622,6 +643,11 @@ struct PhotoExportSheet: View {
     /// while the ZIP is being written.
     @State private var photosDone: (done: Int, total: Int)?
     @State private var packaging = false
+    /// Bytes copied into the ZIP so far while `packaging`.
+    @State private var zipProgress: (written: UInt64, total: UInt64)?
+    /// The running export's stop switch, and whether Cancel was tapped.
+    @State private var cancellation: PhotoExportRenderer.Cancellation?
+    @State private var cancelRequested = false
     @State private var error: String?
     @State private var saved = false
     @State private var prepared: PhotoExportRenderer.Prepared?
@@ -652,7 +678,18 @@ struct PhotoExportSheet: View {
             }
             .disabled(working)
             .navigationTitle(wholeListing ? "Share everything" : "Export photos").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(working) } }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(working) }
+                // The form is disabled while an export runs; this is the one
+                // control that stays live, so nobody has to wait it out.
+                ToolbarItem(placement: .cancellationAction) {
+                    if working {
+                        Button("Cancel") { cancelRequested = true; cancellation?.cancel() }
+                            .disabled(cancelRequested)
+                            .accessibilityIdentifier("export.cancel")
+                    }
+                }
+            }
             .task {
                 guard !didCaptureContext else { return }
                 owner = AuthStore.shared.userID; revision = AuthStore.shared.syncSessionRevision
@@ -906,8 +943,17 @@ struct PhotoExportSheet: View {
     /// waiting and giving up (TestFlight 136: a realtor abandoned a package
     /// after ninety seconds of a spinner that said nothing).
     @ViewBuilder private var progressView: some View {
-        if packaging {
-            ProgressView("Writing the ZIP file…")
+        if cancelRequested {
+            ProgressView("Stopping…")
+        } else if packaging {
+            if let zipProgress, zipProgress.total > 0 {
+                ProgressView(value: Double(min(zipProgress.written, zipProgress.total)), total: Double(zipProgress.total)) {
+                    Text("Writing the ZIP file…")
+                }
+                .accessibilityIdentifier("export.zipProgress")
+            } else {
+                ProgressView("Writing the ZIP file…")
+            }
         } else if let photosDone, photosDone.total > 0 {
             ProgressView(value: Double(photosDone.done), total: Double(photosDone.total)) {
                 Text("Preparing photos · \(photosDone.done) of \(photosDone.total) ready")
@@ -959,6 +1005,9 @@ struct PhotoExportSheet: View {
         guard !working else { return }
         guard currentContext else { error = "Your account or workspace changed. Reopen the photo to export it."; return }
         working = true; error = nil; saved = false; photosDone = nil; packaging = false
+        zipProgress = nil; cancelRequested = false
+        let stop = PhotoExportRenderer.Cancellation()
+        cancellation = stop
         let options = PhotoExportRenderer.Options(destination: destination, includeLabel: includeLabel,
             includeOriginals: includeOriginals, original: original, aspect: aspect, framing: framing, levelDegrees: levelDegrees)
         // Package only for a share: Photos receives the images themselves.
@@ -975,6 +1024,7 @@ struct PhotoExportSheet: View {
         Task { @MainActor in
             defer {
                 working = false; photosDone = nil; packaging = false
+                zipProgress = nil; cancelRequested = false; cancellation = nil
                 IdleTimer.release()
                 backgroundTime.end()
             }
@@ -985,11 +1035,19 @@ struct PhotoExportSheet: View {
                     _ = Task { @MainActor in self.photosDone = (done, total) }
                 }
                 let packagingStarted: @Sendable () -> Void = { _ = Task { @MainActor in self.packaging = true } }
+                let zipWritten: ZipArchive.Progress = { written, total in
+                    _ = Task { @MainActor in
+                        // Updates hop to the main actor one by one; never let a late one move the bar back.
+                        if self.working, (self.zipProgress?.written ?? 0) <= written { self.zipProgress = (written, total) }
+                    }
+                }
                 let (result, archive) = try await Task.detached(priority: .userInitiated) { () -> (PhotoExportRenderer.Prepared, URL?) in
-                    let prepared = coordinator ? try PhotoExportRenderer.prepareCoordinator(input, progress: progress) : (input.isEmpty ? try PhotoExportRenderer.prepareEmpty() : try PhotoExportRenderer.prepare(input, options: options, progress: progress))
+                    let prepared = coordinator ? try PhotoExportRenderer.prepareCoordinator(input, progress: progress, cancellation: stop) : (input.isEmpty ? try PhotoExportRenderer.prepareEmpty() : try PhotoExportRenderer.prepare(input, options: options, progress: progress, cancellation: stop))
                     do {
                         if wantsArchive { packagingStarted() }
-                        let archive = wantsArchive ? (coordinator ? try PhotoExportRenderer.packageCoordinator(prepared, archiveName: archiveTitle, extras: packageExtras) : try PhotoExportRenderer.package(prepared, archiveName: archiveTitle, extras: packageExtras)) : nil
+                        let archive = wantsArchive ? (coordinator ? try PhotoExportRenderer.packageCoordinator(prepared, archiveName: archiveTitle, extras: packageExtras, progress: zipWritten, cancellation: stop) : try PhotoExportRenderer.package(prepared, archiveName: archiveTitle, extras: packageExtras, progress: zipWritten, cancellation: stop)) : nil
+                        // Stopped after the last file was written: hand nothing over.
+                        if stop.isCancelled { throw CancellationError() }
                         return (prepared, archive)
                     } catch {
                         try? FileManager.default.removeItem(at: prepared.directory)
@@ -1022,6 +1080,10 @@ struct PhotoExportSheet: View {
                                                             files: result.files + packageExtras.map(\.url))
                 }
                 if currentContext { onExported(input, options.original, coordinator || !packageExtras.isEmpty) }
+            } catch is CancellationError {
+                // The person stopped it. The export copies are already removed;
+                // there is nothing to report.
+                if let output { try? FileManager.default.removeItem(at: output.directory) }
             } catch {
                 if let output { try? FileManager.default.removeItem(at: output.directory) }
                 self.error = error.localizedDescription

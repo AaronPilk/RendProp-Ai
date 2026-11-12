@@ -1,4 +1,5 @@
 import Foundation
+import zlib
 
 /// A minimal ZIP writer: PKZIP 2.0 "store" entries with UTF-8 names, one
 /// archive an agent can hand to whoever runs their file — a transaction
@@ -28,9 +29,16 @@ enum ZipArchive {
     static let maximumEntries = 65_534
     private static let readChunk = 1 << 20
 
+    /// Bytes copied into the archive so far, and the bytes of every entry.
+    typealias Progress = @Sendable (_ written: UInt64, _ total: UInt64) -> Void
+
     /// Write `entries`, in order, to `destination` (replaced if it exists).
+    /// `progress` is told roughly every hundredth of the archive; `isCancelled`
+    /// is asked between megabyte chunks and stops the write with a
+    /// `CancellationError`, leaving a partial file for the caller to remove.
     @discardableResult
-    static func write(_ entries: [Entry], to destination: URL, modified: Date = Date()) throws -> URL {
+    static func write(_ entries: [Entry], to destination: URL, modified: Date = Date(),
+                      progress: Progress? = nil, isCancelled: (@Sendable () -> Bool)? = nil) throws -> URL {
         guard !entries.isEmpty else { throw Failure(message: "There is nothing to package.") }
         guard entries.count <= maximumEntries else { throw Failure(message: "Too many files for one ZIP archive.") }
         var seen = Set<String>()
@@ -47,6 +55,15 @@ enum ZipArchive {
         defer { try? output.close() }
         var centralDirectory = Data()
         var offset: UInt64 = 0
+        var total: UInt64 = 0
+        if progress != nil {
+            for entry in entries {
+                let bytes = (try? FileManager.default.attributesOfItem(atPath: entry.url.path)[.size] as? NSNumber)?.uint64Value
+                total += bytes ?? 0
+            }
+        }
+        var written: UInt64 = 0, reported: UInt64 = 0
+        let reportStep = max(total / 100, UInt64(readChunk))
         for entry in entries {
             let name = Data(entry.name.utf8)
             var local = Data(capacity: 30 + name.count)
@@ -66,7 +83,14 @@ enum ZipArchive {
             // One read per file: the bytes are checksummed as they are copied,
             // then the header is patched in place. A listing package is often
             // a gigabyte or more, and reading it twice was half the ZIP time.
-            let (crc, size) = try copy(entry.url, to: output, name: entry.name)
+            let (crc, size) = try copy(entry.url, to: output, name: entry.name) { count in
+                if isCancelled?() == true { throw CancellationError() }
+                written += UInt64(count)
+                if let progress, written - reported >= reportStep {
+                    reported = written
+                    progress(written, total)
+                }
+            }
             let resume = try output.offset()
             try output.seek(toOffset: offset + 14)
             try output.write(contentsOf: le32(crc) + le32(UInt32(size)) + le32(UInt32(size)))
@@ -135,7 +159,8 @@ enum ZipArchive {
     /// Copies the file into the archive in one pass, returning the CRC and
     /// size of exactly the bytes written, so the header always describes the
     /// bytes that follow it even if the source changes underneath.
-    private static func copy(_ url: URL, to output: FileHandle, name: String) throws -> (crc: UInt32, size: UInt64) {
+    private static func copy(_ url: URL, to output: FileHandle, name: String,
+                             copied: (Int) throws -> Void) throws -> (crc: UInt32, size: UInt64) {
         let input = try FileHandle(forReadingFrom: url)
         defer { try? input.close() }
         var crc: UInt32 = 0xFFFF_FFFF
@@ -145,22 +170,28 @@ enum ZipArchive {
             guard size <= maximumBytes else { throw Failure(message: "\(name) is too large for a ZIP archive.") }
             crc = update(crc: crc, with: chunk)
             try output.write(contentsOf: chunk)
+            try copied(chunk.count)
         }
         return (crc ^ 0xFFFF_FFFF, size)
     }
 
-    private static let crcTable: [UInt32] = (0..<256).map { index -> UInt32 in
-        var value = UInt32(index)
-        for _ in 0..<8 { value = (value & 1) == 1 ? 0xEDB8_8320 ^ (value >> 1) : value >> 1 }
-        return value
-    }
-
+    /// Continues a running CRC-32 over `data`. `crc` and the result are the
+    /// raw register (start at 0xFFFF_FFFF, invert at the end), as before. The
+    /// arithmetic is the system zlib's, which is the same IEEE polynomial and
+    /// many times faster than a byte-at-a-time table on a gigabyte package.
+    /// zlib works on the inverted register, hence the two inversions.
     static func update(crc: UInt32, with data: Data) -> UInt32 {
-        var value = crc
+        var running = UInt(crc ^ 0xFFFF_FFFF)
         data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
-            for byte in buffer { value = crcTable[Int((value ^ UInt32(byte)) & 0xFF)] ^ (value >> 8) }
+            guard let base = buffer.bindMemory(to: UInt8.self).baseAddress else { return }
+            var position = 0
+            while position < buffer.count {
+                let step = min(buffer.count - position, 1 << 30)
+                running = zlib.crc32(running, base + position, UInt32(step))
+                position += step
+            }
         }
-        return value
+        return UInt32(truncatingIfNeeded: running) ^ 0xFFFF_FFFF
     }
 
     /// Standard CRC-32 (IEEE 802.3) of a complete buffer.
