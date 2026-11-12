@@ -1246,6 +1246,7 @@ struct SettingsView: View {
         req.httpMethod = "DELETE"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, resp) = try await URLSession.shared.data(for: req)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? -1

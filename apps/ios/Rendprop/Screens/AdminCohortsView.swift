@@ -248,6 +248,7 @@ enum AdminReportRequest {
         var request = URLRequest(url: target)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
         if let token = await AuthStore.validAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }

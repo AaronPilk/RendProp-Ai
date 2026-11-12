@@ -112,6 +112,7 @@ enum PushHTTP {
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
