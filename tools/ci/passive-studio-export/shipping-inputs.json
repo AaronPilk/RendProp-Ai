@@ -1,0 +1,25 @@
+{
+  "schema": "rendprop-shipping-inputs-v1",
+  "sourceCommit": "1c561d7b91d9b75bd7ba29aa081fcba959089fee",
+  "studioHashes": {
+    "tests/cloud-editor-browser.mjs": "811da20c52532f98b97ae7a30bb89b28513e77594faf3521aad0b3109c10409d",
+    "tests/cloud-editor-fixture.tsx": "a28cd8b38d775992dd257bc9a5d2328609921840e6b5504547e372609c268850",
+    "tests/runner-facts.mjs": "7aa46f9598f889352481c3b2b2810409b0f721c432f828329dfbae1d620b5821",
+    "tests/native-trace-observer.mjs": "da47159e7f4c2222b31b03a0e0ed302ce1021d8695265896b2934140f44cccf6",
+    "tests/scheduling-probe.mjs": "8b37e9f811ebf8ccc3929d3c251b20897505938e2a70c0ac765995a32a7ab8df",
+    "tests/export-audio-output.mjs": "fbd316ee8a7328197a14e7f5eab64d4b767c92d99d335e221ff2ba17ee7e24d0",
+    "src/editor/export.ts": "730ee8ede72ce76df7d47cd40f12c134731dbda330b6f92c50a8d080880bd04a",
+    "src/editor/recording-clock.ts": "4b3ecc66ba7ec1acf874190ee18d7f7d44b409b99e80504f10fa5d0ff77102df",
+    "src/editor/mp4-cadence.ts": "fb2bdb8e54a2e7698528f6fd9c0a440fc8698e28af2cebe96bbea2834bb1a852",
+    "src/editor/media.ts": "82353070aaa85733ad89583fc52dedef36a9296cd6e4f594910571e7597b939b",
+    "src/editor/model.ts": "9696653581899e097d0b0e8ce395c9c80d5e6f264cd8f17411a6ff5545dfa8dd",
+    "src/editor/overlay-renderer.ts": "a926d2621fc31e2753859c7c7fd66be019a93262cb34c8973126b11cf9ae8832",
+    "package-lock.json": "6a5c79d8298e51c1b1a9c1a621afbca7940e737336554c0e929dbead7bd2c7df"
+  },
+  "repositoryHashes": {
+    ".github/workflows/ci.yml": "5db39bb0523729886ce9e5e57a9ebfa431642614db741c6303568d15bc174f10",
+    "tools/ci/media-runner-ready.mjs": "e6bba983d0cb5b81db1f8de4c9ccd93dfc4d032d7acda182a5720a05420e9ff2",
+    "tools/ci/native-media-cache.mjs": "777b22a37e628f008e301ea8281473dbd89939aa2854721381bd61123858554e",
+    "tools/ci/browser-signature-policy.mjs": "ba94c76ba5fb41803d6af25bbb3e62e76f419a73c447552d2abe9ecf9c98da23"
+  }
+}
