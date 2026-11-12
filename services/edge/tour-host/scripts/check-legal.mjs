@@ -50,11 +50,20 @@ for (const [label, html] of [["Privacy", privacy], ["Terms", terms]]) {
   expect(html.includes("#7c3aed") && html.includes("#9b6dff"), `${label}: existing light/dark brand accents`);
   expect(html.includes('<html lang="en">') && html.includes('name="viewport"'), `${label}: language and mobile viewport`);
   expect(html.includes('href="/support"') && html.includes('mailto:aaron@pilk.ai'), `${label}: support and contact preserved`);
-  expect(html.includes("Effective October 29, 2026"), `${label}: proposed notice revision date`);
+  // Privacy changed on 2026-11-12 (website analytics); the terms did not.
+  expect(html.includes(label === "Privacy" ? "Effective November 12, 2026" : "Effective October 29, 2026"), `${label}: current revision date`);
   expect(html.includes("RendProp LLC") && html.includes("855 Central Avenue, Saint Petersburg, FL 33701"), `${label}: owner-supplied legal entity and mailing address`);
   expect(!/<script\b/i.test(html), `${label}: no third-party scripts or telemetry added`);
 }
 expect(t.includes("without your written consent") && p.includes("without your written consent"), "Written-consent commitment retained");
+// The marketing pages load Cloudflare Web Analytics (scripts/check-web-analytics.mjs);
+// the policy has to say so, say what it does not do, and keep the app-only lines app-only.
+expect(p.includes("Website analytics.") && p.includes("Cloudflare Web Analytics") && p.includes("no cookies, no local storage and no fingerprinting")
+  && p.includes("aggregate page views") && p.includes("not used on the property websites or portfolio pages that agents publish")
+  && p.includes("it is not in the app"), "Privacy discloses cookie-free website analytics on the marketing pages only");
+expect(p.includes("Web Analytics on the rendprop.com marketing pages"), "Cloudflare processor row includes website analytics");
+expect(!/no (?:website|web) analytics|website (?:has|uses) no analytics|no analytics on (?:the|our) website/i.test(p), "No sentence claims the website has no analytics");
+expect(!p.includes("All of this is first-party"), "The first-party statement is scoped to the app");
 expect(t.includes("requires separate permission") && p.includes("not covered by an earlier AI permission"), "Kie never inherits earlier processor permission");
 expect(t.includes("optional paid AI Aerial opening") && t.includes("eligible paid access") && t.includes("remaining Aerial allowance")
   && t.includes("available processing capacity") && t.includes("separate permission for the listed")

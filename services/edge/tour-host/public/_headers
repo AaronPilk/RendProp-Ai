@@ -14,6 +14,12 @@
 #   If you edit that boot script, recompute the hash or the theme will flash:
 #   python3 -c "import base64,hashlib,re,sys; s=re.search(r'<script>(.*?)</script>',open('public/index.html').read(),re.S).group(1); print('sha256-'+base64.b64encode(hashlib.sha256(s.encode()).digest()).decode())"
 #
+# The one third-party script is Cloudflare Web Analytics, an external module
+# (static.cloudflareinsights.com) that reports to cloudflareinsights.com. It is
+# loaded from a src URL, so it needs no hash. These rules only reach static
+# files (the marketing pages and blog); customer pages are rendered by the
+# Worker with their own policy and never load the beacon.
+#
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
@@ -21,7 +27,7 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Cross-Origin-Opener-Policy: same-origin
-  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-dPD1Mxbpi+mEqJFUoL8CYPB/4K/8CY+lO1ciNefrhno='; connect-src 'self'; font-src 'self' data:; base-uri 'self'; form-action 'self' mailto:; frame-ancestors 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-dPD1Mxbpi+mEqJFUoL8CYPB/4K/8CY+lO1ciNefrhno=' https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; font-src 'self' data:; base-uri 'self'; form-action 'self' mailto:; frame-ancestors 'none'; object-src 'none'
 
 # Images, icons and fonts under /assets are effectively immutable (a new image
 # gets a new filename).

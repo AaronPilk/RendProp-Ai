@@ -32,6 +32,10 @@ const index = readFileSync(join(PUB, "index.html"), "utf8");
 const navHtml = index.match(/<header class="nav" id="nav">[\s\S]*?<\/header>/)[0];
 const footerHtml = index.match(/<footer>[\s\S]*?<\/footer>/)[0];
 const bootScript = index.match(/<script>\(function\(\)\{try\{[\s\S]*?<\/script>/)[0];
+// Cloudflare Web Analytics runs on the marketing pages only, never on customer
+// pages, so it is placed in the static files rather than injected by the Worker.
+const analyticsSnippet = index.match(/<!-- Cloudflare Web Analytics -->[\s\S]*?<!-- End Cloudflare Web Analytics -->/)?.[0];
+if (!analyticsSnippet) throw new Error("public/index.html has no Cloudflare Web Analytics snippet to copy into the blog");
 function nav(current) {
   return navHtml.replace(/ aria-current="page"/g, "").replace(`<a href="${current}">`, `<a href="${current}" aria-current="page">`);
 }
@@ -71,6 +75,7 @@ ${published ? `<meta property="article:published_time" content="${published}">\n
 <link rel="stylesheet" href="/assets/site.css">
 ${bootScript}
 <script src="/assets/site.js" defer></script>
+${analyticsSnippet}
 `;
 }
 const crumbs = (items) => ({ "@type": "BreadcrumbList", "itemListElement": items.map(([name, path], i) => ({ "@type": "ListItem", position: i + 1, name, item: ORIGIN + path })) });
