@@ -48,7 +48,10 @@
 --     predicate, same rows.
 --
 -- APPLYING. One transaction; safe to apply once (a second run is a no-op with
--- a notice). The CREATE INDEX statements take a brief write lock on tables
+-- a notice). On production it must print
+--   NOTICE: candidate listing filter applied to 2 function(s)
+-- A notice that the access-memo lineage is absent means the functions were
+-- NOT rewritten (expected only on a fresh-schema replay database). The CREATE INDEX statements take a brief write lock on tables
 -- that hold under 1,000 rows today (single-digit ms). If any of listings,
 -- org_invites, team_private_libraries or apple_subscriptions has grown past
 -- ~1M rows by the time this ships, create the indexes first, by hand, one
@@ -82,6 +85,18 @@ declare
  target record;
  d text; before_meta jsonb; hits integer; applied integer := 0;
 begin
+ -- The pins below are the bodies production has had since the 2026-11-06
+ -- access-memo migrations. Those four are live-state adoptions that a fresh
+ -- schema replay cannot reproduce (tools/audit/run_database_regression.py,
+ -- LIVE_STATE_ONLY_MIGRATIONS), so a database without them is not production
+ -- and keeps its unrewritten functions: skip the rewrite there, loudly, and
+ -- still create the indexes and policies below. On the production lineage
+ -- every mismatch is an error.
+ if to_regprocedure('public.library_content_access_compute(uuid,uuid,boolean)') is null then
+  raise notice 'access-memo lineage (20261106) absent: candidate listing filter NOT applied to this database';
+  return;
+ end if;
+
  -- The proof above reads these three bodies. If one changed, re-derive the
  -- candidate set before applying.
  for target in select * from (values
