@@ -15,7 +15,10 @@ export async function listLibraryListings(admin: any, actor: string, org: string
   };
   assert([...params.keys()].every(key => ["library", "limit", "offset"].includes(key)), 400, "Library sync uses complete, unfiltered listing pages.");
   const limit = integer("limit", 500, 500), offset = integer("offset", 0, 100_000);
-  const access = await libraryAccess(admin, actor, org);
+  const access = known ?? await libraryAccess(admin, actor, org);
+  // A supplied authority is used only for this exact actor and library.
+  assert(access.actor_id === actor.toLowerCase() && access.org_id === org.toLowerCase() && access.can_read === true,
+    503, "Listing library sync returned inconsistent data.", "upstream");
   // Canonical lowercase for the identity comparisons below (library-access.ts).
   actor = access.actor_id; org = access.org_id;
   const { data, error } = await admin.rpc("list_library_listings", { p_actor: actor, p_org: org, p_limit: limit, p_offset: offset });
