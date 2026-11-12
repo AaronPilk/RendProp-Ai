@@ -23,8 +23,13 @@ jobs:
     env:
       SHIPPING_SHA: 1c561d7b91d9b75bd7ba29aa081fcba959089fee
       DIAGNOSTIC_SHA: ${{ github.sha }}
-      PROOF_BASE: ${{ runner.temp }}/rendprop-webcodecs-proof
     steps:
+      - name: Set proof evidence path from runner environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'PROOF_BASE=%s/rendprop-webcodecs-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Checkout exact shipping source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
