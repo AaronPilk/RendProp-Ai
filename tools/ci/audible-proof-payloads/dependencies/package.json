@@ -1,0 +1,8 @@
+{
+  "name": "rendprop-experimental-webcodecs-proof",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "mediabunny": "1.65.2"
+  }
+}

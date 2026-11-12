@@ -1,0 +1,20 @@
+{
+  "kind": "audible-original-webcodecs-owned-startup-timer-diagnostic-v5",
+  "shippingCommit": "1c561d7b91d9b75bd7ba29aa081fcba959089fee",
+  "priorNarratedVideoLoopSha256": "a1f8f9e50248d57750cf11e95ca1c83cf6bf763240392551c49b344d7e806e21",
+  "payloadSha256": {
+    "experimental-webcodecs-audible.ts": "7b39652fd11b1ebb9c03b3f6278b09e7e6c18463772daedc0c1b0c2847bced24",
+    "audible-pcm.ts": "f97a443d92ee14ac14bc2450c62ec9e4afbf8b86b633109fb5440483504c97cb",
+    "audible-pcm-worklet.js": "ba17d7fc396508c0aefd72c48d8b6067a22adef3633530aa8fc52a71424771db",
+    "audible-proof-fixture.html": "83a9c6650416a8e16fc9e67736529a83fe1e2072836732e5cb1256a6dafdb52d",
+    "audible-proof-fixture.ts": "a5a35b4048864ae8dd33df7f5033c23a2c8450b896f1543c45777d85c3cbca32",
+    "audible-proof-browser.mjs": "582d8b55a3548b1884d4638b905093b26fa5e20fb6fa57db3649e9ab411ba51a",
+    "design.md": "f0a40f7ad48b96f6fc5c0763f0bd6c4e68a0d161065c2a56b43b5e473e6fcda9",
+    "README.md": "27244ef7c051ca751019b6b4bc69219fbec3a4427d355f3e11f1134ff20af43a",
+    "derive-audible-exporter.py": "a9f553b36056238c59176be83d73dad965a7a679643524096c403c7953e0903f",
+    "prepare-audible-copy.py": "e9e8a58fc8354ddbf6b0425478752947545ab792fe4a4c2132d67146b4e2ae34"
+  },
+  "priorPayloadManifestSha256": "6d45499098eecea79156b50c35f611fe5b7901fe9cf4f1af8fc9c69953699fc3",
+  "observationOnly": true,
+  "preContentOnlyChange": true
+}

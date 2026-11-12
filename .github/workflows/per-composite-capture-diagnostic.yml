@@ -1,4 +1,4 @@
-name: WebCodecs narrated fixture (partial evidence only)
+name: WebCodecs audible fixture and fault controls (partial evidence only)
 
 # Evidence draft. The release owner may install it at
 # .github/workflows/per-composite-capture-diagnostic.yml on a separate
@@ -11,12 +11,12 @@ permissions:
   actions: read
 
 concurrency:
-  group: build-147-webcodecs-narrated-proof-${{ github.ref }}
+  group: build-147-webcodecs-audible-proof-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  webcodecs-narrated-proof:
-    name: Three-second WebCodecs narrated fixture — NOT required CI
+  webcodecs-audible-proof:
+    name: Three-second audible original proof plus fault controls — NOT required CI
     if: github.repository == 'AaronPilk/RendProp-Ai' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1
     runs-on: macos-26
     timeout-minutes: 30
@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf 'PROOF_BASE=%s/rendprop-webcodecs-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'PROOF_BASE=%s/rendprop-webcodecs-audible-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Checkout exact shipping source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -45,7 +45,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/workflows
-            tools/ci/webcodecs-narrated-proof
+            tools/ci/audible-proof-payloads
 
       - name: Pin identities and retain source hashes before setup
         shell: bash
@@ -54,7 +54,7 @@ jobs:
           test "$(git -C shipping rev-parse HEAD)" = "$SHIPPING_SHA"
           test "$(git -C diagnostic rev-parse HEAD)" = "$DIAGNOSTIC_SHA"
           test -f diagnostic/.github/workflows/per-composite-capture-diagnostic.yml
-          test -f diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof.py
+          test -f diagnostic/tools/ci/audible-proof-payloads/hosted_audible.py
           python3 - <<'PY'
           import hashlib, json, os
           from pathlib import Path
@@ -66,10 +66,10 @@ jobs:
               'shipping/apps/studio/src/editor/export.ts',
               'shipping/apps/studio/src/editor/mp4-cadence.ts',
               'diagnostic/.github/workflows/per-composite-capture-diagnostic.yml',
-              'diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof.py',
+              'diagnostic/tools/ci/audible-proof-payloads/hosted_audible.py',
           )
           record = {
-              'schema': 'rendprop-147-webcodecs-ci-context-v1',
+              'schema': 'rendprop-147-webcodecs-audible-ci-context-v1',
               'run_id': os.environ['GITHUB_RUN_ID'],
               'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
               'event': os.environ['GITHUB_EVENT_NAME'],
@@ -80,7 +80,7 @@ jobs:
               'image_os': os.environ.get('ImageOS'),
               'image_version': os.environ.get('ImageVersion'),
               'source_hashes': {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in files},
-              'scope': 'One synthetic three-second narrated prototype; NOT a required CI/full feature pass. No provider, account, deployment or release-source edit.',
+              'scope': 'One synthetic three-second audible-original proof: two positive and eight refusal cases; NOT required CI/full feature parity. No provider, account, deployment or release-source edit.',
           }
           base = Path(os.environ['PROOF_BASE']); base.mkdir(mode=0o700)
           out = base / 'context.json'
@@ -103,7 +103,19 @@ jobs:
         run: |
           set -euo pipefail
           test "$(node --version)" = v22.23.4
-          npm ci --ignore-scripts
+          npm ci --ignore-scripts 2>&1 | tee "$PROOF_BASE/studio-dependency-install.log"
+          studio_audit_status=0
+          npm audit --json > "$PROOF_BASE/studio-dependency-audit.json" || studio_audit_status=$?
+          printf '%s\n' "$studio_audit_status" > "$PROOF_BASE/studio-dependency-audit.exitcode"
+          STUDIO_AUDIT_EXIT="$studio_audit_status" node --input-type=module - <<'JSAUDIT'
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.env.PROOF_BASE + '/studio-dependency-audit.json', 'utf8'));
+          if (![0, 1].includes(Number(process.env.STUDIO_AUDIT_EXIT)) || report.error ||
+              !report.metadata?.vulnerabilities || !report.vulnerabilities)
+            throw new Error('Full Studio audit did not produce a valid advisory report.');
+          JSAUDIT
+          # Preserve the shipping security policy; the full dev audit is evidence.
+          npm audit --omit=dev --audit-level=high --json > "$PROOF_BASE/studio-production-audit.json"
 
       - name: Install and audit pinned external proof dependency
         shell: bash
@@ -113,19 +125,19 @@ jobs:
           python3 - <<'PYSETUP'
           import os, shutil
           from pathlib import Path
-          source=Path(os.environ['GITHUB_WORKSPACE'])/'diagnostic/tools/ci/webcodecs-narrated-proof/dependencies'
+          source=Path(os.environ['GITHUB_WORKSPACE'])/'diagnostic/tools/ci/audible-proof-payloads/dependencies'
           dest=Path(os.environ['PROOF_BASE'])/'dependencies'
           shutil.copytree(source,dest)
           PYSETUP
           cd "$PROOF_BASE/dependencies"
           npm ci --ignore-scripts --no-audit 2>&1 | tee "$PROOF_BASE/dependency-install.log"
-          npm audit --omit=dev --audit-level=low --json > "$PROOF_BASE/dependency-audit.json"
+          npm audit --audit-level=low --json > "$PROOF_BASE/dependency-audit.json"
 
       - name: Validate bounded readiness controls
         shell: bash
         run: |
           set -euo pipefail
-          python3 diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof_controls.py
+          python3 diagnostic/tools/ci/audible-proof-payloads/hosted_audible_controls.py
           node --test shipping/tools/ci/media-runner-ready.test.mjs
 
       # The normal cache is bound to its run ID and cannot cross into this
@@ -163,7 +175,7 @@ jobs:
           import { writeFileSync } from 'node:fs';
           import os from 'node:os';
           const facts = {
-            schema: 'rendprop-147-webcodecs-ci-runner-v1',
+            schema: 'rendprop-147-webcodecs-audible-ci-runner-v1',
             capturedAtUTC: new Date().toISOString(),
             platform: process.platform, arch: process.arch,
             nodeVersion: process.version, cpus: os.cpus().length,
@@ -173,7 +185,7 @@ jobs:
             audioOutput: 'default-device',
             imageOS: process.env.ImageOS ?? null,
             imageVersion: process.env.ImageVersion ?? null,
-            equivalenceLimit: 'Vendor preparation occurs on this runner before readiness, unlike shipping two-job cache preparation.',
+            equivalenceLimit: 'Vendor preparation precedes readiness on this runner; frozen audible fixture uses default AudioContext/headless launch, without shipping audio-output observer.',
           };
           if (facts.platform !== 'darwin' || facts.arch !== 'arm64' || facts.cpus !== 3)
             throw new Error('Hosted runner differs from the failed three-CPU macOS runner.');
@@ -185,10 +197,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof.py prepare \
+          python3 diagnostic/tools/ci/audible-proof-payloads/hosted_audible.py prepare \
             --shipping-root "$GITHUB_WORKSPACE/shipping" \
             --base-dir "$PROOF_BASE"
-          node --check "$PROOF_BASE/source/apps/studio/tests/webcodecs-narrated-proof-browser.mjs"
+          node --check "$PROOF_BASE/source/apps/studio/tests/audible-proof-browser.mjs"
 
       - name: Require unchanged bounded media readiness
         timeout-minutes: 12
@@ -197,12 +209,12 @@ jobs:
           set -euo pipefail
           node shipping/tools/ci/media-runner-ready.mjs --output "$PROOF_BASE/readiness.json"
 
-      - name: Run exactly one partial narrated proof with default-device audio
+      - name: Run exactly one partial audible suite with default-device audio
         timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
-          python3 diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof.py run \
+          python3 diagnostic/tools/ci/audible-proof-payloads/hosted_audible.py run \
             --shipping-root "$GITHUB_WORKSPACE/shipping" \
             --base-dir "$PROOF_BASE" \
             --node "$(command -v node)" \
@@ -212,22 +224,27 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: studio-webcodecs-partial-proof-147-${{ github.run_attempt }}
+          name: studio-webcodecs-audible-partial-proof-147-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/rendprop-webcodecs-proof/context.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/runner-facts.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/readiness.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/preparation-journal.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/prepared-manifest.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/dependency-audit.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/dependency-install.log
-            ${{ runner.temp }}/rendprop-webcodecs-proof/dependencies/package.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/dependencies/package-lock.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/journal.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/run.log
-            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/artifacts/rendprop-webcodecs-proof-*/receipt.json
-            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/artifacts/rendprop-webcodecs-proof-*/*.png
-            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/artifacts/rendprop-webcodecs-proof-*/*.mp4
-            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/artifacts/rendprop-webcodecs-proof-*/*.wav
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/context.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/runner-facts.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/readiness.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/preparation-journal.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/prepared-manifest.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/source-freeze.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/studio-dependency-install.log
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/studio-dependency-audit.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/studio-dependency-audit.exitcode
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/studio-production-audit.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/dependency-audit.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/dependency-install.log
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/dependencies/package.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/dependencies/package-lock.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/run-1/journal.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/run-1/run.log
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/run-1/artifacts/rendprop-audible-webcodecs-*/receipt.json
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/run-1/artifacts/rendprop-audible-webcodecs-*/*.png
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/run-1/artifacts/rendprop-audible-webcodecs-*/*.mp4
+            ${{ runner.temp }}/rendprop-webcodecs-audible-proof/run-1/artifacts/rendprop-audible-webcodecs-*/*.wav
           retention-days: 7
           if-no-files-found: warn
