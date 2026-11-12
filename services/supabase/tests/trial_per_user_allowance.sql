@@ -125,8 +125,9 @@ select pg_temp.pu_ok(not public.subscription_trial_private_authority_clear()
  and not public.trial_card_authority_active(:'authority')
  and (public.trial_sponsor_pool()->>'ends_at')::timestamptz<now(),
  'internal QA authority is open, supplier attestation is stale and the old allocation has ended');
-select pg_temp.pu_ok((public.subscription_trial_per_user_readiness()->>'new_trials_admitted')='true',
- 'per-user readiness: new trials are admitted');
+select pg_temp.pu_ok((public.subscription_trial_per_user_readiness()->>'new_trials_admitted')='true'
+ and public.subscription_trial_per_user_readiness()->'warnings'='[]'::jsonb,
+ 'per-user readiness: new trials are admitted, no warnings');
 
 -- App Store (Production) path.
 set local role service_role;
@@ -298,6 +299,8 @@ set local role service_role;
 select pg_temp.pu_ok((public.prepare_production_intro_trial_purchase(pg_temp.pu_actor(5),pg_temp.pu_org(5),
  'com.rendprop.app.pro29.monthly')#>>'{trial_offer,photo_edits}')='10',
  'changing subscription_trial_config.photo_edits changes the next user''s allowance');
+select pg_temp.pu_ok(jsonb_array_length(public.subscription_trial_per_user_readiness()->'warnings')=1,
+ 'readiness warns that older app builds accept only five edits');
 select pg_temp.pu_ok((public.subscription_trial_context(pg_temp.pu_actor(1),pg_temp.pu_org(1))#>>'{trial_usage,photo_edits,cap}')='5',
  'a trial already running keeps the allowance it was promised');
 reset role;

@@ -412,7 +412,8 @@ create or replace function public.subscription_trial_per_user_readiness()
 returns jsonb language plpgsql stable security definer set search_path='' as $$
 declare pol public.subscription_trial_admission_policy;c public.subscription_trial_config;
  t public.subscription_trial_media_template;a public.media_account_reserves;
- blockers text[]:=array[]::text[];month_start timestamptz:=date_trunc('month',now() at time zone 'UTC') at time zone 'UTC';
+ blockers text[]:=array[]::text[];warnings text[]:=array[]::text[];
+ month_start timestamptz:=date_trunc('month',now() at time zone 'UTC') at time zone 'UTC';
 begin
  select * into pol from public.subscription_trial_admission_policy where singleton;
  select * into c from public.subscription_trial_config where singleton;
@@ -427,10 +428,16 @@ begin
   blockers:=array_append(blockers,'the trial hosting record is missing or ends within 97 days');end if;
  if public.serving_mode()<>'ceiling' then
   blockers:=array_append(blockers,'serving mode is not ceiling (TestFlight trials are refused)');end if;
+ -- iOS builds up to 1.0.9 (147) and Studio builds before 2026-11-12 accept a
+ -- photo-only trial offer only when it is exactly five edits.
+ if c.photo_edits is distinct from 5 then
+  warnings:=array_append(warnings,'photo_edits is '||coalesce(c.photo_edits::text,'null')
+   ||': iPhone builds up to 1.0.9 (147) and older Studio builds refuse a photo-only trial that is not exactly five edits');end if;
  return jsonb_build_object(
   'admission_mode',pol.mode,
   'new_trials_admitted',cardinality(blockers)=0,
   'blockers',to_jsonb(blockers),
+  'warnings',to_jsonb(warnings),
   'allowance',jsonb_build_object('photo_edits',c.photo_edits,'walkthroughs',c.walkthroughs,
    'published_listings',c.published_listings,'max_video_seconds',c.max_video_seconds,
    'max_days',c.max_days,'upload_budget_bytes',c.upload_budget_bytes),

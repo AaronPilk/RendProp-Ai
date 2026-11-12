@@ -61,7 +61,7 @@ REFLECTION_FIXTURES = (
     # Per-user trial allowance (20261112223000): dormant by default, so the
     # first-100 fixtures above are unchanged; this one switches the mode inside
     # its own rolled-back transaction.
-    ("trial_per_user_allowance.sql", '"assertions": 62', 62),
+    ("trial_per_user_allowance.sql", '"assertions": 63', 63),
 )
 
 # These already-shipped transactional Studio migrations intentionally create
