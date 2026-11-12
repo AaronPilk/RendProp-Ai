@@ -82,10 +82,13 @@ try:
     assert actual.count(bound) == 1
     provenance = '        if let p = request.provenanceID, !p.isEmpty { body["provenance_id"] = p }'
     assert actual.count(provenance) == 1
+    clip_used = '            "clip_used": true,'
+    assert actual.count(clip_used) == 1
     variants = [('actual', actual, None),
         ('negative-old-attempt-one-clamp', actual.replace(bound, 'max(1, min(3, request.attempt))'), 'first attempt is serialized as 0'),
         ('negative-unbounded-attempt', actual.replace(bound, 'request.attempt'), 'negative attempt is serialized as 0'),
         ('negative-lost-provenance', actual.replace(provenance, '        // omitted provenance'), 'serialized QC forwards accepted provenance identity'),
+        ('negative-lost-clip-used', actual.replace(clip_used, '            // omitted clip_used'), 'serialized QC says this phone uses the clip'),
         ('negative-legacy-default-zero', actual.replace('var attempt: Int = 1', 'var attempt: Int = 0'), 'legacy/default drift request remains conservative attempt one')]
     receipt['actual_method_sha256'] = hashlib.sha256(methods.encode()).hexdigest()
     for name, generated, expected_failure in variants:
@@ -108,9 +111,9 @@ finally:
         receipt['source_jpeg_binding_matches'] = hashlib.sha256(args.source_jpeg.read_bytes()).hexdigest() == receipt['actual_source_jpeg']['sha256']
     receipt['end_source_sha256'] = hashes()
     receipt['source_binding_matches'] = receipt['start_source_sha256'] == receipt['end_source_sha256']
-    receipt['passed'] = 'failure' not in receipt and len(receipt['runs']) == 5 and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches'] and receipt.get('source_jpeg_binding_matches', True)
+    receipt['passed'] = 'failure' not in receipt and len(receipt['runs']) == 6 and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches'] and receipt.get('source_jpeg_binding_matches', True)
     (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 assert receipt['passed'], 'QC wire source changed or a required control failed'
 print(receipt['runs'][0]['output'].strip())
-print('PASSED: four compiled wire negative controls failed at the expected assertions')
+print('PASSED: five compiled wire negative controls failed at the expected assertions')
 print(f'Evidence: {out}')

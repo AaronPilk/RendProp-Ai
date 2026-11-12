@@ -614,7 +614,11 @@ async function cachedDriftResponse(args: {
     typeof meta.allowance_refunded === "boolean" && typeof meta.publishable === "boolean",
     409, "This saved quality check is incomplete and cannot authorize publication.", "conflict");
   const verdict = parseDriftVerdict(JSON.stringify({ ...meta.scores, confidence: meta.confidence, verdict: meta.verdict, reason: meta.reason }));
-  const decision = decideDriftAction({ verdict, attempt: meta.attempt, retryGranted: meta.action === "retry" && meta.attempt === 0 });
+  // A verdict recorded as advisory (the clip was used whatever the judge said)
+  // replays as advisory: same action and publishable, the sentence that says the
+  // clip is in the video, and the same enforcement mark the first reply carried.
+  const advisory = meta.enforcement === "advisory";
+  const decision = decideDriftAction({ verdict, attempt: meta.attempt, retryGranted: meta.action === "retry" && meta.attempt === 0, advisory });
   assert(verdict.clean && decision.action === meta.action && decision.publishable === meta.publishable &&
     (!meta.allowance_refunded || (decision.action !== "accept" && allowance.data.drift_refunded_at !== null)),
     409, "This saved quality check cannot authorize a different result.", "conflict");
@@ -651,6 +655,7 @@ async function cachedDriftResponse(args: {
       retry_costs_another_clip: decision.action === "retry" && !meta.allowance_refunded },
     recorded: { ledger: 0, provenance: false }, cached: true,
     ...(typeof meta.seconds === "number" ? { seconds: meta.seconds } : {}), kind: args.kind,
+    ...(advisory ? { enforcement: "advisory" } : {}),
   });
 }
 
@@ -1070,6 +1075,13 @@ interface DriftBody {
   /** Client hint: how many clips this photo has already had rejected. It may
    *  only ever make the answer stricter — see the route. */
   attempt?: number;
+  /** The client's statement that it uses this clip whatever the verdict (iOS
+   *  build 148 and later; owner decision 12 Nov 2026: the check is advisory).
+   *  Exactly `true` records the verdict with `enforcement: "advisory"`, grants
+   *  no retry and refunds nothing, because a clip that is used stays charged.
+   *  Absent or false keeps the enforced behaviour older builds rely on: they
+   *  discard a failed clip, so its plan allowance is handed back. */
+  clip_used?: boolean;
 }
 
 const eraseHandler = createEraseHandler({
@@ -1852,6 +1864,10 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       const sourceAssetId = optionalUuid(body.asset_id);
       assert(body.listing_id == null || optionalUuid(body.listing_id) !== null,
         400, "listing_id must be a valid listing identifier.", "validation");
+      // A billing-relevant flag is never guessed from a string or a number.
+      assert(body.clip_used == null || typeof body.clip_used === "boolean",
+        400, "clip_used must be true or false.", "validation");
+      const clipUsed = body.clip_used === true;
 
       const orgId = await guardDriftCheck(user, req,worker?.listing);
 
@@ -1897,7 +1913,10 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       // decides). Fail closed in the direction that stops publishing.
       // ADVISORY (worker.advisoryQuality): the verdict is recorded and enforces
       // nothing, so no retry grant is consumed or offered for this photo.
-      const advisory = worker?.advisoryQuality === true;
+      // The direct in-app route is advisory only when the client itself says it
+      // uses the clip (`clip_used: true`, iOS build 148+). Build 147 sends no
+      // such field, discards a failed clip and keeps today's retry and refund.
+      const advisory = worker?.advisoryQuality === true || clipUsed;
       let attempt = 0;
       let retryGranted = false;
       if (!passed && !verdict.unavailable && verdict.judgement !== "unknown") {
@@ -1976,6 +1995,8 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
             allowance_refunded: charge.refunded,
             // What the judge found is above, unchanged. This says the finding was not enforced.
             ...(advisory ? { enforcement: "advisory" } : {}),
+            // Why it was not enforced on the direct route: the app said it uses the clip.
+            ...(clipUsed ? { clip_used: true } : {}),
           },
         });
         if (res.recorded) ledgerRows++;
@@ -2006,7 +2027,8 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
           source_sha256: judged.sourceHash,
           attempt,
           // The verdict, action and publishable above are the judge's own, never
-          // upgraded. This marks that the property-video job did not enforce them.
+          // upgraded. This marks that they were not enforced: the property-video
+          // job, or a direct client that said it uses the clip (clip_used).
           ...(advisory ? { enforcement: "advisory" } : {}),
         })
         : false;

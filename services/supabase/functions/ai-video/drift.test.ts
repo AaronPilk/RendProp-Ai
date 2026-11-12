@@ -679,7 +679,7 @@ Deno.test("wiring: the retry grant is durable and keyed on the SOURCE photo", ()
 
 async function actualRefundModule(refundHeldClip=false) {
   const method=INDEX_SRC.match(/^async function refundRejectedClipAllowance\([\s\S]*?^}/m);
-  const conditional=DRIFT_ROUTE.match(/const charge = decision\.action[\s\S]*?;/);
+  const conditional=DRIFT_ROUTE.match(/const charge = !advisory && \(decision\.action[\s\S]*?;/);
   assert(method&&conditional,"Actual refund helper and route admission must exist");
   let admission=conditional[0];
   if(refundHeldClip){
@@ -692,7 +692,7 @@ async function actualRefundModule(refundHeldClip=false) {
     export const state:any={calls:[],error:null,data:{refunded:true,reason:"Original allowance restored"}};
     const adminClient=()=>({rpc:async(name:string,args:any)=>{state.calls.push({name,args});if(name!=="app_video_refund_drift")throw Error("Unexpected spend writer");return {data:state.data,error:state.error};}});
     ${method[0]}
-    export async function run(action:string,kind:GenKind="reel"){
+    export async function run(action:string,kind:GenKind="reel",advisory=false){
       const decision={action},orgId="trusted-org",requestId="owned-request",user={id:"trusted-actor"};
       ${admission}
       return charge;
@@ -716,6 +716,28 @@ async function assertHeldClipNotRefunded(mutant=false){
 Deno.test("actual drift decision never refunds a held or approved clip",async()=>{await assertHeldClipNotRefunded();});
 Deno.test("compiled unconditional drift refund fails the same held-clip boundary",async()=>{
   await assertRejects(()=>assertHeldClipNotRefunded(true),Error,"Held or approved clips must not refund allowance");
+});
+// Advisory (the property-video worker, or a direct client that sent clip_used:true):
+// the clip is used, so no outcome may hand its plan allowance back.
+Deno.test("actual drift decision never refunds a clip that is used (advisory)",async()=>{
+  const m=await actualRefundModule();
+  for(const action of["retry","refuse"]){
+    assertEquals(await m.run(action,"reel",true),{refunded:false,reason:"this clip is used in your video and stays charged to your plan as usual"});
+  }
+  for(const action of["accept","hold"])assertEquals((await m.run(action,"reel",true)).refunded,false);
+  assertEquals(m.state.calls,[],"A clip that is used must never have its allowance handed back");
+});
+Deno.test("wiring: only an explicit boolean clip_used true makes the direct route advisory",()=>{
+  // Build 147 sends no such field and keeps the enforced retry and refund.
+  assertStringIncludes(DRIFT_ROUTE,'assert(body.clip_used == null || typeof body.clip_used === "boolean",');
+  assertStringIncludes(DRIFT_ROUTE,"const clipUsed = body.clip_used === true;");
+  assertStringIncludes(DRIFT_ROUTE,"const advisory = worker?.advisoryQuality === true || clipUsed;");
+  // Validated with the rest of the body, before the limiter and the paid judge.
+  assert(DRIFT_ROUTE.indexOf("const clipUsed") < DRIFT_ROUTE.indexOf("await guardDriftCheck("));
+  // The refund is fenced on it, and the ledger row says the finding was not enforced and why.
+  assertStringIncludes(DRIFT_ROUTE,'const charge = !advisory && (decision.action === "retry" || decision.action === "refuse")');
+  assertStringIncludes(DRIFT_ROUTE,'...(advisory ? { enforcement: "advisory" } : {}),');
+  assertStringIncludes(DRIFT_ROUTE,"...(clipUsed ? { clip_used: true } : {}),");
 });
 Deno.test("actual drift refund fails closed on unconfirmed SQL acknowledgment without leaking private errors",async()=>{
   const m=await actualRefundModule();m.state.error={message:"private-database-marker"};

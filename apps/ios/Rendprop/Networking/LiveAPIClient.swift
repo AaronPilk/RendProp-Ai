@@ -1951,6 +1951,10 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
                  "mime": "image/jpeg"] as [String: Any]
             },
             "attempt": max(0, min(3, request.attempt)),
+            // Build 148 uses the finished clip whatever the verdict (owner decision,
+            // 12 Nov 2026). Saying so makes the server record the verdict as advisory
+            // and keep the clip charged; without it a failed clip would be refunded.
+            "clip_used": true,
         ]
         if let s = request.seconds { body["seconds"] = s }
         if let m = request.motion, !m.isEmpty { body["motion"] = m }

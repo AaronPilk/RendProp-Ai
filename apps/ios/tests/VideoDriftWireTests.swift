@@ -126,6 +126,7 @@ final class DriftWireClient {
             check(body["source_mime"] as? String == "image/jpeg", "serialized QC retains source MIME")
             check(body["request_id"] as? String == "accepted-owned-job", "serialized QC retains accepted request identity")
             check(body["provenance_id"] as? String == provenance, "serialized QC forwards accepted provenance identity")
+            check(body["clip_used"] as? Bool == true, "serialized QC says this phone uses the clip")
             check(body["listing_id"] as? String == listingID.uuidString, "serialized QC retains listing identity")
             let sentFrames = body["frames"] as! [[String: Any]]
             check(sentFrames.count == 3, "actual wire body contains three decoded frames")

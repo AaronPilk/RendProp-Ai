@@ -471,6 +471,37 @@ for (const verdict of ["pass", "retry", "refuse"] as const) {
   });
 }
 
+// A verdict recorded as advisory (the app said it uses the clip, or the
+// property-video worker judged it) replays as advisory: still failed, still not
+// refunded, and no later call, with or without `clip_used`, can turn it into a
+// refund or a second judgement.
+Deno.test("an advisory failed verdict replays as advisory and can never become a refund", async () => {
+  for (const sent of [{ clip_used: true }, {}, { clip_used: false }]) {
+    const f = await fixture({ verdict: "refuse" });
+    Object.assign(f.qc.meta, { enforcement: "advisory", clip_used: true, allowance_refunded: false });
+    f.allowances[0].drift_refunded_at = null;
+    const response = await f.invoke(sent);
+    assertEquals(response.status, 200);
+    const value = await response.json();
+    assertEquals([value.drift.status, value.drift.action, value.drift.publishable], ["fail", "refuse", false]);
+    assertEquals(value.enforcement, "advisory");
+    assertEquals(value.cached, true);
+    assertEquals(value.charge.allowance_refunded, false);
+    assert(String(value.drift.message).includes("the clip is still in your video"));
+    assertEquals(f.traps, [], "no judge, refund, ledger or provenance write");
+    assertEquals(f.allowances[0].drift_refunded_at, null);
+    assertEquals(f.ledgers.length, 2);
+  }
+});
+
+Deno.test("an enforced verdict replay carries no advisory mark", async () => {
+  const f = await fixture({ verdict: "refuse" });
+  const value = await (await f.invoke({ clip_used: true })).json();
+  assertEquals([value.drift.action, value.charge.allowance_refunded, "enforcement" in value], ["refuse", true, false]);
+  assert(String(value.drift.message).includes("Use the still"));
+  assertEquals(f.traps, []);
+});
+
 Deno.test("changed decoded frames cannot buy a second judgement for the same original paid clip", async () => {
   const f = await fixture();
   const response = await f.invoke({
