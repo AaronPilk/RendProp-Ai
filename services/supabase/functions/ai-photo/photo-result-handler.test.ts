@@ -380,7 +380,7 @@ Deno.test("actual custom handler automatically prepares the complete request and
  const prompt=prefix+"natural lighting ".repeat(40).slice(0,600-prefix.length-tail.length)+tail;assertEquals(prompt.length,600);
  for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
   const response=await f.run(f.request({edit:"custom",prompt}));assertEquals(response.status,200,await response.text());assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);
-  const prepared=f.state.prompts[0];assert(prepared.includes(JSON.stringify(prompt)));assert(prepared.includes("garage-door color and finish"));assert(prepared.includes("trim color and finish"));assert(prepared.includes("every existing paint color"));assert(prepared.includes("quoted data"));
+  const prepared=f.state.prompts[0];assert(prepared.includes(JSON.stringify(prompt)));assert(prepared.includes("garage-door color and finish"));assert(prepared.includes("trim color and finish"));assert(prepared.includes("every existing paint color"));assert(prepared.includes("THE AGENT'S REQUEST (quoted"));
  }finally{f.close();}}
 });
 Deno.test("actual custom handler accepts all 600 accented characters without truncating the quoted request",async()=>{
@@ -397,11 +397,11 @@ Deno.test("actual custom handler cannot quietly fallback to1K after its prepared
   assertEquals(f.state.submits,2,"one automatic retry on the same 2K route");assertEquals(f.state.holds,2);assertEquals(f.state.holdArguments.every(a=>a.p_provider==="gemini"&&a.p_model==="gemini-3.1-flash-image"),true,"never the 1K fallback");assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assertEquals(f.state.inputs[1].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
  }finally{f.close();}
 });
-Deno.test("legacy photo polisher clarifies before a paid helper and refuses invented same-category work",async()=>{
- for(const [prompt,status] of [["make garage nicer",409],["repair roof",400]] as const){const f=await fixture();try{
-  const response=await f.run(f.request({edit:"improve_prompt",prompt}));assertEquals(response.status,status);assertEquals(f.state.started,false);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);assertEquals(f.state.helperDispatch,0);
+Deno.test("legacy photo polisher never refuses a request for its wording and still refuses a rewrite that invents a repaint",async()=>{
+ for(const prompt of ["make garage nicer","repair roof"]){const f=await fixture();try{
+  const response=await f.run(f.request({edit:"improve_prompt",prompt}));assertEquals(response.status,200,await response.text());assertEquals(f.state.helperDispatch,1);assertEquals(f.state.submits,0);
  }finally{f.close();}}
- const f=await fixture();try{f.state.helperText="Remove boxes and movable furniture.";
+ const f=await fixture();try{f.state.helperText="Remove boxes and repaint the garage white.";
   const response=await f.run(f.request({edit:"improve_prompt",prompt:"Remove boxes only."}));assertEquals(response.status,502);assertEquals((await response.json()).code,"upstream");assertEquals(f.state.helperDispatch,1);assertEquals(f.state.holds,1);assertEquals(f.state.submits,0);
  }finally{f.close();}
 });

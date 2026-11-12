@@ -15,7 +15,7 @@ function admin(reply:(args:Record<string,unknown>)=>unknown){
 // Changing any of them without bumping PHOTO_RECIPE_REVISION (and this pin
 // together with it) fails here. prompt_sha256 remains the exact identity of
 // every generation either way.
-const PINNED={revision:"photo-recipe/2026-11-12.1",fingerprint:"e45f9fa80648b829e63bfad1b31871a2852f93961b66da588b760144f0f8dfea"};
+const PINNED={revision:"photo-recipe/2026-11-12.1",fingerprint:"b16b1aaceccea40f9612cfadd62af0038d38e258a4e77e521292edd96d378d4e"};
 const read=(path:string)=>Deno.readTextFile(new URL(path,import.meta.url));
 function region(source:string,start:string,end:string,inclusiveEnd=false):string{
  const a=source.indexOf(start);assert(a>=0&&source.indexOf(start,a+1)<0,"Recipe region start must be unique: "+start);
@@ -86,7 +86,7 @@ Deno.test("an empty prompt or unbounded revision is refused before any RPC",asyn
 Deno.test("the handler records the recipe after the evidence begins and before any provider dispatch",async()=>{
  const source=await read("./index.ts");
  const begin=source.indexOf("quality=await beginPhotoQuality("),record=source.indexOf("await recordPhotoRecipe(adminClient(),quality,genInput.prompt??\"\")"),
-  chain=source.indexOf("attempt = await runChain(task, chain"),dispatch=source.indexOf("const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`");
+  chain=source.indexOf("attempt = await runChain(task, chain"),dispatch=source.indexOf("const ref = await fundedAttempt(funding, stage, step, genInput, mediaAttemptQuote(step, genInput)");
  assert(begin>0&&record>begin&&chain>record&&dispatch>chain,"begin < recipe < runChain < funded provider dispatch");
  const failure=source.slice(record,chain);
  for(const required of ["failPhotoQuality(adminClient(),quality,\"recipe_recording\"","no_provider_dispatch:true","await refundEditCharge(charge)","await abortFundingOperationBeforeDispatch(funding)","throw error"])assert(failure.includes(required),required);
