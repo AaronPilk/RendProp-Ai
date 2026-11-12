@@ -17,6 +17,15 @@ import {
   type Workspace,
 } from "./contracts";
 
+/** The database lives in this region. Every Edge Function request asks to run
+ * there (Supabase regional invocation), so each database round trip a function
+ * makes stays in-region instead of crossing the country. Sent only on
+ * `/functions/v1/` requests: never to Auth, storage, the upload gateway or a
+ * signed media link. The functions' CORS allow-list must name `x-region`
+ * (`_shared/cors.ts`); deploy the functions before a Studio build that sends it.
+ * To stop pinning, set this to "". */
+export const EDGE_FUNCTION_REGION = "us-west-2";
+
 // Metadata has a separate, measured budget from the editor's media downloads.
 export const MAX_METADATA_BYTES = 2 * 1024 * 1024;
 const READ_PAGE_SIZE = 100;
@@ -426,6 +435,7 @@ export function createStudioServices(
               apikey: config.publishableKey,
               Authorization: `Bearer ${token}`,
             };
+            if (EDGE_FUNCTION_REGION && path.startsWith("/functions/v1/")) headers["x-region"] = EDGE_FUNCTION_REGION;
             if (orgId) headers["X-Org-Id"] = orgId;
             if (page) headers.Prefer = "count=exact";
             if (options?.body !== undefined) headers["Content-Type"] = "application/json";
@@ -952,11 +962,16 @@ export function createStudioServices(
       signal?: AbortSignal,
       offset = 0,
       expectedLibraryOrgId?: string,
+      /** A short first page for a card that shows one picture. `limit` photos,
+       * and with `cover` photos only, the chosen cover first. Never pages. */
+      preview?: { limit: number; cover?: boolean },
     ) {
       const actor = await identity(signal);
       const selected = uuid(orgId, "selected organization");
       const listing = uuid(listingId, "selected listing");
       const page = mediaOffset(offset);
+      if (preview && (!Number.isSafeInteger(preview.limit) || preview.limit < 1 || preview.limit > 50 || page !== 0))
+        throw new StudioError("request-path", "Choose a valid Rendprop action.");
       // Focus/timer refresh clears these caches while the fresh directory and
       // listing map are loading. Join that generation, then fence this exact
       // listing before and after transport rather than using a stale org hint.
@@ -966,6 +981,10 @@ export function createStudioServices(
         listing_id: listing,
         offset: String(page),
       });
+      if (preview) {
+        query.set("limit", String(preview.limit));
+        if (preview.cover) query.set("cover", "1");
+      }
       const result = await request(
         `/functions/v1/studio/media?${query}`,
         actor.version,

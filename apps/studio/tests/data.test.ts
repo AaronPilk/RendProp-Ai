@@ -17,6 +17,7 @@ import {
   type StudioConfig,
   StudioError,
   validateStudioConfig,
+  EDGE_FUNCTION_REGION,
 } from "../src/data/index";
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -813,6 +814,11 @@ test("private media is bound to org and listing and rejects unsafe or expired UR
       .nextOffset,
     50,
   );
+  // A one-picture preview reports whether more exists; an ordinary page never carries the field.
+  assert.equal(Object.hasOwn(result, "hasMore"), false);
+  assert.equal(decodeMedia({ ...dto, has_more: true }, ORG, LISTING).hasMore, true);
+  assert.equal(decodeMedia({ ...dto, has_more: false }, ORG, LISTING).hasMore, false);
+  assert.throws(() => decodeMedia({ ...dto, has_more: "yes" }, ORG, LISTING), code("invalid-response"));
   assert.throws(
     () => decodeMedia({ ...dto, next_offset: 0 }, ORG, LISTING),
     code("invalid-response"),
@@ -1161,10 +1167,56 @@ test("API rejects foreign origins, traversals, missing membership and read bodie
   await assert.rejects(services.api('/functions/v1/me',{orgId:FOREIGN_ORG}));
   await assert.rejects(services.api('/functions/v1/me',{orgId:ORG,body:{}}));assert.equal(calls,start);services.dispose();
 });
+test("every Edge Function request asks for the database region; nothing else does",async()=>{
+  assert.equal(EDGE_FUNCTION_REGION,"us-west-2");
+  const auth=mockAuth(),seen:{url:URL;region:string|null}[]=[];
+  const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
+    seen.push({url,region:new Headers(options.headers).get("x-region")});
+    if(options.method==="PUT")return new Response(null,{headers:{ETag:"confirmed"}});
+    if(url.pathname==="/functions/v1/studio/media")return json({org_id:ORG,listing_id:LISTING,photos:[],videos:[],next_offset:null,unavailable_count:0,has_more:false});
+    if(options.method==="POST")return json({ok:true});
+    return fixtureResponse(url);
+  })});
+  try{
+    await services.loadLibrary();
+    await services.listMedia(ORG,LISTING);
+    await services.api("/functions/v1/studio/listing-state?listing_id="+LISTING,{orgId:ORG});
+    await services.api("/functions/v1/renders",{orgId:ORG,method:"POST",body:{listing_id:LISTING},idempotencyKey:"region-check"});
+    const edge=seen.filter(call=>call.url.pathname.startsWith("/functions/v1/"));
+    assert.deepEqual([...new Set(edge.map(call=>call.url.pathname))].sort(),["/functions/v1/listings","/functions/v1/me","/functions/v1/me/workspaces","/functions/v1/renders","/functions/v1/studio/listing-state","/functions/v1/studio/media"]);
+    assert.equal(edge.length,seen.length);
+    assert(edge.every(call=>call.region===EDGE_FUNCTION_REGION&&call.url.origin===config.supabaseUrl));
+    // The region is a header only: it never becomes part of a path, query or body selector.
+    assert(seen.every(call=>!call.url.search.includes("region")));
+    await services.upload("https://uploads.rendprop.com/v2/"+LISTING+"?expires=1999999999&signature="+"a".repeat(64),new Blob(["photo"]),{orgId:ORG});
+    const put=seen.at(-1)!;
+    assert.equal(put.url.origin,"https://uploads.rendprop.com");assert.equal(put.region,null);
+  }finally{services.dispose();}
+});
+test("a Home card asks for one cover picture; an ordinary read is unchanged",async()=>{
+  const auth=mockAuth(),queries:string[]=[];
+  const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch(url=>{
+    if(url.pathname==="/functions/v1/studio/media"){queries.push(url.search);return json({org_id:ORG,listing_id:LISTING,photos:[],videos:[],next_offset:null,unavailable_count:0,...(url.searchParams.has("limit")?{has_more:true}:{})});}
+    return fixtureResponse(url);
+  })});
+  try{
+    await services.loadWorkspace();
+    const preview=await services.listMedia(ORG,LISTING,undefined,0,undefined,{limit:1,cover:true});
+    assert.equal(preview.hasMore,true);assert.equal(preview.nextOffset,null);
+    const full=await services.listMedia(ORG,LISTING);
+    assert.equal(Object.hasOwn(full,"hasMore"),false);
+    await services.listMedia(ORG,LISTING,undefined,0,undefined,{limit:3});
+    assert.deepEqual(queries,[`?org_id=${ORG}&listing_id=${LISTING}&offset=0&limit=1&cover=1`,`?org_id=${ORG}&listing_id=${LISTING}&offset=0`,`?org_id=${ORG}&listing_id=${LISTING}&offset=0&limit=3`]);
+    // A preview is only ever the start of a home, in a sane size.
+    for(const bad of [{limit:0},{limit:51},{limit:1.5}])await assert.rejects(services.listMedia(ORG,LISTING,undefined,0,undefined,bad),code("request-path"));
+    await assert.rejects(services.listMedia(ORG,LISTING,undefined,50,undefined,{limit:1}),code("request-path"));
+    assert.equal(queries.length,3);
+  }finally{services.dispose();}
+});
 test("upload sends only media content to exact capability gateway and fences session changes",async()=>{
   const auth=mockAuth();let puts=0;
   const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
-    if(options.method==='PUT'){puts++;const h=new Headers(options.headers);assert.equal(h.get('Authorization'),null);assert.equal(h.get('apikey'),null);assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');return new Response(null,{headers:{ETag:'confirmed'}});}return fixtureResponse(url);
+    if(options.method==='PUT'){puts++;const h=new Headers(options.headers);assert.equal(h.get('Authorization'),null);assert.equal(h.get('apikey'),null);assert.equal(h.get('x-region'),null,'the upload gateway is not an Edge Function');assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');return new Response(null,{headers:{ETag:'confirmed'}});}return fixtureResponse(url);
   })});
   await services.loadWorkspace();const path='/v2/'+LISTING+'?expires=1999999999&signature='+'a'.repeat(64);
   await assert.rejects(services.upload('https://other.invalid'+path,new Blob(['photo']),{orgId:ORG}));

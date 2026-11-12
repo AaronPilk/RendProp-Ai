@@ -101,6 +101,8 @@ export type ListingMedia = {
   videos: readonly StudioVideo[];
   nextOffset: number | null;
   unavailableCount: number;
+  /** Only on a short preview page: whether the listing holds more than it lists. */
+  hasMore?: boolean;
 };
 
 // Literal wire DTOs mirror existing routes. Normalization happens only after validation.
@@ -651,5 +653,6 @@ export function decodeMedia(
   const propertyPhotos = photos.filter(photo => {
     try { return !decodeURIComponent(new URL(photo.url).pathname).split("/").at(-1)?.startsWith("contact-"); } catch { return false; }
   });
-  return { orgId, listingId, photos: propertyPhotos, videos, nextOffset, unavailableCount };
+  if (row.has_more !== undefined && typeof row.has_more !== "boolean") invalid("media has_more");
+  return { orgId, listingId, photos: propertyPhotos, videos, nextOffset, unavailableCount, ...(row.has_more === undefined ? {} : { hasMore: row.has_more }) };
 }
