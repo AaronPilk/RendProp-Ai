@@ -313,13 +313,13 @@ enum PhotoCloudSelectionFailure: Error, LocalizedError {
     case identityChanged, invalidReply, unmapped, pending, changed, coverUnavailable, coverNoLongerEmpty, busy
     var errorDescription: String? {
         switch self {
-        case .identityChanged: return "This home's account or workspace changed. Refresh its listing selection."
-        case .invalidReply: return "The listing selection could not be verified. Keep the saved request and refresh."
-        case .unmapped: return "This saved photo version cannot be matched safely to the listing yet. Your current listing photos and cover are unchanged."
-        case .pending: return "An earlier photo choice still needs its result checked. Refresh to check that saved request."
-        case .changed: return "The listing photos changed elsewhere. Review the current selection before choosing again."
-        case .coverUnavailable: return "This version is kept on your phone. Changing the cloud cover needs a separate confirmed action."
-        case .coverNoLongerEmpty: return "The listing cover changed elsewhere. Its current cover will be kept."
+        case .identityChanged: return "You switched account or workspace. Refresh this listing's photos, then choose again."
+        case .invalidReply: return "We couldn't confirm which photos are on this listing. Nothing was changed. Refresh, then try again."
+        case .unmapped: return "This photo hasn't finished saving to the listing yet. Your listing photos and cover are unchanged. Try again in a minute."
+        case .pending: return "An earlier photo choice hasn't been confirmed yet. Refresh to check it, then choose again."
+        case .changed: return "The listing's photos were changed somewhere else. Check the photos shown now, then choose again."
+        case .coverUnavailable: return "This version is saved on your phone. The listing's cover was not changed. To change the cover, choose this photo as the cover yourself."
+        case .coverNoLongerEmpty: return "The listing's cover was changed somewhere else. That cover has been kept."
         case .busy: return "Another photo choice is being checked for this home."
         }
     }

@@ -87,7 +87,7 @@ import AVFoundation
             error = saved.capacityRefusal!; title = "Adjust your video setup"
             message = "This video couldn't start. Edit your photos or check your plan."
         } else if saved.reply == nil, saved.abandoned?.matches(saved.request) == true {
-            message = "This saved request was closed before video generation."
+            message = "This saved video was closed before it started. Nothing was made."
             error = PropertyVideoStopped(message: message); title = "Video request closed"
         } else { return false }
         try requireCurrent(watch)
@@ -253,7 +253,7 @@ import AVFoundation
               let saved = try? PropertyVideoJobStore.load(context: watch.context, documents: FileStore.documents),
               saved.request == work.serverJob?.request else { return }
         if saved.wasRefusedBeforeAdmission {
-            work.phase = .failed; work.statusText = "This operation was closed before video generation. Edit the setup instead."
+            work.phase = .failed; work.statusText = "This video was closed before it started. Change the video setup, then try again."
             return
         }
         do {
@@ -268,7 +268,7 @@ import AVFoundation
                 stopped = try await reconcile(stopped, watch: watch, abandon: true)
                 if stopped.abandoned != nil || stopped.wasRefusedBeforeAdmission {
                     tasks[work.id]?.cancel(); work.phase = .failed
-                    work.statusText = "This saved request was closed before video generation."
+                    work.statusText = "This saved video was closed before it started. Nothing was made."
                     work.failure = AIFailure(PropertyVideoStopped(message: work.statusText), title: "Video request closed")
                     return
                 }
@@ -281,7 +281,7 @@ import AVFoundation
             if reply.state == "ready" { try await retainReady(updated, watch: watch); return }
             tasks[work.id]?.cancel(); work.phase = .failed
             work.failure = AIFailure(PropertyVideoStopped(), title: "Video stopped")
-            work.statusText = "Future clip requests were stopped. Work already dispatched may still be charged."
+            work.statusText = "Clips that hadn't started were stopped. Clips already being made may still be charged."
         } catch {
             guard (try? requireCurrent(watch)) != nil else { return }
             work.failure = AIFailure(error, title: "Couldn't confirm cancellation")
@@ -307,7 +307,7 @@ import AVFoundation
             current.photoMotionQuoteReviewNeeded = false
             current.capacityRefusal = .init(operationID: current.request.operationID, listingID: current.request.listingID,
                 selectedLibraryOrgID: current.request.expectedOrgID, status: 402, code: "capacity_refused", operationClosed: true,
-                message: "This saved video was not admitted. Edit the setup or check your plan.", observedAt: Date())
+                message: "This saved video couldn't be started on your current plan. Change the setup or check your plan.", observedAt: Date())
         } else { throw PropertyVideoProcessorFailure.operationPending }
         try PropertyVideoJobStore.save(current, documents: FileStore.documents)
         watch.work.serverJob = current
@@ -473,6 +473,6 @@ import AVFoundation
 }
 
 private struct PropertyVideoStopped: Error, LocalizedError {
-    var message = "Future clip requests were stopped. Work already dispatched may still be charged."
+    var message = "Clips that hadn't started were stopped. Clips already being made may still be charged."
     var errorDescription: String? { message }
 }

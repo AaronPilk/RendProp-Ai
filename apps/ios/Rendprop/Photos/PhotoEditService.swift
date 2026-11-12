@@ -231,7 +231,7 @@ final class PhotoEditService {
         progress?(.checkingReturnedImage)
         let raw = try await Task.detached(priority: .userInitiated) {
             guard let raw = Data(base64Encoded: result.imageBase64), UIImage(data: raw) != nil else {
-                throw AIImagePrep.error("The saved edit could not be read. Your request is retained; check it again later.")
+                throw AIImagePrep.error("The saved edit could not be opened. It is still saved. Check it again later.")
             }
             return raw
         }.value
@@ -239,7 +239,7 @@ final class PhotoEditService {
         if raw.starts(with: [0xFF, 0xD8, 0xFF]) { imageExtension = "jpg" }
         else if raw.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { imageExtension = "png" }
         else if raw.count >= 12, raw.prefix(4) == Data("RIFF".utf8), raw.dropFirst(8).prefix(4) == Data("WEBP".utf8) { imageExtension = "webp" }
-        else { throw AIImagePrep.error("The returned image format could not be saved. Your paid request is retained.") }
+        else { throw AIImagePrep.error("The edited photo came back in a format this phone could not save. The edit is still saved. Check it again later, or contact support.") }
         try requireIdentity()
         progress?(.saving)
         let directory = EnhancedPhoto.directory(for: listing.id)

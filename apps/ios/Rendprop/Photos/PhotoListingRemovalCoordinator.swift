@@ -11,7 +11,7 @@ import Foundation
         var errorDescription: String? {
             switch self {
             case .missingIdentity: return "Refresh this home's cloud photos before removing this selection. Your saved originals and edits are kept."
-            case .ambiguousIdentity: return "More than one cloud photo matches these bytes. Refresh the cloud gallery before choosing which photo to remove."
+            case .ambiguousIdentity: return "More than one photo on this listing is an exact copy of this one. Refresh the listing's photos, then choose which one to remove."
             case .selectionChanged: return "This home's photo selection changed. Reopen the photo and review the current selection before trying again."
             }
         }

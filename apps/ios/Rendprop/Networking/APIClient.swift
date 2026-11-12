@@ -1345,7 +1345,7 @@ protocol APIClient: Sendable {
 // MARK: - Convenience overloads (protocol requirements can't carry defaults)
 extension APIClient {
     func aiVideoOperation(operationID: UUID, listingServerID: UUID) async throws -> AIVideoJob? {
-        throw APIError.server(status: 503, code: "unsupported", message: "This connection cannot recover the saved video request. No new generation was started.")
+        throw APIError.server(status: 503, code: "unsupported", message: "This saved video can't be checked right now. No new video was started.")
     }
     func publishListingVideo(listingID: UUID, assetID: String, record: ListingVideoRecord, operationID: UUID,
                              posterAssetID: String?, republish: Bool) async throws -> PublishedTour {
@@ -1355,7 +1355,7 @@ extension APIClient {
                         aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                         listingServerID: UUID?, label: String?, idempotencyKey: String?, sourceAssetID: String,
                         sourceProvenanceID: String?) async throws -> AIVideoJob {
-        throw APIError.server(status: 503, code: "unsupported", message: "Verified photo-video generation isn't available on this connection. Your photos are saved.")
+        throw APIError.server(status: 503, code: "unsupported", message: "Making a video from these photos isn't available right now. Your photos are saved.")
     }
     func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
     func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
