@@ -1,5 +1,6 @@
 import{aerialPublic}from'./aerial-public.ts';
 import{PHOTO_MOTION_MODE}from'../_shared/photo-motion.ts';
+import{wakePropertyVideoRender}from'../_shared/property-video-wake.ts';
 import{propertyVideoPromptQuote}from'./prompt-admission.ts';
 import{privatePreparationPublic}from'./private-prepared.ts';
 import{corsHeaders}from'../_shared/cors.ts';
@@ -40,7 +41,11 @@ async function processorConsentRefusal(consent:AiConsent,kie:boolean,context:Rec
  if(consent.token===CONSENT_V2&&consent.disclosure_revision===current.disclosure_revision)return null;
  return json({error:consent.token===CONSENT_V1?'Allow the listed AI processors for this native-4K video before creating it.':'Allow the current AI processor disclosure before creating this video.',code:'processor_consent_required',...context,processor_consent:{token:current.token,disclosure_revision:current.disclosure_revision,processors:current.processors}},403,headers);
 }
-export async function handler(req:Request):Promise<Response>{if(req.method==='OPTIONS')return new Response('ok',{headers:jobCors});try{
+// A newly admitted or resumed job starts on the controller now instead of at
+// its next cron minute. Only accepted create/resume replies wake it; the wake
+// is not awaited and cannot change the reply (see _shared/property-video-wake.ts).
+export async function handler(req:Request):Promise<Response>{const response=await route(req);try{if(req.method==='POST'&&[200,202].includes(response.status)){const seg=pathSegments(req,'property-video-jobs');if(seg.length===0||seg.length===2&&seg[1]==='resume')void wakePropertyVideoRender();}}catch{/* Best-effort only. */}return response;}
+async function route(req:Request):Promise<Response>{if(req.method==='OPTIONS')return new Response('ok',{headers:jobCors});try{
  const user=await getUser(req);assert(user.is_anonymous===false,403,'Sign in to your own account before creating a video.');const seg=pathSegments(req,'property-video-jobs');const aerial=await aerialPublic(req,user.id,seg);if(aerial)return aerial;const chosen=await privatePreparationPublic(req,user.id,seg);if(chosen)return chosen;const prepared=await preparationPublic(req,user.id,seg);if(prepared)return prepared;
  if(req.method==='GET'&&seg.join('/')==='sources/versions'){
   const q=new URL(req.url).searchParams;assert([...q.keys()].every(k=>['listing_id','expected_org_id','offset'].includes(k)&&q.getAll(k).length===1),400,'Use one exact saved-photo catalog page.');
