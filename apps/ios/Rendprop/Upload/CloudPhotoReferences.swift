@@ -34,10 +34,12 @@ actor CloudPhotoReferences {
             && !suffix.contains("?") && !suffix.contains("#")
             && !suffix.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
     }
-    private func fingerprint(fileURL: URL, ownerID: UUID, orgID: UUID, listingID: UUID) throws -> Fingerprint {
+    private func fingerprint(fileURL: URL, ownerID: UUID, orgID: UUID, listingID: UUID,
+                             rememberedDigest: Bool = false) throws -> Fingerprint {
         try Task.checkCancellation()
         let bytes = FileStore.fileSize(fileURL)
-        guard bytes > 0, bytes <= 128 * 1024 * 1024, let digest = DirectUploader.sha256(of: fileURL),
+        guard bytes > 0, bytes <= 128 * 1024 * 1024,
+              let digest = rememberedDigest ? DirectUploader.memoizedSHA256(of: fileURL) : DirectUploader.sha256(of: fileURL),
               FileStore.fileSize(fileURL) == bytes else { throw UploadRecovery.Failure.invalidTicket }
         try Task.checkCancellation()
         return Fingerprint(ownerID: ownerID, orgID: orgID, listingID: listingID, sha256: digest, bytes: bytes)
@@ -92,10 +94,15 @@ actor CloudPhotoReferences {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     }
 
+    /// `rememberedDigest` is for the read-only catalog of saved photos, which
+    /// asks about every version each time a photo is opened. It looks the
+    /// receipt up by a digest remembered for an unchanged file; the journal
+    /// path below, and every save, still hash the file afresh.
     func galleryAssetID(fileURL: URL, ownerID: UUID, orgID: UUID, listingID: UUID,
-                        physicalOrgID: UUID? = nil,
+                        physicalOrgID: UUID? = nil, rememberedDigest: Bool = false,
                         journalStore: DirectUploadJournal = .shared) async throws -> UUID? {
-        let fingerprint = try fingerprint(fileURL: fileURL, ownerID: ownerID, orgID: orgID, listingID: listingID)
+        let fingerprint = try fingerprint(fileURL: fileURL, ownerID: ownerID, orgID: orgID, listingID: listingID,
+                                          rememberedDigest: rememberedDigest)
         let file = directory.appendingPathComponent(fingerprint.key + ".gallery.json")
         if FileManager.default.fileExists(atPath: file.path) {
             let values = try file.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey])

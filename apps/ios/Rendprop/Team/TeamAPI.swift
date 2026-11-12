@@ -219,6 +219,7 @@ enum TeamAPI {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
         if let org { req.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
         if let body { req.httpBody = try? JSONSerialization.data(withJSONObject: body) }
 

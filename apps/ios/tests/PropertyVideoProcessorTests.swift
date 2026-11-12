@@ -12,7 +12,7 @@ private func rejectsAsync(_ message: String, _ action: () async throws -> Void) 
 }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? }
 @MainActor final class AIConsent { static let storageKey = "closed-fixture-ai-v3"; static let shared = AIConsent(); var isGranted = true; var revocationRevision: UInt64 = 1; func ensureGranted() async -> Bool { isGranted } }
-@MainActor enum Config { static let apiBaseURL: URL? = URL(string: "https://closed.invalid/functions/v1"); static let supabaseAnonKey = "public-closed-fixture" }
+@MainActor enum Config { static let apiBaseURL: URL? = URL(string: "https://closed.invalid/functions/v1"); static let supabaseAnonKey = "public-closed-fixture"; static let edgeFunctionRegion = "us-west-2"; static let edgeFunctionRegionHeader = "x-region" }
 enum APIError: Error { case server(Int, String?, String); case badResponse(Int) }
 final class LiveAPIClient {
     init?() {}

@@ -257,6 +257,17 @@ protocol NativePhotoBackupAPI: AnyObject {
     }
     func retry(listingID: UUID, model: AppModel) { schedule(listingID: listingID, model: model) }
 
+    /// True while this house's backup is running.
+    func isRunning(listingID: UUID) -> Bool { running[listingID] != nil }
+
+    /// Starts the backup `schedule` starts and returns once it has finished,
+    /// so a caller working through several houses does them one at a time.
+    /// Returns at once when backup cannot start for this house.
+    func scheduleAndWait(listingID: UUID, model: AppModel) async {
+        schedule(listingID: listingID, model: model)
+        await running[listingID]?.value
+    }
+
     private func run(listingID: UUID, model: AppModel) async {
         guard let api = model.api as? NativePhotoBackupAPI,
               let listing = model.listings.first(where: { $0.id == listingID }) else { return }

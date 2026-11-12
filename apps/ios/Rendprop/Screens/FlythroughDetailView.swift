@@ -295,6 +295,9 @@ private struct ListingToolboxGrid: View {
     /// disclosures, videos and a details note — as one ZIP (TestFlight 59:
     /// "the share all feature is supposed to be the FULL package").
     let sharePackage: () -> Void
+    /// True for the moment the listing's public link is still being checked
+    /// before the package sheet opens; the tile says so instead of sitting silent.
+    var sharePackageBusy = false
     let hasAnythingToShare: Bool
 
     private var sample: Bool { listing.isSample }
@@ -393,9 +396,9 @@ private struct ListingToolboxGrid: View {
     var sharePackageTile: ListingToolButtonTile {
         ListingToolButtonTile(
             card: ListingToolCard(title: "Share everything",
-                                  sub: sample ? createFirst : (hasAnythingToShare ? "On this iPhone · photos · videos · one ZIP" : "Add photos or a tour first"),
+                                  sub: sample ? createFirst : (sharePackageBusy ? "Checking the listing link…" : (hasAnythingToShare ? "On this iPhone · photos · videos · one ZIP" : "Add photos or a tour first")),
                                   icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
-            disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
+            disabled: sample || !hasAnythingToShare || sharePackageBusy, accessibilityID: "detail.sharePackage", action: sharePackage
         )
     }
 }
@@ -792,6 +795,9 @@ struct FlythroughDetailView: View {
     /// ride along with the photos in the export sheet. Empty for photos only.
     @State private var filePackageExtras: [PhotoExportRenderer.Extra] = []
     @State private var packageError: String?
+    /// Set while Share everything waits for the listing-link check (only when
+    /// this screen's own check has not finished yet).
+    @State private var preparingListingPackage = false
     /// Result of a Save-to-Photos from the files list (success or the reason it
     /// failed), shown under the section rather than in an alert. `filesNoteOK`
     /// only decides the icon and the colour — a green tick reads as done from
@@ -2107,6 +2113,7 @@ struct FlythroughDetailView: View {
             openReel: { showReelStudio = true },
             openRoomTagger: { openRoomTags() },
             sharePackage: { _ = Task { await shareListingPackage() } },
+            sharePackageBusy: preparingListingPackage,
             hasAnythingToShare: !mediaItems.isEmpty
         ), resumeAerial: !currentListing.isSample && PendingAerialJob.load(for: currentListing.id) != nil
             ? { showAerialIntro = true } : nil)
@@ -2214,6 +2221,7 @@ struct FlythroughDetailView: View {
     /// retained originals); videos and the scan are read straight from where
     /// they live, never copied or moved.
     @MainActor private func shareListingPackage() async {
+        guard !preparingListingPackage else { return }
         let snapshot = currentListing
         let admission = mediaExportAdmission(for: snapshot)
         let items = mediaItems
@@ -2259,19 +2267,35 @@ struct FlythroughDetailView: View {
             let fallback = DeepLink.buyerWebsiteURL(
                 from: published,
                 address: snapshot.spaceType == .realEstate ? snapshot.address : nil) ?? published
-            let resolution = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: fallback)
-            guard admission(), !Task.isCancelled else { return }
-            guard currentListing.serverShareURL == snapshot.serverShareURL,
-                  currentListing.serverUnbrandedURL == snapshot.serverUnbrandedURL,
-                  currentListing.address == snapshot.address else {
-                packageError = "The listing changed while preparing its links. Try sharing again."
-                return
-            }
-            switch resolution {
-            case .available(let url): brandedURL = url
-            case .withdrawn:
+            // This screen checks the same link when it appears. Use that
+            // answer, so the tap opens the package at once instead of waiting
+            // up to eight seconds on a second, identical check.
+            let linkKey = shareLinkKey(for: fallback, listing: snapshot)
+            if withdrawnBuyerLinkKey == linkKey {
                 packageError = "This website is no longer published. Publish it again before sharing its link."
                 return
+            }
+            if let verified = verifiedBuyerLink, verified.key == linkKey {
+                brandedURL = verified.url
+            } else {
+                // The screen's check has not finished: wait for one here, and
+                // say so on the tile.
+                preparingListingPackage = true
+                let resolution = await PublicShareLinkResolver.resolve(publishedURL: published, fallbackURL: fallback)
+                preparingListingPackage = false
+                guard admission(), !Task.isCancelled else { return }
+                guard currentListing.serverShareURL == snapshot.serverShareURL,
+                      currentListing.serverUnbrandedURL == snapshot.serverUnbrandedURL,
+                      currentListing.address == snapshot.address else {
+                    packageError = "The listing changed while preparing its links. Try sharing again."
+                    return
+                }
+                switch resolution {
+                case .available(let url): brandedURL = url
+                case .withdrawn:
+                    packageError = "This website is no longer published. Publish it again before sharing its link."
+                    return
+                }
             }
         } else { brandedURL = nil }
         do {

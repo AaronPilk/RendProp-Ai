@@ -49,15 +49,26 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
     /// photo edit or a fal submit routinely outlives the default 60 s.
     private let aiSession: URLSession
+    /// Direct table reads (`/rest/v1`). Not an edge function, so it carries no
+    /// region header.
+    private let restSession: URLSession
 
     init?(baseURL: URL? = Config.apiBaseURL) {
         guard let baseURL else { return nil }
         self.base = baseURL
-        self.session = URLSession(configuration: .default)
+        // Every request these two sessions send goes to an edge function, so
+        // the region header is set once here rather than on each request.
+        // Uploads to storage links use other sessions and never get it.
+        let edgeRegion = [Config.edgeFunctionRegionHeader: Config.edgeFunctionRegion]
+        let config = URLSessionConfiguration.default
+        config.httpAdditionalHeaders = edgeRegion
+        self.session = URLSession(configuration: config)
         let aiConfig = URLSessionConfiguration.default
         aiConfig.timeoutIntervalForRequest = Config.aiRequestTimeout
         aiConfig.timeoutIntervalForResource = max(Config.aiRequestTimeout, 600)
+        aiConfig.httpAdditionalHeaders = edgeRegion
         self.aiSession = URLSession(configuration: aiConfig)
+        self.restSession = URLSession(configuration: .default)
     }
 
     // MARK: - Request plumbing
@@ -409,6 +420,11 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
     func cloudListings() async throws -> [Listing] {
         let fence = await MainActor.run { (AuthStore.shared.userID, AuthStore.shared.syncSessionRevision, WorkspaceContext.selectedOrgID) }
         guard let actor = fence.0.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        // The published-tour rows do not depend on the library directory or
+        // the listing pages, so that read runs beside them instead of adding
+        // a round trip after them. Its result is checked exactly as before.
+        struct PublishedDTO: Decodable { let id: UUID; let listingId: UUID; let slug: String; let publishedAt: String }
+        async let publishedRows: [PublishedDTO] = cloudRows(table: "renders", columns: "id,listing_id,slug,published_at", filters: [URLQueryItem(name: "published_at", value: "not.is.null")])
         var directoryRequest = makeRequest(url: url(["me", "workspaces"]))
         directoryRequest.setValue(nil, forHTTPHeaderField: "X-Org-Id")
         let data = try await execute(directoryRequest)
@@ -439,8 +455,7 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         guard rows.allSatisfy({ $0.id.flatMap(UUID.init(uuidString:)) != nil && $0.orgId.flatMap(UUID.init(uuidString:)) != nil }),
               Set(rows.compactMap(\.id)).count == rows.count else { throw CloudSyncError.invalidResponse }
         var result = rows.map(mapListing)
-        struct PublishedDTO: Decodable { let id: UUID; let listingId: UUID; let slug: String; let publishedAt: String }
-        let published: [PublishedDTO] = try await cloudRows(table: "renders", columns: "id,listing_id,slug,published_at", filters: [URLQueryItem(name: "published_at", value: "not.is.null")])
+        let published = try await publishedRows
         guard Set(published.map(\.id)).count == published.count else { throw CloudSyncError.incomplete }
         var newest: [UUID: PublishedDTO] = [:]
         for render in published {
@@ -476,7 +491,7 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue("count=exact", forHTTPHeaderField: "Prefer")
             request.cachePolicy = .reloadIgnoringLocalCacheData; request.timeoutInterval = 30
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await restSession.data(for: request)
             let current = await MainActor.run { AuthStore.shared.isSignedIn && AuthStore.shared.userID == fence.0 && AuthStore.shared.syncSessionRevision == fence.1 }
             guard current else { throw CloudSyncError.identityChanged }
             guard let http = response as? HTTPURLResponse else { throw CloudSyncError.invalidResponse }
@@ -520,8 +535,20 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         guard data.count <= AccountExportReceipt.maximumBytes else { throw CloudSyncError.invalidResponse }
         return data
     }
+    /// `GET /me` for the brand and role readers. Callers asking at the same
+    /// moment share one request, and an answer a few seconds old is reused;
+    /// every write to /me discards both (see `MeReadCoalescer`).
+    private func sharedMeRead() async throws -> Data {
+        guard let key = await MeReadCoalescer.currentKey() else {
+            return try await execute(makeRequest(url: url(["me"])))
+        }
+        return try await MeReadCoalescer.shared.data(key: key, reuseWithin: MeReadCoalescer.reuseInterval) { [self] in
+            try await self.execute(self.makeRequest(url: self.url(["me"])))
+        }
+    }
+
     func cloudBrand() async throws -> CloudBrand {
-        let data = try await execute(makeRequest(url: url(["me"])))
+        let data = try await sharedMeRead()
         guard let r = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let user = r["user"] as? [String: Any], let userRaw = user["id"] as? String, let userID = UUID(uuidString: userRaw),
               let org = r["org"] as? [String: Any], let orgRaw = org["id"] as? String, let orgID = UUID(uuidString: orgRaw),
@@ -2144,15 +2171,23 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
     // MARK: - Account / usage / leads
 
     func realEstateRole() async throws -> RealEstateRole {
-        let data = try await execute(makeRequest(url: url(["me"])))
+        let data = try await sharedMeRead()
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let user = root["user"] as? [String: Any] else { throw APIError.decoding }
         return RealEstateRole(rawValue: user["real_estate_role"] as? String ?? "agent") ?? .agent
     }
 
     func updateRealEstateRole(_ role: RealEstateRole) async throws {
-        _ = try await execute(makeRequest(url: url(["me", "profile"]), method: "PATCH",
-            json: ["real_estate_role": role.rawValue]))
+        // A shared /me answer read before or during this write is not reused.
+        await MeReadCoalescer.shared.invalidate()
+        do {
+            _ = try await execute(makeRequest(url: url(["me", "profile"]), method: "PATCH",
+                json: ["real_estate_role": role.rawValue]))
+        } catch {
+            await MeReadCoalescer.shared.invalidate()
+            throw error
+        }
+        await MeReadCoalescer.shared.invalidate()
     }
 
     func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact? {
@@ -2208,6 +2243,9 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
     }
 
     @MainActor func updateBrand(_ fields: [String: String], orgID: UUID) async throws {
+        // A shared /me answer read before or during this write is not reused.
+        MeReadCoalescer.shared.invalidate()
+        defer { MeReadCoalescer.shared.invalidate() }
         var request = makeRequest(url: url(["me", "brand"]), method: "PATCH", json: fields)
         request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         _ = try await execute(request)
@@ -2219,6 +2257,8 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         let body: [String: Any] = ["image_base64": image.base64EncodedString(), "content_type": contentType,
             "expected_logo_url": expectedLogoURL as Any? ?? NSNull(), "client_operation_id": operationID.uuidString.lowercased()]
+        MeReadCoalescer.shared.invalidate()
+        defer { MeReadCoalescer.shared.invalidate() }
         var request = makeRequest(url: url(["me", "brand", "logo"]), method: "POST", json: body)
         request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         let data = try await execute(request)
@@ -2236,6 +2276,8 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         // Old /me handlers interpret every DELETE subpath as account deletion.
         // A dedicated POST fails closed during a mixed-version rollout.
+        MeReadCoalescer.shared.invalidate()
+        defer { MeReadCoalescer.shared.invalidate() }
         var request = makeRequest(url: url(["me", "brand", "logo", "clear"]), method: "POST",
             json: ["expected_logo_url": expectedLogoURL as Any? ?? NSNull()])
         request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
@@ -2279,6 +2321,8 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
         let revision = AuthStore.shared.syncSessionRevision
         var changes = fields.mapValues { $0.isEmpty ? NSNull() as Any : $0 as Any }
         changes["space_type"] = spaceType
+        MeReadCoalescer.shared.invalidate()
+        defer { MeReadCoalescer.shared.invalidate() }
         let request = makeRequest(url: url(["me", "card"]), method: "PATCH",
             json: ["changes": changes, "expected": expected.expectedWire(keys: Array(changes.keys))])
         let data = try await execute(request)
@@ -3128,5 +3172,76 @@ extension LiveAPIClient: PhotoFeedbackAPI {
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         return PhotoFeedback.Reply(status: http.statusCode, data: data)
+    }
+}
+
+/// One `GET /me` for everyone who asks at the same moment.
+///
+/// Sign-in and every return to the foreground used to send the same request
+/// several times over: the Home plan banner, the brand read and the role read
+/// each made their own. They now share one request while it is in flight,
+/// and a completed answer is reused for `reuseInterval`.
+///
+/// The answer is only ever shared within one account, session and library
+/// (the key). Anything on this phone that changes what /me says calls
+/// `invalidate()` before and after its write, so a read that started before
+/// the write is never handed to a caller that arrived after it. Plan and
+/// library changes invalidate too. Purchase code does not read through this:
+/// it sends its own request and always gets a fresh answer.
+@MainActor final class MeReadCoalescer {
+    static let shared = MeReadCoalescer()
+    /// How long a completed answer may serve a later caller.
+    static let reuseInterval: TimeInterval = 3
+
+    private var generation: UInt64 = 0
+    private var running: (key: String, task: Task<Data, Error>)?
+    private var last: (key: String, at: Date, data: Data)?
+    private var observers: [NSObjectProtocol] = []
+
+    private init() {
+        for name in [Notification.Name.rendpropPlanChanged, Notification.Name.rendpropWorkspaceChanged] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.invalidate() }
+            })
+        }
+    }
+
+    /// The account, session and library an answer belongs to; nil when signed out.
+    static func currentKey() -> String? {
+        guard let actor = AuthStore.shared.userID else { return nil }
+        return "\(actor)|\(AuthStore.shared.syncSessionRevision)|\(WorkspaceContext.selectedOrgID?.uuidString ?? "")"
+    }
+
+    /// Forget the last answer and stop offering the request in flight to new callers.
+    func invalidate() {
+        generation &+= 1
+        running = nil
+        last = nil
+    }
+
+    /// `reuseWithin` of zero always asks the server (still sharing a request
+    /// already in flight for the same key).
+    func data(key: String, reuseWithin: TimeInterval,
+              fetch: @escaping @MainActor () async throws -> Data) async throws -> Data {
+        if reuseWithin > 0, let last, last.key == key, Date().timeIntervalSince(last.at) < reuseWithin {
+            return last.data
+        }
+        // Join a request already in flight. If it fails, ask again ourselves:
+        // another caller's failure is not this caller's answer.
+        if let running, running.key == key, let joined = try? await running.task.value {
+            return joined
+        }
+        let started = generation
+        let task = Task { @MainActor in try await fetch() }
+        running = (key, task)
+        do {
+            let data = try await task.value
+            if running?.task == task { running = nil }
+            if generation == started { last = (key, Date(), data) }
+            return data
+        } catch {
+            if running?.task == task { running = nil }
+            throw error
+        }
     }
 }

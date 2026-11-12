@@ -79,6 +79,7 @@ enum CoordinatorExportChecks {
         let readme = String(decoding: contents["README.txt"]!, as: UTF8.self)
         check(readme.contains("custom-sky [edit-custom-sky.jpg]") && readme.contains("Listing selection: declutter [edit-declutter.jpg]") && readme.contains("withheld pending custom-edit review"), "coordinator distinguishes current preview from recorded listing selection in README")
         check(readme.contains("Decluttered and Staged") && readme.contains("Masters are exact saved bytes") && readme.contains("center-cropped") && readme.contains("without borders or upscaling"), "coordinator README separates unchanged masters from cropped upload copies")
+        check(readme.contains("Upload copies are made only for the version selected for the listing") && readme.contains("Every other eligible saved version is included as its master"), "coordinator README says which versions have upload copies")
         check(readme.contains("Videos/walkthrough.mp4 — Original walkthrough") && readme.contains("AI-generated motion must be disclosed"), "coordinator README explains video and motion provenance")
         check(!names.contains { ($0.hasPrefix("MLS/") || $0.hasPrefix("Zillow/") || $0.hasPrefix("Instagram/")) && $0.contains("03-version-02-") }, "coordinator withholds pending staging platform copies")
         check(contents["StagingPreviews/03-version-02-virtually-staged-modern.png"] == png, "coordinator retains pending staging master in unmistakable preview folder")
@@ -90,10 +91,15 @@ enum CoordinatorExportChecks {
         check(readme.contains("Only files saved on this iPhone") && readme.contains("not platform rules") && !readme.contains("untouched photo as captured"), "coordinator local scope retained JPEG and aspect preset claims remain explicit")
         for (folder, aspect, width, height) in [("MLS", PhotoExportLayout.Aspect.landscape, 400, 300), ("Zillow", .landscape, 400, 300),
                                                ("Instagram/Feed4x5", .feed, 240, 300), ("Instagram/Stories9x16", .portrait, 169, 300)] {
-            for (category, stem, source) in [("Enhanced", "01-version-01-enhanced", jpeg), ("Decluttered", "01-version-02-decluttered", jpeg),
-                                            ("Staged", "01-version-03-virtually-staged-modern", png), ("Enhanced", "02-version-01-enhanced", jpeg)] {
+            // Upload copies exist only for the version selected for the listing:
+            // photo 1's decluttered version and photo 2's only version.
+            for (category, stem) in [("Enhanced", "01-version-01-enhanced"), ("Staged", "01-version-03-virtually-staged-modern")] {
                 let path = folder + "/" + category + "/" + stem
-                check(contents[path + ".jpg"] != nil, "coordinator emits every platform and saved-version JPEG")
+                check(contents[path + ".jpg"] == nil && contents[path + "-disclosure.txt"] == nil, "coordinator makes no upload copies for a version not selected for the listing")
+            }
+            for (category, stem, source) in [("Decluttered", "01-version-02-decluttered", jpeg), ("Enhanced", "02-version-01-enhanced", jpeg)] {
+                let path = folder + "/" + category + "/" + stem
+                check(contents[path + ".jpg"] != nil, "coordinator emits every platform JPEG for the listing selection")
                 let data = contents[path + ".jpg"]!, actual = UIImage(data: data)!
                 check(data.starts(with: [0xff,0xd8,0xff]) && CGImageSourceGetType(CGImageSourceCreateWithData(data as CFData, nil)!) as String? == "public.jpeg", "coordinator upload copies encode real JPEG bytes")
                 let (w,h) = pixels(actual)

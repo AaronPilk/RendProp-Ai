@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import UIKit
+import ImageIO
 
 enum CloudPhotoCardColumns {
     static func preview(for size: DynamicTypeSize) -> [GridItem] {
@@ -11,12 +12,73 @@ enum CloudPhotoCardColumns {
     }
 }
 
+/// Card-size previews of cloud photos. A card is about 160 points wide, so
+/// the full-size file is decoded straight to a small bitmap off the main
+/// actor and remembered for this run of the app. Before this, every card
+/// decoded the complete photo at full resolution and fetched it again each
+/// time the screen reopened, because a freshly signed link never matches a
+/// cached one. Memory only: neither the private link nor the image bytes are
+/// written to disk, and the link is sent without cookies or redirects.
+enum CloudPhotoThumbnails {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 300
+        c.totalCostLimit = 64 * 1024 * 1024
+        return c
+    }()
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false; configuration.httpCookieStorage = nil
+        configuration.urlCache = nil; configuration.timeoutIntervalForRequest = 60
+        configuration.httpMaximumConnectionsPerHost = 4
+        return URLSession(configuration: configuration)
+    }()
+
+    /// The photo's server id plus its stored object, never the signed link:
+    /// the signature changes on every read, the object does not.
+    private static func key(id: UUID, url: URL) -> NSString {
+        "\(id.uuidString)|\(CloudListingMerge.validatedMediaKey(url) ?? "")" as NSString
+    }
+
+    static func cached(id: UUID, url: URL) -> UIImage? {
+        cache.object(forKey: key(id: id, url: url))
+    }
+
+    static func load(id: UUID, url: URL, maxPixel: Int = 600) async -> UIImage? {
+        let k = key(id: id, url: url)
+        if let hit = cache.object(forKey: k) { return hit }
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        guard let (data, response) = try? await session.data(for: request, delegate: CloudFileDownload.NoRedirect()),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              !data.isEmpty, data.count <= 25 * 1024 * 1024, !Task.isCancelled else { return nil }
+        let decoded: UIImage? = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+            ]
+            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return UIImage(cgImage: cg)
+        }.value
+        if let decoded {
+            let cost = Int(decoded.size.width * decoded.size.height * decoded.scale * decoded.scale * 4)
+            cache.setObject(decoded, forKey: k, cost: cost)
+        }
+        return decoded
+    }
+}
+
 /// The proposed cell width sizes the rectangle. Image pixels only draw inside
 /// that rectangle; their intrinsic width cannot expand the grid column.
 private struct CloudPhotoCardThumbnail: View {
+    let id: UUID
     let url: URL
     let height: CGFloat
     var thumbnail: Image?
+    @State private var loaded: UIImage?
 
     var body: some View {
         Rectangle().fill(Theme.fillSubtle)
@@ -26,12 +88,8 @@ private struct CloudPhotoCardThumbnail: View {
                 GeometryReader { bounds in
                     Group {
                         if let thumbnail { thumbnail.resizable().scaledToFill() }
-                        else {
-                            AsyncImage(url: url) { phase in
-                                if let image = phase.image { image.resizable().scaledToFill() }
-                                else { Image(systemName: "photo").foregroundStyle(Theme.inkDim) }
-                            }
-                        }
+                        else if let loaded { Image(uiImage: loaded).resizable().scaledToFill() }
+                        else { Image(systemName: "photo").foregroundStyle(Theme.inkDim) }
                     }
                     .frame(width: bounds.size.width, height: bounds.size.height)
                     .clipped()
@@ -39,6 +97,12 @@ private struct CloudPhotoCardThumbnail: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .accessibilityHidden(true)
+            .task(id: url) {
+                guard thumbnail == nil else { return }
+                if let hit = CloudPhotoThumbnails.cached(id: id, url: url) { loaded = hit; return }
+                let image = await CloudPhotoThumbnails.load(id: id, url: url)
+                if !Task.isCancelled, let image { loaded = image }
+            }
     }
 }
 
@@ -48,7 +112,7 @@ struct CloudPhotoPreviewCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            CloudPhotoCardThumbnail(url: photo.url, height: 140, thumbnail: thumbnail)
+            CloudPhotoCardThumbnail(id: photo.id, url: photo.url, height: 140, thumbnail: thumbnail)
             Text(photo.caption?.isEmpty == false ? photo.caption! : "Listing photo")
                 .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -80,7 +144,7 @@ struct CloudMediaPhotoCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            CloudPhotoCardThumbnail(url: photo.url, height: 145, thumbnail: thumbnail)
+            CloudPhotoCardThumbnail(id: photo.id, url: photo.url, height: 145, thumbnail: thumbnail)
             Text(photo.caption?.isEmpty == false ? photo.caption! : "Listing photo")
                 .font(.subheadline.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)

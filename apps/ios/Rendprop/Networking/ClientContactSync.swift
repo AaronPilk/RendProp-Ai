@@ -67,7 +67,10 @@ import Foundation
         updated.clientContactLoaded = true
         updated.clientContactDirty = false
         updated.clientPhotoDirty = false
-        listings[i] = updated
+        // Every workspace refresh re-reads every listing's card. An unchanged
+        // card must not rewrite the library file or redraw the app once per
+        // listing.
+        if updated != listings[i] { listings[i] = updated }
     }
 
     /// Before publishing, the actual server card is read, then a dirty local card

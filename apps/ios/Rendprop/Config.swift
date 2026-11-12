@@ -50,6 +50,13 @@ enum Config {
     /// nil only if `supabaseURL` is unset → LiveAPIClient.init? fails → Mock.
     static var apiBaseURL: URL? { supabaseURL?.appendingPathComponent("functions/v1") }
 
+    /// Where Supabase runs an edge function. Left alone it runs near the
+    /// caller, and every database call then crosses the country to Postgres.
+    /// Naming the database's own region keeps the function beside it.
+    /// Sent only to edge functions; never to storage upload links.
+    static let edgeFunctionRegion = "us-west-2"
+    static let edgeFunctionRegionHeader = "x-region"
+
     /// Supabase **anon** (publishable) key — sent as the `apikey` header on every
     /// request. Public by design; RLS enforces access. This is NOT the
     /// service-role key (that stays server-side only — architecture §4).

@@ -14,7 +14,7 @@ import Foundation
 final class UserDefaults { static let standard=UserDefaults();var values:[String:Any]=[:]
  func string(forKey key:String)->String?{values[key]as?String};func data(forKey key:String)->Data?{values[key]as?Data}
  func set(_ value:Any,forKey key:String){values[key]=value};func removeObject(forKey key:String){values.removeValue(forKey:key)};func synchronize()->Bool{true};func dictionaryRepresentation()->[String:Any]{values}}
-enum Config {static let useLiveBackend=true;static let apiBaseURL:URL?=URL(string:"https://fixture.invalid/functions/v1");static let supabaseAnonKey="synthetic-public"}
+enum Config {static let useLiveBackend=true;static let apiBaseURL:URL?=URL(string:"https://fixture.invalid/functions/v1");static let supabaseAnonKey="synthetic-public";static let edgeFunctionRegion="us-west-2";static let edgeFunctionRegionHeader="x-region"}
 enum CloudSyncError:Error{case identityChanged,invalidResponse}
 enum APIError:Error{case notConfigured,badResponse(Int),decoding,server(status:Int,code:String?,message:String)}
 enum LiveAPIClient{static func serverError(status:Int,data:Data)->Error{APIError.badResponse(status)}}

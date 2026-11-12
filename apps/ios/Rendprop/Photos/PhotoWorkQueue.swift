@@ -134,6 +134,9 @@ final class PhotoWorkQueue: ObservableObject {
             }
             self.tasks.removeValue(forKey: initial.id)
             if let result = self.jobs.first(where: { $0.id == initial.id }) { completion(result) }
+            // New saved versions may now exist for this house; the app backs
+            // them up without waiting for the house to be opened again.
+            NotificationCenter.default.post(name: .rendpropPhotoWorkFinished, object: nil)
             if !identityIsCurrent() { self.remove(initial.id) }
         }
         return true
@@ -175,4 +178,9 @@ final class PhotoWorkQueue: ObservableObject {
         remove(jobID)
     }
     func dismissResult() { if let id = visibleJob?.id { dismissResult(jobID: id) } }
+}
+
+extension Notification.Name {
+    /// Posted on the main actor when a batch of photo edits ends, whatever its outcome.
+    static let rendpropPhotoWorkFinished = Notification.Name("rendprop.photoWorkFinished")
 }
