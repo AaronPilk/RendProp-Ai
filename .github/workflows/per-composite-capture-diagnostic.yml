@@ -1,4 +1,4 @@
-name: Passive Studio capture diagnostic (evidence only)
+name: WebCodecs narrated fixture (partial evidence only)
 
 # Evidence draft. The release owner may install it at
 # .github/workflows/per-composite-capture-diagnostic.yml on a separate
@@ -11,18 +11,19 @@ permissions:
   actions: read
 
 concurrency:
-  group: build-147-passive-studio-export-${{ github.ref }}
+  group: build-147-webcodecs-narrated-proof-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  passive-narrated-export:
-    name: First narrated Studio export, passive observations
-    if: github.repository == 'AaronPilk/RendProp-Ai'
+  webcodecs-narrated-proof:
+    name: Three-second WebCodecs narrated fixture — NOT required CI
+    if: github.repository == 'AaronPilk/RendProp-Ai' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 30
     env:
       SHIPPING_SHA: 1c561d7b91d9b75bd7ba29aa081fcba959089fee
       DIAGNOSTIC_SHA: ${{ github.sha }}
+      PROOF_BASE: ${{ runner.temp }}/rendprop-webcodecs-proof
     steps:
       - name: Checkout exact shipping source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -39,7 +40,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/workflows
-            tools/ci/passive-studio-export
+            tools/ci/webcodecs-narrated-proof
 
       - name: Pin identities and retain source hashes before setup
         shell: bash
@@ -48,7 +49,7 @@ jobs:
           test "$(git -C shipping rev-parse HEAD)" = "$SHIPPING_SHA"
           test "$(git -C diagnostic rev-parse HEAD)" = "$DIAGNOSTIC_SHA"
           test -f diagnostic/.github/workflows/per-composite-capture-diagnostic.yml
-          test -f diagnostic/tools/ci/passive-studio-export/prepare_diagnostic_copy.py
+          test -f diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof.py
           python3 - <<'PY'
           import hashlib, json, os
           from pathlib import Path
@@ -60,10 +61,10 @@ jobs:
               'shipping/apps/studio/src/editor/export.ts',
               'shipping/apps/studio/src/editor/mp4-cadence.ts',
               'diagnostic/.github/workflows/per-composite-capture-diagnostic.yml',
-              'diagnostic/tools/ci/passive-studio-export/prepare_diagnostic_copy.py',
+              'diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof.py',
           )
           record = {
-              'schema': 'rendprop-147-passive-ci-context-v1',
+              'schema': 'rendprop-147-webcodecs-ci-context-v1',
               'run_id': os.environ['GITHUB_RUN_ID'],
               'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
               'event': os.environ['GITHUB_EVENT_NAME'],
@@ -74,9 +75,10 @@ jobs:
               'image_os': os.environ.get('ImageOS'),
               'image_version': os.environ.get('ImageVersion'),
               'source_hashes': {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in files},
-              'scope': 'One synthetic-media workflow_dispatch diagnostic; no provider, production account or deployment.',
+              'scope': 'One synthetic three-second narrated prototype; NOT a required CI/full feature pass. No provider, account, deployment or release-source edit.',
           }
-          out = Path(os.environ['RUNNER_TEMP']) / 'studio-media-diagnostic-context.json'
+          base = Path(os.environ['PROOF_BASE']); base.mkdir(mode=0o700)
+          out = base / 'context.json'
           with out.open('x') as file:
               json.dump(record, file, indent=2)
               file.write('\n')
@@ -98,10 +100,27 @@ jobs:
           test "$(node --version)" = v22.23.4
           npm ci --ignore-scripts
 
+      - name: Install and audit pinned external proof dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = v22.23.4
+          python3 - <<'PYSETUP'
+          import os, shutil
+          from pathlib import Path
+          source=Path(os.environ['GITHUB_WORKSPACE'])/'diagnostic/tools/ci/webcodecs-narrated-proof/dependencies'
+          dest=Path(os.environ['PROOF_BASE'])/'dependencies'
+          shutil.copytree(source,dest)
+          PYSETUP
+          cd "$PROOF_BASE/dependencies"
+          npm ci --ignore-scripts --no-audit 2>&1 | tee "$PROOF_BASE/dependency-install.log"
+          npm audit --omit=dev --audit-level=low --json > "$PROOF_BASE/dependency-audit.json"
+
       - name: Validate bounded readiness controls
         shell: bash
         run: |
           set -euo pipefail
+          python3 diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof_controls.py
           node --test shipping/tools/ci/media-runner-ready.test.mjs
 
       # The normal cache is bound to its run ID and cannot cross into this
@@ -139,7 +158,7 @@ jobs:
           import { writeFileSync } from 'node:fs';
           import os from 'node:os';
           const facts = {
-            schema: 'rendprop-147-passive-ci-runner-v1',
+            schema: 'rendprop-147-webcodecs-ci-runner-v1',
             capturedAtUTC: new Date().toISOString(),
             platform: process.platform, arch: process.arch,
             nodeVersion: process.version, cpus: os.cpus().length,
@@ -153,113 +172,57 @@ jobs:
           };
           if (facts.platform !== 'darwin' || facts.arch !== 'arm64' || facts.cpus !== 3)
             throw new Error('Hosted runner differs from the failed three-CPU macOS runner.');
-          writeFileSync(process.env.RUNNER_TEMP + '/studio-media-diagnostic-runner-facts.json',
+          writeFileSync(process.env.PROOF_BASE + '/runner-facts.json',
             JSON.stringify(facts, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
           JS
 
-      - name: Prepare isolated diagnostic copy
+      - name: Archive immutable source and prepare disposable prototype
         shell: bash
         run: |
           set -euo pipefail
-          python3 diagnostic/tools/ci/passive-studio-export/prepare_diagnostic_copy.py \
-            --studio-root "$GITHUB_WORKSPACE/shipping/apps/studio" \
-            --base-dir "$RUNNER_TEMP/rendprop-passive-diagnostic"
+          python3 diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof.py prepare \
+            --shipping-root "$GITHUB_WORKSPACE/shipping" \
+            --base-dir "$PROOF_BASE"
+          node --check "$PROOF_BASE/source/apps/studio/tests/webcodecs-narrated-proof-browser.mjs"
 
-      - name: Require all six closed observer controls
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --test "$RUNNER_TEMP/rendprop-passive-diagnostic/passive-export-diagnostics.test.mjs" \
-            2>&1 | tee "$RUNNER_TEMP/rendprop-passive-diagnostic/closed-controls.log"
-
-      - name: Require unchanged bounded recorded media readiness
+      - name: Require unchanged bounded media readiness
         timeout-minutes: 12
         shell: bash
         run: |
           set -euo pipefail
-          node shipping/tools/ci/media-runner-ready.mjs \
-            --output "$RUNNER_TEMP/studio-media-diagnostic-readiness.json"
+          node shipping/tools/ci/media-runner-ready.mjs --output "$PROOF_BASE/readiness.json"
 
-      - name: Run one first narrated export with default-device audio
-        working-directory: shipping/apps/studio
-        timeout-minutes: 10
+      - name: Run exactly one partial narrated proof with default-device audio
+        timeout-minutes: 5
         shell: bash
-        env:
-          TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          python3 "$RUNNER_TEMP/rendprop-passive-diagnostic/run_diagnostic.py" \
+          python3 diagnostic/tools/ci/webcodecs-narrated-proof/hosted_proof.py run \
+            --shipping-root "$GITHUB_WORKSPACE/shipping" \
+            --base-dir "$PROOF_BASE" \
+            --node "$(command -v node)" \
             --browser "$STUDIO_BROWSER_EXECUTABLE"
 
-      - name: Summarize available evidence without changing the test verdict
-        if: always()
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import hashlib, json, os
-          from pathlib import Path
-          temp = Path(os.environ['RUNNER_TEMP'])
-          base = temp / 'rendprop-passive-diagnostic'
-          paths = {
-              'context': temp / 'studio-media-diagnostic-context.json',
-              'runner_facts': temp / 'studio-media-diagnostic-runner-facts.json',
-              'readiness': temp / 'studio-media-diagnostic-readiness.json',
-              'copy_manifest': base / 'diagnostic-copy-manifest.json',
-              'run_journal': base / 'run-1/journal.json',
-          }
-          receipts = sorted(base.glob('run-1/artifacts/rendprop-cloud-editor-*/receipt.json'))
-          summary = {
-              'schema': 'rendprop-147-passive-ci-summary-v1',
-              'run_id': os.environ['GITHUB_RUN_ID'],
-              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
-              'expected_shipping_sha': os.environ['SHIPPING_SHA'],
-              'evidence': {},
-              'browser_receipt_count': len(receipts),
-          }
-          for name, path in paths.items():
-              if path.is_file():
-                  raw = path.read_bytes()
-                  summary['evidence'][name] = {
-                      'sha256': hashlib.sha256(raw).hexdigest(),
-                      'size_bytes': len(raw),
-                  }
-                  if name in ('readiness', 'run_journal'):
-                      item = json.loads(raw)
-                      summary['evidence'][name]['status'] = item.get('status')
-          for index, path in enumerate(receipts):
-              raw = path.read_bytes()
-              summary['evidence'][f'browser_receipt_{index}'] = {
-                  'sha256': hashlib.sha256(raw).hexdigest(),
-                  'size_bytes': len(raw),
-                  'status': json.loads(raw).get('status'),
-              }
-          out = temp / 'studio-media-diagnostic-summary.json'
-          with out.open('x') as file:
-              json.dump(summary, file, indent=2)
-              file.write('\n')
-          out.chmod(0o600)
-          PY
-
-      - name: Retain bounded runtime and export evidence
+      - name: Retain partial proof evidence on success or failure
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: studio-passive-diagnostic-147-${{ github.run_attempt }}
+          name: studio-webcodecs-partial-proof-147-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/studio-media-diagnostic-context.json
-            ${{ runner.temp }}/studio-media-diagnostic-runner-facts.json
-            ${{ runner.temp }}/studio-media-diagnostic-readiness.json
-            ${{ runner.temp }}/studio-media-diagnostic-summary.json
-            ${{ runner.temp }}/rendprop-passive-diagnostic/*.json
-            ${{ runner.temp }}/rendprop-passive-diagnostic/*.py
-            ${{ runner.temp }}/rendprop-passive-diagnostic/*.mjs
-            ${{ runner.temp }}/rendprop-passive-diagnostic/*.md
-            ${{ runner.temp }}/rendprop-passive-diagnostic/*.log
-            ${{ runner.temp }}/rendprop-passive-diagnostic/run-1/journal.json
-            ${{ runner.temp }}/rendprop-passive-diagnostic/run-1/run.log
-            ${{ runner.temp }}/rendprop-passive-diagnostic/run-1/artifacts/rendprop-cloud-editor-*/receipt.json
-            ${{ runner.temp }}/rendprop-passive-diagnostic/run-1/artifacts/rendprop-cloud-editor-*/*.png
-            ${{ runner.temp }}/rendprop-passive-diagnostic/run-1/artifacts/rendprop-cloud-editor-*/*.mp4
-            ${{ runner.temp }}/rendprop-passive-diagnostic/run-1/artifacts/rendprop-cloud-editor-*/*.wav
+            ${{ runner.temp }}/rendprop-webcodecs-proof/context.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/runner-facts.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/readiness.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/preparation-journal.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/prepared-manifest.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/dependency-audit.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/dependency-install.log
+            ${{ runner.temp }}/rendprop-webcodecs-proof/dependencies/package.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/dependencies/package-lock.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/journal.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/run.log
+            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/artifacts/rendprop-webcodecs-proof-*/receipt.json
+            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/artifacts/rendprop-webcodecs-proof-*/*.png
+            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/artifacts/rendprop-webcodecs-proof-*/*.mp4
+            ${{ runner.temp }}/rendprop-webcodecs-proof/run-1/artifacts/rendprop-webcodecs-proof-*/*.wav
           retention-days: 7
           if-no-files-found: warn
