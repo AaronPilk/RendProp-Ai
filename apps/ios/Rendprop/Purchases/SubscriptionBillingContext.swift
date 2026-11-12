@@ -506,9 +506,9 @@ enum PurchaseDispatchAdmission {
 
 enum TrialPurchaseAdmission {
     static let unavailableMessage = "Free trials are not available in this workspace yet. No Apple billing has started. Your saved work remains available under your workspace's access and retention terms."
-    static let capacityUnavailableMessage = "Trial access is unavailable in this Apple purchase environment. No new Apple purchase has started. Any existing reservation and Apple transaction remain with this workspace. Do not purchase again or switch accounts. Contact support in Settings → Legal & support; tap Restore purchases after support confirms access."
-    static let unknownEnvironmentMessage = "Apple's purchase environment could not be verified. No new Apple purchase has started. Any existing reservation remains with this workspace. Reopen the app and check this plan again, or contact support in Settings → Legal & support."
-    static let unsupportedRegionMessage = "Funded trials are currently supported only in the United States with a USD subscription. No Apple purchase has started. Any existing reservation remains retained. Restore and subscription management remain available."
+    static let capacityUnavailableMessage = "The free trial cannot be started right now. That is a problem on our side. No new Apple purchase has started. Anything Apple already confirmed stays with this workspace. Do not purchase again or switch accounts. Contact support in Settings → Legal & support, then tap Restore purchases once support confirms it is fixed."
+    static let unknownEnvironmentMessage = "Rendprop could not confirm your App Store account just now. No new Apple purchase has started. Anything Apple already confirmed stays with this workspace. Reopen the app and check this plan again, or contact support in Settings → Legal & support."
+    static let unsupportedRegionMessage = "The free trial is currently offered only in the United States with a US dollar subscription. No Apple purchase has started. Anything Apple already confirmed is kept. You can still restore purchases and manage your subscription."
     static func supportsTrialRegion(country: String?, currency: String) -> Bool {
         country == "USA" && currency == "USD"
     }
