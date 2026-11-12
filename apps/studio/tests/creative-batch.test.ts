@@ -123,7 +123,7 @@ test("pending or held quality review stops the batch without a second photo or a
     assert.deepEqual(batch.entries.map(entry => entry.state), ["failed", "stopped", "stopped"]);
     assert.equal(f.events.filter(event => event.startsWith("prepare:")).length, 1);
     assert.equal(f.events.filter(event => event.startsWith("upload:original:")).length, 1);
-    assert.match(batch.entries[0]!.error!, /saved edit is retained/);
+    assert.match(batch.entries[0]!.error!, /Your edit is saved\. The other photos were not started/);
     assert.doesNotMatch(batch.entries[0]!.error!, /No AI edit was started/);
   }
 });
@@ -139,7 +139,7 @@ test("a retained pending or held operation stops recovery before any source uplo
     assert.deepEqual(f.events, []);
     assert.deepEqual(f.keys, []);
     assert.deepEqual(batch.entries.map(entry => entry.state), ["failed", "stopped", "stopped"]);
-    assert.match(batch.entries[0]!.error!, /saved edit is retained/);
+    assert.match(batch.entries[0]!.error!, /Your edit is saved\. The other photos were not started/);
     assert.doesNotMatch(batch.entries[0]!.error!, /No AI edit was started/);
   }
 });
@@ -276,6 +276,6 @@ test("closed paid review stops remaining batch work and only a new explicit batc
  const f=fixture();let calls=0;
  f.deps.generate=async()=>{calls++;throw new StudioError("photo_quality_closed","The edit is closed and remains private.",422,{operation_closed:true,provider_cost_incurred:"possible"});};
  const batch=new PhotoBatch(photos(),listingId,choice,f.deps);await batch.run();await batch.run();
- assert.equal(calls,1);assert.equal(batch.stopRequested,true);assert.deepEqual(batch.entries.map(e=>e.state),["failed","stopped","stopped"]);assert.match(batch.entries[0]!.error!,/may use another allowance/);assert.doesNotMatch(batch.entries[0]!.error!,/No AI edit was started/);
+ assert.equal(calls,1);assert.equal(batch.stopRequested,true);assert.deepEqual(batch.entries.map(e=>e.state),["failed","stopped","stopped"]);assert.match(batch.entries[0]!.error!,/Starting again counts as a new edit/);assert.doesNotMatch(batch.entries[0]!.error!,/No AI edit was started/);
  const manual=new PhotoBatch(photos(1),listingId,choice,f.deps);await manual.run();assert.equal(calls,2,"Only a separately requested batch starts the second attempt");assert.notEqual(manual.entries[0]!.requestKey,batch.entries[0]!.requestKey);
 });

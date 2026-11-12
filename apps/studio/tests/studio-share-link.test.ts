@@ -88,8 +88,8 @@ test("an exact public not_found withholds stale marketing and MLS links; outages
   const missing = await resolveTourLinks(slug, { fetcher: async () => response({ error: "not_found" }, 404) });
   assert.equal(missing, false);
   assert.equal(safeTourLinks(slug, missing), null);
-  await assert.rejects(() => createTourQR(slug, "branded", missing ?? undefined), /could not be verified/);
-  await assert.rejects(() => createTourQR(slug, "unbranded", missing ?? undefined), /could not be verified/);
+  await assert.rejects(() => createTourQR(slug, "branded", missing ?? undefined), /could not be checked/);
+  await assert.rejects(() => createTourQR(slug, "unbranded", missing ?? undefined), /could not be checked/);
   for (const invalid of [
     response({ error: "temporary" }, 404),
     response({ error: "not_found" }, 404, "https://other.invalid/not-found"),

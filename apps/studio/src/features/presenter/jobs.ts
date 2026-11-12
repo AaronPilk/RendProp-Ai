@@ -2,7 +2,7 @@ import {isPrivateMediaURL,privateMediaCapability} from "../../data/private-media
 import { mediaURL, uuid } from "../../data/contracts";
 import { invalid, list, permissions, rev, row, scope, str } from "./model";
 
-export const JOB_STATES = { reserved: "Preparing generation", dispatching: "Sending to the provider", uncertain: "Submission needs reconciliation", queued: "Queued", processing: "Generating", review: "Ready for your private review", accepted: "Accepted", rejected: "Rejected", importing: "Adding to property media", imported: "Added to property media", cancel_requested: "Cancellation requested", cancelled: "Cancelled", failed: "Failed", invalidated: "Approval withdrawn" } as const;
+export const JOB_STATES = { reserved: "Preparing generation", dispatching: "Sending to the AI service", uncertain: "Checking whether it was sent", queued: "Queued", processing: "Generating", review: "Ready for your private review", accepted: "Accepted", rejected: "Rejected", importing: "Adding to property media", imported: "Added to property media", cancel_requested: "Cancellation requested", cancelled: "Cancelled", failed: "Failed", invalidated: "Approval withdrawn" } as const;
 export type JobStatus = keyof typeof JOB_STATES;
 export type PresenterQuote = { id: string; draft_id: string; draft_revision: number; profile_revision: number; quote_cents: number; max_cost_cents: number; estimate_usd: string; expires_at: string; consumed: boolean };
 export type PresenterJob = { id: string; quote_id: string; draft_id: string; draft_revision: number | null; profile_revision: number | null; revision: number; status: JobStatus;

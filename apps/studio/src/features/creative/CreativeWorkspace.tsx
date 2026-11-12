@@ -686,7 +686,7 @@ function ListingCreative(
     assertPhotoScope();
     if (!photoResult.provenanceId) {
       throw new Error(
-        "This edit needs its disclosure record before it can be saved to the gallery.",
+        "The AI-edit label for this edit was not saved, so it cannot be added to the gallery. Download it, or make the edit again.",
       );
     }
     const caption = [room, ...photoResult.disclosures.slice(0, -1)].filter(Boolean).join(" · ");
@@ -913,7 +913,7 @@ function ListingCreative(
     );
     if (!signed.url || !signed.sourceUrl || !signed.requestId) {
       throw new Error(
-        "This clip needs its saved source photo before quality review.",
+        "We could not find the photo this clip was made from, so it cannot be checked. Refresh and try again.",
       );
     }
     const [sampled, original] = await Promise.all([
@@ -941,7 +941,7 @@ function ListingCreative(
       [result.id]: {
         pass: verdict.status === "pass" && verdict.publishable === true,
         message: text(verdict.message, 1000) ||
-          "Quality review could not confirm this clip for publishing.",
+          "The accuracy check did not pass this clip. Make a new version before publishing.",
       },
     }));
     await refreshResults();
@@ -1127,7 +1127,7 @@ function ListingCreative(
             <figcaption>{source.file.name} · {originalEditing ? "original editing image" : "chosen saved photo"}</figcaption>
             {!source.originalVerified && source.original && <details open><summary>Check the paired original</summary>
               <img src={source.original.preview} alt="Paired source to verify" />
-              <p>This photo predates verified source history. Confirm the original before a new edit.</p>
+              <p>This photo was saved before Rendprop kept track of originals. Confirm this is the original before making a new edit.</p>
               <label><input type="checkbox" disabled={isBusy} onChange={event => setSource({ ...source, originalVerified: event.target.checked })} />This is the actual unedited original.</label>
             </details>}
             {savedPhotoReview && source.original && <button disabled={isBusy} onClick={() => { setPhotoTab("original"); void chooseSource({ ...importedPhoto(source.original!), originalVerified: source.originalVerified, originalAssetId: source.originalAssetId }); }}>Edit original with AI</button>}
@@ -2098,7 +2098,7 @@ function ListingCreative(
                   )}
                   {result.assetId && (
                     <small>
-                      Saved to this property's video library. Open the listing
+                      Saved with this property's videos. Open the listing
                       to edit or publish it.
                     </small>
                   )}

@@ -46,13 +46,13 @@ type ReadPage = { offset: number; limit: number };
 type PageResult = { rows: unknown[]; total: number };
 
 async function boundedJson(response: Response, signal: AbortSignal, limit = MAX_METADATA_BYTES): Promise<unknown> {
-  const tooLarge = () => new StudioError("response-too-large", "This workspace response is too large to load safely. Contact support.");
+  const tooLarge = () => new StudioError("response-too-large", "Your workspace has more saved information than Studio can open at once. That is a problem on our side. Contact support.");
   const declared = response.headers.get("content-length");
   if (declared && /^\d+$/.test(declared) && Number(declared) > limit) {
     void response.body?.cancel().catch(() => {});
     throw tooLarge();
   }
-  if (!response.body) throw new StudioError("invalid-response", "The server returned an empty response. Please retry.");
+  if (!response.body) throw new StudioError("invalid-response", "Rendprop sent back an empty answer. Try again in a minute.");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -81,7 +81,7 @@ async function boundedJson(response: Response, signal: AbortSignal, limit = MAX_
 }
 
 function decodePage(rows: unknown, response: Response, page: ReadPage): PageResult {
-  const fail = () => { throw new StudioError("incomplete-response", "The workspace response was incomplete. Refresh to load all of your data."); };
+  const fail = () => { throw new StudioError("incomplete-response", "We only received part of your workspace. Refresh to load all of it."); };
   const range = response.headers.get("content-range") ?? "";
   const match = /^(?:(\d+)-(\d+)|\*)\/(\d+)$/.exec(range);
   if (!Array.isArray(rows) || !match) return fail();
@@ -152,13 +152,13 @@ export type StudioRequestOptions = {
 /** Only the immutable upload gateway receives media; account credentials stay on Supabase. */
 export function validateUploadUrl(raw: string): string {
   let url: URL;
-  try { url = new URL(raw); } catch { throw new StudioError("upload-url", "The upload ticket is invalid. Request a new ticket."); }
+  try { url = new URL(raw); } catch { throw new StudioError("upload-url", "This upload link is no longer valid. Start the upload again."); }
   if (url.origin !== "https://uploads.rendprop.com" || url.username || url.password || url.hash ||
     !/^\/v2\/[0-9a-f-]{36}$/.test(url.pathname) ||
     !/^\d{10,13}$/.test(url.searchParams.get("expires") ?? "") ||
     !/^[0-9a-f]{64}$/.test(url.searchParams.get("signature") ?? "") ||
     [...url.searchParams.keys()].some(k => !["expires", "signature"].includes(k)))
-    throw new StudioError("upload-url", "The upload ticket is invalid. Request a new ticket.");
+    throw new StudioError("upload-url", "This upload link is no longer valid. Start the upload again.");
   return url.href;
 }
 
@@ -478,11 +478,11 @@ export function createStudioServices(
                   : response.status === 403
                     ? "You no longer have access to this workspace. Reload your workspaces."
                     : response.status === 404
-                      ? "This listing or media is unavailable."
+                      ? "We could not find this listing, photo or video. It may have been removed. Refresh and try again."
                       : response.status === 409 ? "This item changed on another device. Refresh before saving again."
                       : response.status === 402 ? PLAN_FALLBACK
                       : response.status === 429 ? "Please wait a moment before trying again."
-                      : "Rendprop could not complete this request. Please retry.";
+                      : "Something went wrong on our side. Try again in a minute.";
               let failureCode="request-failed";let failureDetails:Record<string,unknown>|undefined;
               // Existing Edge Functions return user-facing HttpError messages. Never
               // echo provider/5xx bodies or URLs, which may contain signed capabilities.
@@ -494,9 +494,9 @@ export function createStudioServices(
               if (processorFailure) {
                 try {
                   const detail = await boundedJson(response, controller.signal, 8192) as { code?: unknown };
-                  if (detail.code === "processor_disclosure_unpublished") { failureCode = detail.code; message = "The AI processor disclosure is not published yet. Your saved work is unchanged."; }
-                  else if (response.status === 403 && detail.code === "processor_consent_required") { failureCode = detail.code; message = "This video requires its reviewed AI processor permission. Recover the saved request before changing its permission."; }
-                  else if (response.status === 403 && detail.code === "consent_required") { failureCode = detail.code; message = "Allow AI processing before starting this saved video action."; }
+                  if (detail.code === "processor_disclosure_unpublished") { failureCode = detail.code; message = "AI video cannot start yet because our notice about the AI services we use is not published. That is a problem on our side. Your saved work is unchanged. Try again later or contact support."; }
+                  else if (response.status === 403 && detail.code === "processor_consent_required") { failureCode = detail.code; message = "This video was started under an earlier AI permission. Recover the saved video first, then change the permission."; }
+                  else if (response.status === 403 && detail.code === "consent_required") { failureCode = detail.code; message = "Allow AI processing before starting this video."; }
                 } catch { /* An unrecognized or unreadable403 remains an access error. */ }
               } else if ([400, 402, 409, 413, 422].includes(response.status) || feedbackRoute && response.status < 500) {
                 try {
@@ -546,7 +546,7 @@ export function createStudioServices(
               if (error instanceof StudioError) throw error;
               throw new StudioError(
                 "invalid-response",
-                "The server returned an unreadable response. Please retry.",
+                "Rendprop sent back an answer Studio could not read. Try again in a minute.",
               );
             }
             assertCurrent(version, controller.signal);
@@ -604,7 +604,7 @@ export function createStudioServices(
           total = page.total;
           metadataBytes += new TextEncoder().encode(JSON.stringify(page.rows)).byteLength;
           if (metadataBytes > MAX_METADATA_BYTES * 4)
-            throw new StudioError("response-too-large", "This workspace has too much metadata to load at once. Contact support.");
+            throw new StudioError("response-too-large", "Your workspace has more saved details than Studio can open at once. That is a problem on our side. Contact support.");
           all.push(...page.rows);
         } while (all.length < total);
         return all;
@@ -617,7 +617,7 @@ export function createStudioServices(
   async function listingRead(read: WorkspaceRead, actor: {version:number;userId:string}, selected: string, signal?: AbortSignal): Promise<Listing[]> {
     assertWorkspace(read, signal);
     if (read.target !== selected || !memberships.some(m => m.orgId === selected))
-      throw new StudioError("membership-required", "Load this workspace before opening its listings.");
+      throw new StudioError("membership-required", "Your listings have not finished loading. Refresh, then try again.");
     if (!read.listings) {
       const allowed = [...memberships], controller = new AbortController();
       const abort = () => controller.abort(read.signal?.reason);
@@ -635,11 +635,11 @@ export function createStudioServices(
           if (!page || uuid(page.actor_id, "listing actor") !== actor.userId || !Array.isArray(page.listings) ||
               !Number.isSafeInteger(page.total) || (page.total as number) < offset || (page.total as number) > MAX_READ_ROWS ||
               (total !== undefined && page.total !== total) || page.listings.length !== Math.min(500, (page.total as number) - offset))
-            throw new StudioError("incomplete-response", "Your listing library changed while loading. Reload to see all listings.");
+            throw new StudioError("incomplete-response", "Your listings changed while they were loading. Reload to see all of them.");
           total = page.total as number; offset += page.listings.length;
-          if (page.next_offset !== (offset < total ? offset : null)) throw new StudioError("incomplete-response", "Your listing library response was incomplete. Reload your listings.");
+          if (page.next_offset !== (offset < total ? offset : null)) throw new StudioError("incomplete-response", "We only received part of your listings. Reload your listings.");
           bytes += new TextEncoder().encode(JSON.stringify(page.listings)).byteLength;
-          if (bytes > MAX_METADATA_BYTES * 4) throw new StudioError("response-too-large", "Your listing metadata is too large to load safely. Contact support.");
+          if (bytes > MAX_METADATA_BYTES * 4) throw new StudioError("response-too-large", "You have more listing details than Studio can open at once. That is a problem on our side. Contact support.");
           rows.push(...page.listings);
           if (page.next_offset === null) break;
         }
@@ -675,7 +675,7 @@ export function createStudioServices(
 
   async function requestScope(actor: {version:number;userId:string}, selected: string, expectedLibrary: string | undefined, signal?: AbortSignal, expectedListing?: string) {
     const read = workspaceRead;
-    const denied = expectedListing ? "Load this workspace before opening its media." : "Load this workspace before making changes.";
+    const denied = expectedListing ? "Open your listings again before viewing this home's photos and videos." : "Open your listings again before making changes.";
     if (!read || read.version !== actor.version)
       throw new StudioError("membership-required", denied);
     const library = expectedLibrary !== undefined ? uuid(expectedLibrary, "selected library") : read.target;
@@ -807,14 +807,14 @@ export function createStudioServices(
       // client-provided origin, relative traversal, fragment or redirect.
       if (!/^\/functions\/v1\/[a-z][a-z0-9-]*(?:[/?][^#\\]*)?$/.test(path) ||
         path.includes("..") || /%2e|%2f|%5c|[\u0000-\u0020]/i.test(path))
-        throw new StudioError("request-path", "Choose a valid Rendprop action.");
+        throw new StudioError("request-path", "Studio tried something it does not support. Refresh the page and try again.");
       if (options.photoQualityProtocol !== undefined && (options.photoQualityProtocol !== "retained-operation-v1" || path !== "/functions/v1/ai-photo-v2" || options.method !== "POST"))
-        throw new StudioError("request-path", "Use the saved photo operation for this request.");
+        throw new StudioError("request-path", "Studio could not send this photo edit the right way. Refresh the page and try again.");
       const audioUpload = /^\/functions\/v1\/property-video-jobs\/audio\/[a-f0-9-]{36}\/content$/.test(path);
       if (options.binary && (options.body !== undefined || options.method !== "PUT" ||
         !(audioUpload || /^\/functions\/v1\/studio\/project-media\/[a-f0-9-]{36}\/(?:[0-9]|1[0-5])$/.test(path)) ||
         options.binary.size < 1 || options.binary.size > (audioUpload ? 20 : 8)*1024*1024))
-        throw new StudioError("request-size", "Choose a bounded project upload part.");
+        throw new StudioError("request-size", "This piece of the file is the wrong size to upload. Refresh the page and upload the file again.");
       const selected = uuid(options.orgId, "selected organization");
       const actor = await identity(options.signal);
       const expectedListing = options.expectedListingId === undefined ? undefined : uuid(options.expectedListingId, "selected listing");
@@ -822,21 +822,21 @@ export function createStudioServices(
       const actionScope = method === "GET" ? null : await mutationScope(actor, selected, options.expectedLibraryOrgId, options.signal, expectedListing);
       const scopeCurrent = actionScope ? actionScope.before : await requestScope(actor, selected, options.expectedLibraryOrgId, options.signal, expectedListing);
       if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600_000))
-        throw new StudioError("configuration", "The request timeout is invalid.");
+        throw new StudioError("configuration", "Studio is set up incorrectly for this action. Refresh the page; if it keeps happening, contact support.");
       if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > (path === "/functions/v1/ai-photo-v2" && options.method === "POST" && options.photoQualityProtocol === "retained-operation-v1" ? PHOTO_OUTPUT_WIRE_BYTES : 32 * 1024 * 1024)))
-        throw new StudioError("configuration", "The response limit is invalid.");
+        throw new StudioError("configuration", "Studio is set up incorrectly for this action. Refresh the page; if it keeps happening, contact support.");
       if (options.idempotencyKey && !/^[a-zA-Z0-9:_-]{1,128}$/.test(options.idempotencyKey))
-        throw new StudioError("request-key", "The action identifier is invalid.");
+        throw new StudioError("request-key", "Studio could not label this action correctly. Refresh the page and try again.");
       const videoConsentAction = options.method === "POST" && (path === "/functions/v1/property-video-jobs" || /^\/functions\/v1\/property-video-jobs\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\/resume$/.test(path));
       if (options.aiConsent && !(videoConsentAction && ["property-video-jobs-v1", "property-video-jobs-v2"].includes(options.aiConsent) ||
         options.method === "POST" && path === "/functions/v1/property-video-plan" && options.aiConsent === "property-video-plan-v1"))
-        throw new StudioError("request-consent", "Confirm AI processing for this saved-photo video action.");
+        throw new StudioError("request-consent", "Allow AI processing before starting this video.");
       if (options.aiConsent === "property-video-jobs-v2" ? !videoConsentAction || typeof options.aiConsentDisclosure !== "string" || !/^[!-~]{1,200}$/.test(options.aiConsentDisclosure) : options.aiConsentDisclosure !== undefined)
-        throw new StudioError("request-consent", "Keep the exact reviewed processor disclosure with this saved video action.");
+        throw new StudioError("request-consent", "The AI permission for this video does not match what you agreed to. Refresh the page and allow AI processing again.");
       if (options.body !== undefined && new TextEncoder().encode(JSON.stringify(options.body)).byteLength > 32 * 1024 * 1024)
         throw new StudioError("request-size", "This request is too large. Choose a smaller image.");
       if (options.body !== undefined && (!options.method || options.method === "GET"))
-        throw new StudioError("request-method", "A read request cannot change data.");
+        throw new StudioError("request-method", "Studio tried to change something while it was only reading. Refresh the page and try again.");
       return request(path, actor.version, options.signal, selected, undefined, options, scopeCurrent, actionScope?.completed);
     },
     async upload(rawUrl: string, body: Blob, options: {
@@ -848,7 +848,7 @@ export function createStudioServices(
       const actionScope = await mutationScope(actor, selected, options.expectedLibraryOrgId, options.signal);
       const url = validateUploadUrl(rawUrl);
       if (!body.size || body.size > 64 * 1024 * 1024)
-        throw new StudioError("upload-size", "Upload each file in parts of 64 MB or smaller.");
+        throw new StudioError("upload-size", "This piece of the file is too large to upload. Refresh the page and upload the file again.");
       const controller = new AbortController();
       const abort = () => controller.abort(options.signal?.reason);
       options.signal?.addEventListener("abort", abort, { once: true });
@@ -867,7 +867,7 @@ export function createStudioServices(
           assertCurrent(actor.version, controller.signal);
           actionScope.completed();
           void response.body?.cancel().catch(() => {});
-          if (!response.ok) throw new StudioError("upload-failed", "Upload was not confirmed. Resume it to reconcile its saved parts.", response.status);
+          if (!response.ok) throw new StudioError("upload-failed", "We could not confirm this upload finished. Resume the upload to pick up where it stopped.", response.status);
           options.onProgress?.(body.size, body.size);
           actionScope.completed();
           return { etag: response.headers.get("ETag") };
@@ -970,7 +970,7 @@ export function createStudioServices(
       const actor = await identity(signal);
       const selected = uuid(orgId, "selected organization"), read = workspaceRead;
       if (!read || read.version !== actor.version)
-        throw new StudioError("membership-required", "Load this workspace before opening its listings.");
+        throw new StudioError("membership-required", "Your listings have not finished loading. Refresh, then try again.");
       assertWorkspace(read, signal);
       await waitFor(read.directory, signal);
       return listingRead(read, actor, selected, signal);
@@ -990,7 +990,7 @@ export function createStudioServices(
       const listing = uuid(listingId, "selected listing");
       const page = mediaOffset(offset);
       if (preview && (!Number.isSafeInteger(preview.limit) || preview.limit < 1 || preview.limit > 50 || page !== 0))
-        throw new StudioError("request-path", "Choose a valid Rendprop action.");
+        throw new StudioError("request-path", "Studio tried something it does not support. Refresh the page and try again.");
       // Focus/timer refresh clears these caches while the fresh directory and
       // listing map are loading. Join that generation, then fence this exact
       // listing before and after transport rather than using a stale org hint.

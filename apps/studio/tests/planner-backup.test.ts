@@ -58,7 +58,7 @@ test("maximum-size valid fields export all 100 records without truncating escape
   assert.deepEqual(parsePlanBackup(backup.text).plans, plans);
 });
 test("export refuses duplicate identities, over-cap queues and invalid timestamps", () => {
-  assert.throws(() => planBackupFile([item, item], exportedAt), /duplicate/);
+  assert.throws(() => planBackupFile([item, item], exportedAt), /duplicate|share the same ID/);
   assert.throws(() => planBackupFile(Array(101).fill(item), exportedAt), /100/);
   assert.throws(() => planBackupFile([item], "2026-02-30T12:00:00Z"), /real calendar/);
 });

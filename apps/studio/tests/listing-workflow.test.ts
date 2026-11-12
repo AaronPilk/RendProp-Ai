@@ -112,7 +112,7 @@ test("property state rejects cross-workspace data and malformed page cursors", (
   assert.equal(decodeListingState(state, org, listing).assets.length, 0);
   assert.throws(() => decodeListingState({ ...state, org_id: listing }, org, listing), /property changed/);
   assert.throws(() => decodeListingState({ ...state, next_offset: 999 }, org, listing), /pagination/);
-  assert.throws(() => decodeListingState({ ...state, assets: [{ id: asset, listing_id: org }] }, org, listing), /another property/);
+  assert.throws(() => decodeListingState({ ...state, assets: [{ id: asset, listing_id: org }] }, org, listing), /activity for a different property/);
   assert.equal(tourLinks("javascript:alert(1)"), null);
   assert.equal(websiteDesignPreviews("javascript:alert(1)"), null);
   assert.deepEqual(websiteDesignPreviews("oak-street")?.map(design => [design.name, design.paid, design.href]), [

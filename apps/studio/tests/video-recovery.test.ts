@@ -80,7 +80,7 @@ test("archive collision, quota failure and failed readback never remove the acti
 
 test("missing operation and unavailable storage never dispatch recovery or paid work",async()=>{
  const store=storage("{broken"),svc=service({job:job()});
- await assert.rejects(()=>resolveUnreadableVideo(svc,scope,readVideoRecovery(store,scope).unreadable!,store),/no verifiable operation/);
+ await assert.rejects(()=>resolveUnreadableVideo(svc,scope,readVideoRecovery(store,scope).unreadable!,store),/could not match this saved video request/);
  assert.equal(svc.calls.length,0);
  assert.deepEqual(readVideoRecovery({getItem:()=>{throw Error("storage unavailable");}},scope),{journal:null,unreadable:{raw:null,reference:null}});
 });

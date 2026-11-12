@@ -22,7 +22,7 @@ export type UploadOptions = {
 const VIDEO = new Map([["mp4", "video/mp4"], ["mov", "video/quicktime"], ["m4v", "video/x-m4v"]]);
 const PHOTO = new Map([["jpg", "image/jpeg"], ["jpeg", "image/jpeg"], ["png", "image/png"], ["webp", "image/webp"], ["heic", "image/heic"], ["heif", "image/heif"]]);
 function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("The upload server returned an incomplete receipt. Resume this upload to check its status.");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("We could not confirm this upload finished. Resume the upload to check it.");
   return value as Record<string, unknown>;
 }
 function stopped(signal?: AbortSignal) { if (signal?.aborted) throw new DOMException("Upload paused", "AbortError"); }
@@ -53,13 +53,13 @@ export async function fingerprintFile(file: Blob, signal?: AbortSignal): Promise
 }
 function receiptParts(value: unknown, count: number) {
   if (value === undefined) return [];
-  if (!Array.isArray(value)) throw new Error("The server could not verify uploaded parts.");
+  if (!Array.isArray(value)) throw new Error("We could not check the parts of this upload. Resume the upload to try again.");
   const parts = value.map((raw) => {
     const p = object(raw);
-    if (!Number.isInteger(p.number) || Number(p.number) < 1 || Number(p.number) > count || typeof p.etag !== "string" || !p.etag || p.etag.length > 256) throw new Error("The server could not verify uploaded parts.");
+    if (!Number.isInteger(p.number) || Number(p.number) < 1 || Number(p.number) > count || typeof p.etag !== "string" || !p.etag || p.etag.length > 256) throw new Error("We could not check the parts of this upload. Resume the upload to try again.");
     return { number: Number(p.number), etag: p.etag };
   });
-  if (new Set(parts.map((p) => p.number)).size !== parts.length) throw new Error("The server returned duplicate upload receipts.");
+  if (new Set(parts.map((p) => p.number)).size !== parts.length) throw new Error("We got the same part of this upload twice. Resume the upload to sort it out.");
   return parts;
 }
 function ticket(raw: unknown, options: UploadOptions): Ticket {
@@ -68,7 +68,7 @@ function ticket(raw: unknown, options: UploadOptions): Ticket {
   const storageKey = String(row.storage_key ?? "");
   const bucket = (options.role ?? "capture") === "capture" ? "uploads" : "renders";
   if (!storageKey.startsWith(`${bucket}/${options.orgId}/${options.listingId}/`) || storageKey.includes("..") || storageKey.length > 1024) throw new Error("The upload does not belong to this property.");
-  if (!["single", "multipart"].includes(String(row.mode))) throw new Error("The server returned an unsupported upload mode.");
+  if (!["single", "multipart"].includes(String(row.mode))) throw new Error("Studio does not know how to send this upload. Refresh the page and try again.");
   const count = Number(row.part_count), size = Number(row.part_size);
   if (row.mode === "multipart" && (!Number.isInteger(count) || count < 1 || count > 384 || !Number.isSafeInteger(size) || size < 5 * 1024 ** 2 || size > 64 * 1024 ** 2 || Math.ceil(options.file.size / size) !== count)) throw new Error("The server returned an invalid upload layout.");
   if (row.uploaded !== true && row.mode === "single" && typeof row.put_url !== "string") throw new Error("The upload link is unavailable. Resume to request a fresh link.");
@@ -123,7 +123,7 @@ export async function uploadListingAsset(services: StudioServices, options: Uplo
         const bytes = file.slice((number - 1) * current.partSize!, Math.min(number * current.partSize!, file.size), contentType);
         const uploaded = await services.upload(part.url, bytes, { orgId, signal, contentType, onProgress: (n) => onProgress?.(loaded + n, file.size) });
         assertActor();
-        if (!uploaded.etag) throw new Error("The server stored a part but its receipt was unavailable. Resume to recover it.");
+        if (!uploaded.etag) throw new Error("One part of the upload arrived but was not confirmed. Resume the upload to finish it.");
         journal.parts = [...journal.parts, { number, etag: uploaded.etag }].sort((a, b) => a.number - b.number);
         persist();
         loaded += bytes.size;

@@ -2,7 +2,7 @@ import type {StudioServices} from "../../data/services";
 import {abandonVideoOperation,assertVideoScope,inspectVideoOperation,MUSIC,readVideoJournal,videoClosure,videoScopeKey,type VideoJournal,type VideoOperation,type VideoOperationReference,type VideoScope} from "./property-video";
 
 const UUID=/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
-export const VIDEO_RECOVERY_NOTICE="This saved request uses a format this version cannot reopen. Your photos and server videos are available below. New video creation is paused until its saved operation is recovered or discarded.";
+export const VIDEO_RECOVERY_NOTICE="This browser holds a saved video request that this version of Studio cannot reopen. Your photos and finished videos are below. Recover or discard the saved request before making a new video.";
 export type UnreadableVideoRequest={raw:string|null;reference:VideoOperationReference|null};
 export type VideoRecovery={journal:VideoJournal|null;unreadable:UnreadableVideoRequest|null};
 function currentRecipe(journal:VideoJournal):boolean {
@@ -45,26 +45,26 @@ type RecoveryStorage=Pick<Storage,"getItem"|"setItem"|"removeItem">;
 export async function resolveUnreadableVideo(services:Pick<StudioServices,"api"|"getSnapshot">,scope:VideoScope,request:UnreadableVideoRequest,storage:RecoveryStorage,signal?:AbortSignal,discard=false):Promise<VideoOperation>{
  assertVideoScope(services,scope,signal);
  const key=videoScopeKey(scope);
- if(!request.raw||!request.reference)throw Error("The saved request has no verifiable operation. Your server videos are available below; contact support to recover this browser request.");
+ if(!request.raw||!request.reference)throw Error("We could not match this saved video request to a video on our side. Your finished videos are below. Contact support to recover this request.");
  const checked=readVideoRecovery({getItem:()=>request.raw},scope).unreadable?.reference;
- if(!checked||checked.input.operation_id!==request.reference.input.operation_id||checked.job_id!==request.reference.job_id)throw Error("The recovery reference does not match this property's saved request.");
+ if(!checked||checked.input.operation_id!==request.reference.input.operation_id||checked.job_id!==request.reference.job_id)throw Error("The recovery details do not match the video saved for this property. Refresh and try again.");
  if(storage.getItem(key)!==request.raw)throw Error("The saved request changed in another window. Reopen this property before recovering it.");
  const verifiedServices={getSnapshot:()=>services.getSnapshot(),api:async(path:string,options:Parameters<StudioServices['api']>[1])=>{
   const raw=await services.api(path,options) as Record<string,unknown>;
-  if(!raw||raw.operation_id!==request.reference!.input.operation_id||raw.listing_id!==scope.listing||raw.selected_library_org_id!==scope.library||raw.org_id!==undefined&&raw.org_id!==scope.org)throw Error("The recovery reply does not identify this exact property and operation. Its request is retained.");
+  if(!raw||raw.operation_id!==request.reference!.input.operation_id||raw.listing_id!==scope.listing||raw.selected_library_org_id!==scope.library||raw.org_id!==undefined&&raw.org_id!==scope.org)throw Error("The answer we got was not for this property's video. Your saved request is kept. Try recovering it again.");
   return raw;
  }};
  const outcome=discard?await abandonVideoOperation(verifiedServices,scope,request.reference,signal):await inspectVideoOperation(verifiedServices,scope,request.reference,signal);
  assertVideoScope(services,scope,signal);
- if(request.reference.job_id&&outcome.job?.job_id!==request.reference.job_id)throw Error("The saved server video could not be confirmed. Its request is retained; retry recovery before creating another video.");
+ if(request.reference.job_id&&outcome.job?.job_id!==request.reference.job_id)throw Error("We could not confirm the saved video. Your request is kept. Try recovering it again before making another video.");
  if(!outcome.job&&!videoClosure(outcome))return outcome;
  if(storage.getItem(key)!==request.raw)throw Error("The saved request changed in another window. Reopen this property before recovering it.");
  const archive=`${key}:recovered:${request.reference.input.operation_id}`;
  const prior=storage.getItem(archive);
- if(prior!==null&&prior!==request.raw)throw Error("A different recovery record already exists. Your saved request is retained; contact support.");
+ if(prior!==null&&prior!==request.raw)throw Error("This video already has a different recovery saved. Your request is kept. Contact support.");
  storage.setItem(archive,request.raw);
- if(storage.getItem(archive)!==request.raw||storage.getItem(key)!==request.raw)throw Error("The original request could not be safely preserved. Retry recovery before creating another video.");
- if(outcome.job){const review=JSON.stringify({operation_id:outcome.job.operation_id,job_id:outcome.job.job_id});storage.setItem(`${key}:recovered-job`,review);if(storage.getItem(`${key}:recovered-job`)!==review)throw Error("The recovered video could not be retained for review. Your original request is preserved.");}
+ if(storage.getItem(archive)!==request.raw||storage.getItem(key)!==request.raw)throw Error("We could not keep a copy of your original request. Try recovering it again before making another video.");
+ if(outcome.job){const review=JSON.stringify({operation_id:outcome.job.operation_id,job_id:outcome.job.job_id});storage.setItem(`${key}:recovered-job`,review);if(storage.getItem(`${key}:recovered-job`)!==review)throw Error("We could not save the recovered video for you to review. Your original request is kept. Try again.");}
  storage.removeItem(key);
  if(storage.getItem(key)!==null)throw Error("The recovered request is still active in this browser. Reopen the property before creating another video.");
  return outcome;

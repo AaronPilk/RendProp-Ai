@@ -9,7 +9,7 @@ const SHA=/^[a-f0-9]{64}$/;const MAX=10*1024**2;
 type ObjectRef={asset_id:string;key:string;bytes:number;sha256:string;mime:string;kind:"original"|"altered";provenance:null|{id:string;original_asset_id:string;disclosure:string}};
 export type GalleryCopy={schema:1;actor_id:string;org_id:string;library_org_id:string;listing_id:string;operation_id:string;source:ObjectRef;destination_asset_id:string|null;complete:boolean;photo:null|{id:string;listing_id:string};download:null|{url:string;expires_at:string}};
 type Journal={schema:1;scope:GalleryScope;sourceId:string;operationId:string;sourceSHA?:string;upload?:UploadJournal};
-const problem=()=>new Error("This saved photo could not be verified. Refresh and resume the same photo.");
+const problem=()=>new Error("We could not check this saved photo. Refresh and continue with the same photo.");
 export function decodeGalleryCopy(value:unknown,scope:GalleryScope,sourceId:string):GalleryCopy{
  if(!value||typeof value!=="object"||Array.isArray(value))throw problem();const r=value as GalleryCopy;
  if(r.schema!==1||r.actor_id!==scope.actor||r.org_id!==scope.org||r.library_org_id!==scope.library||r.listing_id!==scope.listing||!UUID.test(r.operation_id)||r.source?.asset_id!==sourceId||

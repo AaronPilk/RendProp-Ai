@@ -72,8 +72,8 @@ try {
   await expect(trialCard).toContainText("creation window has ended"); await expect(trialCard).toContainText("downloads remain accessible");
   await page.evaluate(value => window.businessFixture.trial({ ...value, photo_edits: { used: 2, cap: 5, remaining: 5 } }), trial);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
-  await expect(page.getByRole("alert")).toContainText("allowance could not be verified");
-  await expect(trialCard).toHaveCount(0); await expect(page.getByText("The plan could not be verified. Refresh before starting new paid work.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("could not check your free trial");
+  await expect(trialCard).toHaveCount(0); await expect(page.getByText("We could not check your plan. Refresh before starting new paid work.", { exact: true })).toBeVisible();
   await page.evaluate(() => { window.businessFixture.trial(null);
     window.businessFixture.activation({ org_id: "22222222-2222-4222-8222-222222222222", available: true, funded: true, authority: "verified_retail" }, "team"); });
   await page.getByRole("button", { name: "Refresh allowance" }).click();
@@ -101,7 +101,7 @@ try {
   await page.evaluate(value => { window.businessFixture.trial(value); window.businessFixture.activation({ org_id: value.org_id, available: false, funded: false, authority: "subscription_activation_unavailable" }, "pro"); }, trial);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
   await expect(pendingCard).toContainText("Recorded trial usage: 2 / 5 photo edits, 1 / 1 walkthroughs and 0 / 1 published listings");
-  await expect(pendingCard).toContainText("new creation is unavailable until service activation succeeds");
+  await expect(pendingCard).toContainText("You can start new work once your plan is switched on");
   await expect(trialCard).toHaveCount(0);
   await page.evaluate(value => { window.businessFixture.trial({ ...value, status: "expired" }); window.businessFixture.activation({ org_id: value.org_id, available: false, funded: false, authority: "subscription_activation_unavailable" }, "free"); }, trial);
   await page.getByRole("button", { name: "Refresh allowance" }).click();
@@ -117,9 +117,9 @@ try {
   for (const bad of [{ ...pending, org_id: "99999999-9999-4999-8999-999999999999" }, { ...pending, available: true }, { ...pending, authority: "verified_retail", available: true, funded: false }]) {
     await page.evaluate(value => window.businessFixture.activation(value, "pro"), bad);
     await page.getByRole("button", { name: "Refresh allowance" }).click();
-    await expect(page.getByRole("alert")).toContainText(/activation.*(?:different workspace|could not be verified)/);
+    await expect(page.getByRole("alert")).toContainText(/plan (?:information belongs to a different workspace|is switched on)/);
     await expect(trialCard).toHaveCount(0); await expect(pendingCard).toHaveCount(0);
-    await expect(page.getByText("The plan could not be verified. Refresh before starting new paid work.", { exact: true })).toBeVisible();
+    await expect(page.getByText("We could not check your plan. Refresh before starting new paid work.", { exact: true })).toBeVisible();
   }
   await page.evaluate(value => { window.businessFixture.trial(null); window.businessFixture.activation(value, "team"); }, { ...pending, authority: "verified_retail", available: true, funded: true });
   await page.getByRole("button", { name: "Refresh allowance" }).click();

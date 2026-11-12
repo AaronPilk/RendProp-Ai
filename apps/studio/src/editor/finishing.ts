@@ -20,7 +20,7 @@ const text = (value: unknown, maximum: number, label: string) => {
 const hash = (value: unknown) => {if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) throw new Error("Missing original media fingerprint."); return value;};
 export function validateAudioSource(value: unknown): AudioSourceRef {
   const row = object(value, "music source"), size = number(row.size, 1, FINISHING_LIMITS.audioBytes, "music bytes"), lastModified = number(row.lastModified, 0, Number.MAX_SAFE_INTEGER, "music date");
-  if (!Number.isSafeInteger(size) || !Number.isSafeInteger(lastModified)) throw new Error("Invalid music file metadata.");
+  if (!Number.isSafeInteger(size) || !Number.isSafeInteger(lastModified)) throw new Error("The music file details could not be read. Choose the music file again.");
   const mime = text(row.mime, 100, "music type");
   if (!["audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav", "audio/wave", "audio/ogg", "audio/webm"].includes(mime)) throw new Error("Choose MP3, M4A, WAV, Ogg or WebM audio.");
   return {name: text(row.name, 255, "music name"), size, lastModified, sha256: hash(row.sha256), duration: number(row.duration, .5, FINISHING_LIMITS.audioSeconds, "music duration"), mime};
@@ -150,7 +150,7 @@ export function decodeSpeechPassages(raw: unknown, words: SpeechWord[], duration
   });
   return value.highlights.map(item => {
     const row = object(item, "speaking suggestion");
-    if (!Array.isArray(row.segmentIds) || !row.segmentIds.length || row.segmentIds.length > 6) throw new Error("Choose a bounded speaking passage.");
+    if (!Array.isArray(row.segmentIds) || !row.segmentIds.length || row.segmentIds.length > 6) throw new Error("Choose a speaking passage of one to six parts.");
     const indices = row.segmentIds.map(id => segments.findIndex(segment => segment.id === id));
     if (indices.some((index, i) => index < 0 || i > 0 && index !== indices[i - 1] + 1)) throw new Error("Suggested speech must be consecutive in the original video.");
     const first = segments[indices[0]], last = segments[indices.at(-1)!];

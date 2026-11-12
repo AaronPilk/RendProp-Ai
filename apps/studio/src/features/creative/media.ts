@@ -18,7 +18,7 @@ export async function prepareImage(
   maximumBytes = AI_PHOTO_PREPARED_BYTES,
 ): Promise<SourceImage> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 64_000 || maximumBytes > AI_PHOTO_PREPARED_BYTES) {
-    throw new Error("Use a bounded photo editing copy.");
+    throw new Error("This photo could not be prepared for editing. Choose the photo again.");
   }
   if (
     !["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
@@ -56,7 +56,7 @@ export async function prepareImage(
       if (longestEdge <= 256) break;
       longestEdge = Math.max(256, Math.floor(longestEdge * .9));
     }
-    throw new Error("The editing copy could not fit safely. Your original photo was not changed.");
+    throw new Error("This photo is too large to prepare for editing. Your original photo was not changed. Use a smaller copy.");
   } finally {
     image.close();
     canvas.width = 0;
@@ -67,7 +67,7 @@ export function editedImage(value: string, mime: string): File {
   if (
     !["image/jpeg", "image/png", "image/webp"].includes(mime) || !value ||
     photoOutputSize(value) === null
-  ) throw new Error("The photo service returned an unreadable image.");
+  ) throw new Error("The edited picture came back damaged and could not be opened. Try the edit again.");
   const raw = atob(value), bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   return new File(

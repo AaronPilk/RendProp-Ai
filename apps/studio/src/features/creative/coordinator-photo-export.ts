@@ -42,7 +42,7 @@ function imageExtension(bytes: Uint8Array): string {
     if (/heic|heix|hevc|hevx/.test(brands)) return "heic";
     if (!/avif|avis/.test(brands) && /mif1|msf1|heif/.test(brands)) return "heif";
   }
-  throw new Error("A saved photo format could not be verified. No replacement image was used.");
+  throw new Error("We could not tell what kind of file one saved photo is, so the download stopped. No other image was used in its place. Try again; if it keeps happening, contact support.");
 }
 async function digest(bytes: Uint8Array) {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>))].map(n => n.toString(16).padStart(2,"0")).join("");
@@ -95,8 +95,8 @@ export async function* coordinatorPhotoParts(input: readonly StudioPhoto[], sign
   const photos = input.map(photo => ({ ...photo }));
   if (!photos.length) throw new Error("Choose uploaded photos for this package.");
   const maxBytes = Math.min(options.maxBytes ?? KIT_MAX_BYTES,KIT_MAX_BYTES), maxEntries = Math.min(options.maxEntries ?? KIT_MAX_ENTRIES,KIT_MAX_ENTRIES);
-  if (maxBytes <= META_RESERVE || maxEntries < 14) throw new Error("The photo package bounds are invalid.");
-  const ids = new Set<string>(); for (const photo of photos) { if (ids.has(photo.id)) throw new Error("A saved photo identity is duplicated."); ids.add(photo.id); }
+  if (maxBytes <= META_RESERVE || maxEntries < 14) throw new Error("Studio could not size this download. Refresh the page and try again.");
+  const ids = new Set<string>(); for (const photo of photos) { if (ids.has(photo.id)) throw new Error("Two saved photos share the same ID, so the download stopped. Refresh and try again; if it keeps happening, contact support."); ids.add(photo.id); }
   let entries: ZipEntry[] = [], records: unknown[] = [], bytes = 0, part = 1, from = 1;
   async function pack(through: number,more: boolean): Promise<CoordinatorPart> {
     check();

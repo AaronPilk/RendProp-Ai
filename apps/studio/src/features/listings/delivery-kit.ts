@@ -87,13 +87,13 @@ export async function loadKit(services: StudioServices, workspace: Workspace, li
   for (const result of creative.filter(row => row.kind === "video")) {
     const label = result.label || "Saved video";
     if (result.state !== "completed" || !result.url || !result.expiresAt || !result.assetId || !result.provenanceId || !result.disclosure.trim() || !result.qcPublishable) {
-      excluded.push(`${label}: completion, disclosure or property-accuracy review is not confirmed.`); continue;
+      excluded.push(`${label}: left out because it is not finished, or its AI-edit label or accuracy check is missing.`); continue;
     }
     const asset = state.assets.find(row => row.id === result.assetId && row.uploaded && row.kind === "video");
-    if (!asset) { excluded.push(`${label}: its saved video asset is unavailable.`); continue; }
+    if (!asset) { excluded.push(`${label}: its saved video file could not be found.`); continue; }
     const identity = `video:${uuid(result.assetId)}`; if (seen.has(identity)) continue; seen.add(identity);
     const url = scoped(result.url, result.expiresAt);
-    if (storageKey(url) !== asset.storage_key) throw new Error("A finished video no longer matches its saved asset. Refresh the materials.");
+    if (storageKey(url) !== asset.storage_key) throw new Error("A finished video no longer matches its saved file. Refresh the materials.");
     // Generated clips have a single source photo; edited reels may combine many
     // sources and must never invent a single "unaltered original" video.
     const originalUrl = result.sourceUrl ? scoped(result.sourceUrl, result.expiresAt) : null;

@@ -2,7 +2,7 @@ import { safeTourLinks, type TourShareProof } from "./share-link";
 /** Generated on this device; the listing URL is never sent to a QR service. */
 export async function createTourQR(slug: string, kind: "branded" | "unbranded" = "branded", resolved?: TourShareProof): Promise<string> {
   const selected = safeTourLinks(slug, resolved);
-  if (!selected) throw new Error("This tour’s link could not be verified.");
+  if (!selected) throw new Error("This tour’s link could not be checked. Refresh and try again.");
   const { default: qrcode } = await import("qrcode-generator");
   const code = qrcode(0, "M"); code.addData(selected[kind]); code.make();
   return code.createSvgTag({ cellSize: 12, margin: 48, scalable: true });

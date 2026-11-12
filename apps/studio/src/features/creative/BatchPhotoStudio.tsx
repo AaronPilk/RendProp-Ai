@@ -108,7 +108,7 @@ export class PhotoBatch {
             preview: `data:${mime};base64,${base64}`, originalAssetId: originalId,
             disclosure: [...inputForEdit(source, choice.edit).disclosures, disclosure].join("\n") };
           entry.state = "ready";
-          if (!entry.result.provenanceId) entry.error = "The preview is ready, but its disclosure could not be saved. Download it; it cannot join the gallery yet.";
+          if (!entry.result.provenanceId) entry.error = "The preview is ready, but its AI-edit label could not be saved, so it cannot be added to the gallery yet. Download it instead.";
         } catch (error) {
           if (this.abort.signal.aborted) throw error;
           this.check();
@@ -118,7 +118,7 @@ export class PhotoBatch {
           const qualityWaiting = ["photo_quality_pending", "photo_quality_hold"].includes(code);
           const qualityClosed = code === "photo_quality_closed";
           entry.state = "failed";
-          entry.error = `${describe(error)}${qualityClosed ? " This operation is closed and remains private. Start a new edit only when you choose; it may use another allowance." : qualityWaiting ? " This saved edit is retained. The remaining photos were stopped while its review is unresolved." : dispatched && !refusal ? " No automatic retry was made. A request with a lost response may still count against your allowance." : " No AI edit was started for this photo."}`;
+          entry.error = `${describe(error)}${qualityClosed ? " This attempt has ended and its result cannot be used. Starting again counts as a new edit." : qualityWaiting ? " Your edit is saved. The other photos were not started; start them again once this one is ready." : dispatched && !refusal ? " We did not try again automatically. If the answer was lost on its way back, this photo may still count as one edit." : " No AI edit was started for this photo."}`;
           const status = (error as { status?: number })?.status;
           if (qualityWaiting || qualityClosed || refusal || [401, 402, 403, 429].includes(status ?? 0)) this.stopped = true;
         }
@@ -206,7 +206,7 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
       const dispatch = (path: string, body: unknown, signal: AbortSignal, extra: Partial<Parameters<StudioServices["api"]>[1]> = {}) => services.api(`/functions/v1/${path}`, { orgId: workspace.org.id, signal, method: "POST", body, ...extra });
       const identity={actor:workspace.user.id,library:workspace.libraryOrgId??workspace.org.id,listing:listing.id};
       const recovered=(saved:{row:SavedPhotoRequest;result:unknown}):RecoveredPhoto=>({retained:true,raw:saved.result,source:saved.row.context.source,originalId:saved.row.context.originalAssetId,key:saved.row.requestKey,choice:{edit:saved.row.context.edit,style:saved.row.context.style,prompt:saved.row.context.prompt}});
-      const assertDispatch=()=>{assertScope();if(batchRef.current?.stopRequested)throw new Error("This batch was stopped. Its saved operations are retained.");};
+      const assertDispatch=()=>{assertScope();if(batchRef.current?.stopRequested)throw new Error("This batch was stopped. Edits that were already sent are saved.");};
       const resume=async(row:SavedPhotoRequest,signal:AbortSignal)=>recovered(await resumePhotoRequest(services,identity,row,assertDispatch,signal));
       const selectedChoice=recovering?.[0]?.context;
       const selected=recovering?recovering.map(row=>({id:row.context.photoId!,listingId:listing.id,url:row.context.source.preview,expiresAt:"",caption:String(JSON.parse(row.requestJSON).label??"Saved photo"),isStaged:false,sort:0} satisfies StudioPhoto)):choices;
@@ -249,7 +249,7 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
   return <section className="creative-card creative-wide batch-photo-studio" aria-label="Edit several photos">
     <h2>One change. Several photos.</h2>
     <p>Choose up to {MAX_BATCH_PHOTOS} photos, apply the same change, then review each result. Originals stay with the property.</p>
-    <p className="batch-photo-status">{allowance ? `${Math.max(0, allowance.cap - allowance.used)} of ${allowance.cap} photo edits remaining in your shared allowance.` : allowanceRead ? "Your allowance could not be refreshed. Each photo uses one edit from the same plan as your iPhone." : "Checking your shared photo allowance…"}</p>
+    <p className="batch-photo-status">{allowance ? `${Math.max(0, allowance.cap - allowance.used)} of ${allowance.cap} photo edits remaining in your shared allowance.` : allowanceRead ? "We could not check how many edits you have left. Each photo uses one edit from the same plan as your iPhone." : "Checking your shared photo allowance…"}</p>
     {error && <p role="alert" className="creative-alert">{error}</p>}
     {!batch ? <>
       <fieldset disabled={!!disabled || !canCreate}><legend>1. Choose one change for these photos</legend><div className="creative-preset-grid">{PRESETS.filter(p => listing.spaceType === "real_estate" || p.id !== "lawn").map(p => <button type="button" key={p.id} aria-pressed={edit === p.id} className={edit === p.id ? "selected" : ""} onClick={() => setEdit(p.id)}>{p.name}</button>)}</div>

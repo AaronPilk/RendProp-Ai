@@ -87,9 +87,9 @@ export function decodeLead(value: unknown): Lead {
 }
 export function decodeClientDelivery(value: unknown): ClientDelivery {
   const r = record(value), state = text(r.state), recipient_email = r.recipient_email === null ? null : text(r.recipient_email);
-  if (!["queued", "sending", "email_sent", "failed", "skipped"].includes(state) || (recipient_email === null ? state !== "skipped" || r.last_attempt_at != null || r.sent_at != null : recipient_email.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(recipient_email))) throw new Error("The client email delivery could not be verified. Refresh your leads.");
+  if (!["queued", "sending", "email_sent", "failed", "skipped"].includes(state) || (recipient_email === null ? state !== "skipped" || r.last_attempt_at != null || r.sent_at != null : recipient_email.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(recipient_email))) throw new Error("We could not read whether the client email was delivered. Refresh your leads.");
   const current_recipient_email = r.current_recipient_email == null ? null : text(r.current_recipient_email);
-  if (current_recipient_email && (current_recipient_email.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(current_recipient_email))) throw new Error("The current client recipient could not be verified.");
+  if (current_recipient_email && (current_recipient_email.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(current_recipient_email))) throw new Error("We could not read who the client email goes to. Refresh your leads.");
   return { state: state as ClientDelivery["state"], recipient_email, client_name: r.client_name === null ? null : text(r.client_name), ...(r.current_recipient_email === undefined ? {} : {current_recipient_email}), ...(r.current_client_name === undefined ? {} : {current_client_name: r.current_client_name === null ? null : text(r.current_client_name)}), last_attempt_at: r.last_attempt_at == null ? null : date(r.last_attempt_at), sent_at: r.sent_at == null ? null : date(r.sent_at), can_resend: boolean(r.can_resend), reason: r.reason == null ? null : text(r.reason) };
 }
 export function decodeLeads(value: unknown): Lead[] { return unique(rows(record(value).leads, 500).map(decodeLead)); }

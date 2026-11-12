@@ -4,7 +4,7 @@ export type PrivateMediaScope = { actor: string; org: string; listing: string | 
 export type PrivateMediaCapability = Required<Omit<PrivateMediaScope,"review">> & {v:1;exp:number;review?:PrivateMediaScope["review"]};
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 export function privateMediaCapability(raw:string,scope:PrivateMediaScope,now=Date.now()):PrivateMediaCapability {
- const fail=():never=>{throw new Error("The private download address does not match this account or saved media. Refresh its library.");};
+ const fail=():never=>{throw new Error("This photo or video link does not belong to this account or home. Refresh to get a new link.");};
  try {
   const u=new URL(raw),m=/^\/private-media\/([A-Za-z0-9_-]+)\.([a-f0-9]{64})$/.exec(u.pathname);
   if(u.origin!=="https://rendprop.com"||u.username||u.password||u.port||u.search||u.hash||!m||u.pathname.length>4096)return fail();

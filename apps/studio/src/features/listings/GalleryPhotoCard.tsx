@@ -27,7 +27,7 @@ export default function GalleryPhotoCard({ photo, preview, index, count, isCover
       {preview && <a href={preview.url} target="_blank" rel="noreferrer">Open photo ↗</a>}
       {onPrepare?<><p className="lw-help">Keep this saved source unchanged and prepare a separate version to review for the listing.</p><button disabled={busy||!canWrite} onClick={onPrepare}>Prepare for listing</button></>:reviewRequired&&<>{preview?.originalUrl&&<a href={preview.originalUrl} target="_blank" rel="noreferrer">Open retained original ↗</a>}<p className="lw-help lw-gallery-review">This photo was edited with AI. Compare it with the original before you use it; you are responsible for what goes on your listing.</p></>}
       {!selectionReady&&<p className="lw-help">Refresh to check which photos are selected for the listing.</p>}
-      {selectionReady&&!usable&&!onPrepare&&<p className="lw-help">This version needs its available original, disclosure and accuracy review before it can be selected.</p>}
+      {selectionReady&&!usable&&!onPrepare&&<p className="lw-help">This version cannot go on the listing yet. Its original photo or its AI-edit label is missing or still being saved. Refresh in a minute; if it stays like this, save the edit again from AI tools.</p>}
       {edit ? <form onSubmit={async event => { event.preventDefault(); if (!changedElsewhere && await onSaveCaption(edit.text, edit.expected)) setEdit(null); }}>
         <label>Photo caption<textarea value={edit.text} maxLength={2000} rows={3} disabled={busy || !canWrite} onChange={event => setEdit({ ...edit, text: event.target.value })} /></label>
         <p className="lw-help">Up to 500 characters. Required AI disclosures are retained when you save.</p>

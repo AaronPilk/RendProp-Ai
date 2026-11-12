@@ -40,7 +40,7 @@ const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==="object"&&
 const sameArray=(v:unknown,expected:readonly string[]):v is string[]=>Array.isArray(v)&&v.length===expected.length&&v.every((item,index)=>item===expected[index]);
 const exactKeys=(v:Record<string,unknown>,keys:readonly string[])=>Object.keys(v).length===keys.length&&keys.every(k=>own(v,k));
 export function decodeProcessorContract(value:unknown):ProcessorContract{
- if(!object(value)||!exactKeys(value,["token","disclosure_revision","processors","profiles"])||value.token!==CONSENT_V2||value.disclosure_revision!==PROCESSOR_DISCLOSURE.disclosure_revision||!sameArray(value.processors,PROCESSOR_DISCLOSURE.processors)||!sameArray(value.profiles,PROCESSOR_DISCLOSURE.profiles))throw new StudioError("processor-contract-unknown","This video's AI processor disclosure is not recognized. Your saved videos remain available; new paid video work is paused.");
+ if(!object(value)||!exactKeys(value,["token","disclosure_revision","processors","profiles"])||value.token!==CONSENT_V2||value.disclosure_revision!==PROCESSOR_DISCLOSURE.disclosure_revision||!sameArray(value.processors,PROCESSOR_DISCLOSURE.processors)||!sameArray(value.profiles,PROCESSOR_DISCLOSURE.profiles))throw new StudioError("processor-contract-unknown","Our notice about the AI services used for video has changed and this version of Studio does not know the new one. Your saved videos are still available. Refresh the page before starting a new video.");
  return{token:CONSENT_V2,disclosure_revision:value.disclosure_revision,processors:[...value.processors],profiles:[...value.profiles]};
 }
 export function knownVideoPermission(contract:ProcessorContract):VideoPermission{
@@ -48,7 +48,7 @@ export function knownVideoPermission(contract:ProcessorContract):VideoPermission
 }
 export function decodeVideoPermission(value:unknown):VideoPermission{
  if(object(value)&&exactKeys(value,["token"])&&value.token===CONSENT_V1)return{token:CONSENT_V1};
- if(!object(value)||!exactKeys(value,["token","disclosure_revision","processors","profiles","copy_sha256"])||value.copy_sha256!==PROCESSOR_DISCLOSURE.copy_sha256)throw new StudioError("saved-processor-permission","The saved request's AI permission is unknown. Recover or discard that same request before choosing new options.");
+ if(!object(value)||!exactKeys(value,["token","disclosure_revision","processors","profiles","copy_sha256"])||value.copy_sha256!==PROCESSOR_DISCLOSURE.copy_sha256)throw new StudioError("saved-processor-permission","We could not tell which AI permission your saved video was started with. Recover or discard that video before choosing new options.");
  const {copy_sha256,...contract}=value;return{...decodeProcessorContract(contract),copy_sha256:copy_sha256 as string};
 }
 export function sameVideoPermission(a:VideoPermission|null|undefined,b:VideoPermission|null|undefined):boolean{
@@ -69,11 +69,11 @@ export function permissionBeforePaidWork(availability:ProcessorAvailability,allo
  const current=availability.kind==="legacy"?{token:CONSENT_V1}as const:knownVideoPermission(availability.contract);
  if(saved){
   const prior=saved.permission===undefined?{token:CONSENT_V1}as const:decodeVideoPermission(saved.permission);
-  if(!sameVideoPermission(prior,current))throw new StudioError("saved-processor-permission","This saved request keeps its original AI permission. Recover its server job, or discard it before allowing a different processor disclosure. No new paid work was started.");
-  if(prior.token===CONSENT_V2&&!sameVideoPermission(allowed,prior))throw new StudioError("processor-permission-required","Allow the reviewed Kie disclosure before resuming this request. Its saved permission and operation stay unchanged.");
+  if(!sameVideoPermission(prior,current))throw new StudioError("saved-processor-permission","Your saved video keeps the AI permission it was started with. Recover it, or discard it before agreeing to a different AI notice. Nothing new was started.");
+  if(prior.token===CONSENT_V2&&!sameVideoPermission(allowed,prior))throw new StudioError("processor-permission-required","Allow AI processing for this video before resuming it. Nothing about the saved video has changed.");
   return prior;
  }
- if(current.token===CONSENT_V2&&!sameVideoPermission(allowed,current))throw new StudioError("processor-permission-required","Review and allow Kie's processing of the selected property photos before paid video work starts.");
+ if(current.token===CONSENT_V2&&!sameVideoPermission(allowed,current))throw new StudioError("processor-permission-required","Read and allow AI processing of the photos you selected before the video starts.");
  return current;
 }
 export function videoPermissionHeaders(permission:VideoPermission){
@@ -103,16 +103,16 @@ export type VideoStopIntent={schema:1;actor:string;org:string;library:string;lis
 const UUID=/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const stopPrefix=(scope:VideoScope)=>`${videoScopeKey(scope)}:processor-stop:`;
 export function saveVideoStop(storage:Pick<Storage,"setItem">,scope:VideoScope,operation:string):VideoStopIntent{
- if(!UUID.test(operation))throw Error("The saved video stop identity is unreadable.");
+ if(!UUID.test(operation))throw Error("We could not read which video you asked to stop. Refresh this property.");
  const intent:VideoStopIntent={schema:1,actor:scope.actor,org:scope.org,library:scope.library,listing:scope.listing,operation_id:operation};
  storage.setItem(`${stopPrefix(scope)}${operation}`,JSON.stringify(intent));return intent;
 }
 export function readVideoStops(storage:Pick<Storage,"getItem"|"key"|"length">,scope:VideoScope):VideoStopIntent[]{
- if(storage.length>10000)throw Error("Saved video stop requests need review before new paid work.");
+ if(storage.length>10000)throw Error("This browser holds too much saved data to check your stop requests. Contact support before starting a new video.");
  const found:VideoStopIntent[]=[];
  for(let index=0;index<storage.length;index++){
   const key=storage.key(index);if(!key?.startsWith(stopPrefix(scope)))continue;
-  try{const v:unknown=JSON.parse(storage.getItem(key)??"null");if(!object(v)||!exactKeys(v,["schema","actor","org","library","listing","operation_id"])||v.schema!==1||v.actor!==scope.actor||v.org!==scope.org||v.library!==scope.library||v.listing!==scope.listing||typeof v.operation_id!=="string"||!UUID.test(v.operation_id)||key!==`${stopPrefix(scope)}${v.operation_id}`)throw Error();found.push(v as VideoStopIntent);}catch{throw Error("A saved video stop request could not be read. No new paid work was started.");}
+  try{const v:unknown=JSON.parse(storage.getItem(key)??"null");if(!object(v)||!exactKeys(v,["schema","actor","org","library","listing","operation_id"])||v.schema!==1||v.actor!==scope.actor||v.org!==scope.org||v.library!==scope.library||v.listing!==scope.listing||typeof v.operation_id!=="string"||!UUID.test(v.operation_id)||key!==`${stopPrefix(scope)}${v.operation_id}`)throw Error();found.push(v as VideoStopIntent);}catch{throw Error("We could not read one of your requests to stop a video. Nothing new was started. Refresh this property.");}
  }
  return found;
 }
@@ -127,8 +127,8 @@ export async function reconcileVideoStop(services:Pick<StudioServices,"api"|"get
  if(job&&!['ready','cancelled'].includes(job.state)){
   const raw=await services.api(`/functions/v1/property-video-jobs/${job.job_id}/cancel`,{orgId:scope.library,expectedLibraryOrgId:scope.library,expectedListingId:scope.listing,method:"POST",body:{},signal});
   assertVideoScope(services,scope,signal);const stopped=decodeJob(raw,scope,intent.operation_id);
-  if(stopped.job_id!==job.job_id||!['ready','cancelled'].includes(stopped.state))throw Error("Stopping this saved video is not confirmed. Its stop request is retained.");job=stopped;
+  if(stopped.job_id!==job.job_id||!['ready','cancelled'].includes(stopped.state))throw Error("We could not confirm this video has stopped. Your request to stop it is kept; try again.");job=stopped;
  }
- if(!job&&!outcome.closed)throw Error("Stopping this saved request is not confirmed.");
+ if(!job&&!outcome.closed)throw Error("We could not confirm this video request has stopped. Try again.");
  storage.removeItem(`${stopPrefix(scope)}${intent.operation_id}`);return job;
 }

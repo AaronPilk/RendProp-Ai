@@ -21,7 +21,7 @@ export type PresenterState = {
 };
 export type Preview = { asset_id: string; url: string; expires_at: string; duration_s?: number };
 export type Action = Record<string, unknown> & { action: string; expected_revision: number };
-export function invalid(): never { throw new Error("Presenter details could not be verified. Reload this property before continuing."); }
+export function invalid(): never { throw new Error("We could not read the Presenter details. Reload this property before continuing."); }
 export function row(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) return invalid(); return value as Record<string, unknown>; }
 export function str(value: unknown, limit: number): string { if (typeof value !== "string" || !value.trim() || value.length > limit) return invalid(); return value; }
 export function rev(value: unknown): number { if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) >= 2147483647) return invalid(); return Number(value); }
