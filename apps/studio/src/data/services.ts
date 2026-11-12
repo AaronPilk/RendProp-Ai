@@ -26,6 +26,16 @@ import {
  * To stop pinning, set this to "". */
 export const EDGE_FUNCTION_REGION = "us-west-2";
 
+/** Plans, trials and credits are changed in the iPhone app; Studio's Workspace
+ * page shows the current plan and links there. A plan refusal keeps this pointer. */
+const PLAN_POINTER = "Review your plan in Workspace.";
+const PLAN_FALLBACK = `Your plan does not cover this right now. ${PLAN_POINTER}`;
+const TRIAL_START_FALLBACK = "We could not start this on your free trial just now. That is a problem on our side, not with your account. Your saved work is unchanged. Try again in a minute, or contact support.";
+/** Server failure text is shown only when it is short customer copy, never a
+ * link, credential or database fragment. */
+const customerCopy = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 400 &&
+  !/https?:|bearer|token|signature|secret|stack|select\s|insert\s/i.test(value);
+
 // Metadata has a separate, measured budget from the editor's media downloads.
 export const MAX_METADATA_BYTES = 2 * 1024 * 1024;
 const READ_PAGE_SIZE = 100;
@@ -470,7 +480,7 @@ export function createStudioServices(
                     : response.status === 404
                       ? "This listing or media is unavailable."
                       : response.status === 409 ? "This item changed on another device. Refresh before saving again."
-                      : response.status === 402 ? "Your current plan has reached its allowance. Review your plan in Workspace."
+                      : response.status === 402 ? PLAN_FALLBACK
                       : response.status === 429 ? "Please wait a moment before trying again."
                       : "Rendprop could not complete this request. Please retry.";
               let failureCode="request-failed";let failureDetails:Record<string,unknown>|undefined;
@@ -495,14 +505,23 @@ export function createStudioServices(
                   failureDetails=feedbackRoute?detail:Object.fromEntries(Object.entries(detail).filter(([key,value])=>
                     ["no_provider_dispatch","retry_existing_job","recovery_protocol_required","operation_closed"].includes(key)&&typeof value==="boolean"
                     ||key==="provider_cost_incurred"&&(typeof value==="boolean"||value==="possible")
-                    ||["check_id","evidence_id"].includes(key)&&typeof value==="string"&&/^[a-f0-9-]{36}$/i.test(value)));
-                  if (response.status === 402 && detail.code === "trial_capacity_unavailable") {
-                    throw new StudioError("trial_capacity_unavailable", "Trial AI is temporarily unavailable. Please try again later or contact support. Your saved work is unchanged.", 402);
-                  }
+                    ||["check_id","evidence_id"].includes(key)&&typeof value==="string"&&/^[a-f0-9-]{36}$/i.test(value)
+                    // The server's own action id and charge fact, for screens that offer a button.
+                    ||key==="next_step"&&typeof value==="string"&&/^[a-z_]{1,32}$/.test(value)
+                    ||key==="charge"&&["not_charged","credit_returned","no_new_charge","charged"].includes(value as string)));
                   // `user_message` is the server's plain-words version of a technical `error`.
                   const shown = typeof detail.user_message === "string" && detail.user_message ? detail.user_message : detail.error;
-                  if (response.status !== 402 && typeof shown === "string" && shown.length <= 400 &&
-                    !/https?:|bearer|token|signature|secret|stack|select\s|insert\s/i.test(shown)) message = shown;
+                  if (response.status === 402) {
+                    // A plan, trial or credit refusal. The shared plain-language layer
+                    // (it always sets `next_step`) says what ran out, whether anything
+                    // was charged and what to do: show that, not a fixed sentence. An
+                    // older or unreadable body keeps the fixed sentence.
+                    const step = typeof detail.next_step === "string" && /^[a-z_]{1,32}$/.test(detail.next_step) ? detail.next_step : null;
+                    const plain = step !== null && customerCopy(shown) ? shown : null;
+                    // Our side could not start the trial: never a reason to send the customer to a plan.
+                    if (detail.code === "trial_capacity_unavailable") throw new StudioError("trial_capacity_unavailable", plain ?? TRIAL_START_FALLBACK, 402, failureDetails);
+                    if (plain) message = (step === "upgrade_plan" || step === "add_credits") && !/\bWorkspace\b/.test(plain) ? `${plain} ${PLAN_POINTER}` : plain;
+                  } else if (customerCopy(shown)) message = shown;
                 } catch (error) {
                   if (error instanceof StudioError && error.code === "trial_capacity_unavailable") throw error;
                   /* Use the stable status message. */

@@ -1124,30 +1124,68 @@ test("mutations keep workspace scope and never replay an ambiguous or unauthoriz
     assert.equal(writes,1);assert.equal(auth.refreshCalls(),0);services.dispose();
   }
 });
-test("trial capacity refusals give retry guidance without blaming the customer's plan", async () => {
+test("a plan refusal the server cannot explain keeps a plain fixed sentence and never shows unsafe text", async () => {
   for (const machineCode of ["trial_capacity_unavailable", "quota_exceeded", undefined]) {
-    const auth = mockAuth(); let writes = 0;
-    const services = createStudioServices(config, { auth: auth.auth, fetch: fakeFetch((url, options) => {
-      if (options.method === "POST") { writes++; return json({ code: machineCode, error: "https://private.invalid/?token=do-not-show" }, 402); }
-      return fixtureResponse(url);
-    }) });
+    // No usable text, or text from a server that predates the plain-language layer (no next_step).
+    for (const body of [{ code: machineCode, error: "https://private.invalid/?token=do-not-show", next_step: "upgrade_plan" }, { code: machineCode, error: "This workspace has no funded serving allowance" }]) {
+      const auth = mockAuth(); let writes = 0;
+      const services = createStudioServices(config, { auth: auth.auth, fetch: fakeFetch((url, options) => {
+        if (options.method === "POST") { writes++; return json(body, 402); }
+        return fixtureResponse(url);
+      }) });
+      try {
+        await services.loadWorkspace();
+        await assert.rejects(services.api("/functions/v1/ai-photo", { orgId: ORG, method: "POST", body: { listing_id: LISTING } }), (error) => {
+          assert(error instanceof StudioError);
+          assert.equal(error.status, 402);
+          assert.doesNotMatch(error.message, /private|token=|funded|serving/);
+          if (machineCode === "trial_capacity_unavailable") {
+            assert.equal(error.code, machineCode);
+            assert.match(error.message, /problem on our side/);
+            assert.match(error.message, /Try again in a minute, or contact support\.$/);
+            // Never the customer's plan, and never a capacity or availability story.
+            assert.doesNotMatch(error.message, /upgrade|plan|allowance|capacity|unavailable|first/i);
+          } else {
+            assert.equal(error.code, "request-failed");
+            assert.equal(error.message, "Your plan does not cover this right now. Review your plan in Workspace.");
+          }
+          return true;
+        });
+        assert.equal(writes, 1);
+      } finally { services.dispose(); }
+    }
+  }
+});
+test("a plan refusal shows the server's plain message and next step, and keeps the plan pointer", async () => {
+  const cases: { body: Record<string, unknown>; message: string; code?: string; details?: Record<string, unknown> }[] = [
+    // The server's sentence, then where a plan is changed.
+    { body: { code: "quota_exceeded", error: "You have used all the AI included in your plan this month. It resets on your next billing date.", next_step: "upgrade_plan" },
+      message: "You have used all the AI included in your plan this month. It resets on your next billing date. Review your plan in Workspace.", details: { next_step: "upgrade_plan" } },
+    // A technical `error` with the server's plain `user_message`: the plain one is shown.
+    { body: { code: "plan_required", error: "The included trial photo edits are exhausted", user_message: "You have used all the photo edits included in your free trial. Choose a plan to keep editing.", next_step: "upgrade_plan", charge: "not_charged" },
+      message: "You have used all the photo edits included in your free trial. Choose a plan to keep editing. Review your plan in Workspace.", details: { next_step: "upgrade_plan", charge: "not_charged" } },
+    { body: { code: "credit_balance_low", error: "Add credits before starting Photo motion.", next_step: "add_credits", operation_closed: false },
+      message: "Add credits before starting Photo motion. Review your plan in Workspace.", details: { next_step: "add_credits", operation_closed: false } },
+    // The pointer is not repeated, and is not added when the next step is not about the plan.
+    { body: { code: "quota_exceeded", error: "Every seat is in use. Open Workspace to free a seat or add one.", next_step: "upgrade_plan" }, message: "Every seat is in use. Open Workspace to free a seat or add one." },
+    { body: { code: "credit_quote_required", error: "This edit uses credits. Review the price shown, then confirm to start. You were not charged.", next_step: "review_price", charge: "not_charged" },
+      message: "This edit uses credits. Review the price shown, then confirm to start. You were not charged.", details: { next_step: "review_price", charge: "not_charged" } },
+    { body: { code: "trial_capacity_unavailable", error: "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on.", next_step: "contact_support" },
+      message: "The free trial can't be started right now. That is a problem on our side, not with your account. Contact support so we can turn it on.", code: "trial_capacity_unavailable" },
+  ];
+  for (const expected of cases) {
+    const auth = mockAuth();
+    const services = createStudioServices(config, { auth: auth.auth, fetch: fakeFetch((url, options) => options.method === "POST" ? json(expected.body, 402) : fixtureResponse(url)) });
     try {
       await services.loadWorkspace();
       await assert.rejects(services.api("/functions/v1/ai-photo", { orgId: ORG, method: "POST", body: { listing_id: LISTING } }), (error) => {
         assert(error instanceof StudioError);
         assert.equal(error.status, 402);
-        assert.doesNotMatch(error.message, /private|token=/);
-        if (machineCode === "trial_capacity_unavailable") {
-          assert.equal(error.code, machineCode);
-          assert.match(error.message, /try again later/i);
-          assert.doesNotMatch(error.message, /upgrade|plan|allowance/i);
-        } else {
-          assert.equal(error.code, "request-failed");
-          assert.match(error.message, /current plan/);
-        }
+        assert.equal(error.message, expected.message);
+        assert.equal(error.code, expected.code ?? "request-failed");
+        if (expected.details) assert.deepEqual(error.details, expected.details);
         return true;
       });
-      assert.equal(writes, 1);
     } finally { services.dispose(); }
   }
 });
