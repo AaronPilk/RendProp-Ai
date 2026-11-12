@@ -29,7 +29,26 @@ async function reconcileCreditJob(job:string){await rpc('credit_photo_motion_rec
 export async function handler(req:Request){try{
  assert(isServiceRole(req),403,'This route is limited to the Rendprop video worker.');const seg=pathSegments(req,'property-video-worker');
  if(req.method==='GET'&&['provider-diagnostic','provider-result-diagnostic'].includes(seg.join('/'))){const p=new URL(req.url).searchParams;assert([...p.keys()].length===2&&p.has('job_id')&&p.has('attempt_id'),400,'Use one exact saved job and attempt.');return json(await providerDiagnostic(uuid(p.get('job_id')),uuid(p.get('attempt_id')),undefined,seg[0]==='provider-result-diagnostic'),200,{'cache-control':'no-store'});}
- if(req.method==='GET'&&seg.join('/')==='queue'){const config=await adminClient().from('app_config').select('value').eq('key','property_video_jobs').maybeSingle();assert(!config.error,503,'Video-worker configuration is unavailable.');const enabled=config.data?.value?.enabled===true;if(!enabled)return json({enabled:false,jobs:[]});await consumeAcceptedResultRetention().catch(()=>{});await releaseCancelledProviderSlots();await rpc('property_video_job_reconcile_stale',{});await rpc('credit_photo_motion_reconcile_all',{p_limit:50}).catch(()=>{});const jobs=await adminClient().from('property_video_jobs').select('id,manifest,quality_profile').in('state',['queued','generating','quality_review','composing']).gt('deadline',new Date().toISOString()).order('created_at').limit(20);assert(!jobs.error,503,'Video jobs could not be listed.');const prep=await adminClient().from('property_video_preparations').select('id').in('state',['queued','preparing']).order('created_at').limit(20);assert(!prep.error,503,'Video source preparations could not be listed.');return json({enabled,jobs:[...(await aerialQueue()),...(prep.data??[]).map(j=>({job_id:j.id})),...(jobs.data??[]).map(j=>({job_id:j.id,...(isPhotoMotion(j)?{source_mode:PHOTO_MOTION_MODE}:{})}))]});}
+ if(req.method==='GET'&&seg.join('/')==='queue'){const config=await adminClient().from('app_config').select('value').eq('key','property_video_jobs').maybeSingle();assert(!config.error,503,'Video-worker configuration is unavailable.');const enabled=config.data?.value?.enabled===true;if(!enabled)return json({enabled:false,jobs:[]});
+  // Every controller wake and cron minute pays for this route, so its
+  // housekeeping runs side by side instead of one call after another. Only real
+  // dependencies keep their order: the three lists (and the credit reconcile)
+  // still follow the stale-lease reconcile, which can end or requeue a job.
+  // The accepted-result directive and the cancelled-slot release touch stopped
+  // and cancelled work only, never a listed job. Everything is still awaited,
+  // and a failure is reported in the same order as before. `prepare` marks a
+  // photo preparation (short CPU work a user is waiting on) so the controller
+  // gives it the first free slot; a controller that ignores the field is unaffected.
+  const retention=consumeAcceptedResultRetention().catch(()=>{}),cancelled=releaseCancelledProviderSlots(),stale=rpc('property_video_job_reconcile_stale',{});
+  const credit=stale.then(()=>rpc('credit_photo_motion_reconcile_all',{p_limit:50}).catch(()=>{}));
+  const listed=stale.then(()=>Promise.all([
+   adminClient().from('property_video_jobs').select('id,manifest,quality_profile').in('state',['queued','generating','quality_review','composing']).gt('deadline',new Date().toISOString()).order('created_at').limit(20),
+   adminClient().from('property_video_preparations').select('id').in('state',['queued','preparing']).order('created_at').limit(20),
+   // A failed aerial read is observed here and rethrown below, after the list checks.
+   aerialQueue().then((rows:any)=>({rows}),(error:unknown)=>({error}))]));
+  const settled=await Promise.allSettled([retention,cancelled,stale,credit,listed]);for(const outcome of settled)if(outcome.status==='rejected')throw outcome.reason;
+  const[jobs,prep,aerial]=await listed;assert(!jobs.error,503,'Video jobs could not be listed.');assert(!prep.error,503,'Video source preparations could not be listed.');if('error'in aerial)throw aerial.error;
+  return json({enabled,jobs:[...aerial.rows,...(prep.data??[]).map((j:any)=>({job_id:j.id,prepare:true})),...(jobs.data??[]).map((j:any)=>({job_id:j.id,...(isPhotoMotion(j)?{source_mode:PHOTO_MOTION_MODE}:{})}))]});}
  if(req.method==='POST'&&seg.length===2&&['aerial-input','aerial-qualify'].includes(seg[0])){const response=await aerialWorker(req,seg,await readJsonLimited<Record<string,any>>(req,2*1024*1024));assert(response,405,'Use an exact aerial callback.');return response;}
  assert(req.method==='POST'&&seg.length===1,405,'Use an explicit video-worker action.');const b=await readJsonLimited<Record<string,any>>(req,seg[0]==='qc'?2*1024*1024:16*1024),job=uuid(b.job_id);
  const preparation=await adminClient().from('property_video_preparations').select('id').eq('id',job).maybeSingle();assert(!preparation.error,503,'Video work identity could not be verified.');if(preparation.data){if(seg[0]==='tick'){assert(b.worker_id==='slot-0'||b.worker_id==='slot-1',400,'Use a dedicated worker slot.');return json(await preparationTick(job));}return await preparationWorker(req,seg[0],b);}

@@ -15,6 +15,8 @@ try {
   const aiImage=config.containers.find(item=>item.class_name==='PropertyVideoCPU').images.cpu.image;
   assert.equal(config.vars.ENABLED,'false');
   assert.equal(config.keep_vars,true);
+  // Every authority call (cron queue reads, ticks, callbacks) runs next to the database.
+  assert.equal(config.vars.EDGE_FUNCTION_REGION,'us-west-2');
   assert.equal(config.vars.CPU_PHOTO_MOTION_IMAGE_URI,photoImage);
   assert.equal(config.vars.CPU_TEMPORAL_PRODUCER_IMAGE_URI,aiImage);
   assert.equal(config.vars.CPU_PHOTO_MOTION_RENDERER_SHA256,'9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9');

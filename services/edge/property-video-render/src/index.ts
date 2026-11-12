@@ -1,7 +1,7 @@
 import{aerialWorkKind,checkedAerialWorkKind,AERIAL_INPUT_PROFILE,AERIAL_QUALIFY_PROFILE,type AerialWorkKind}from'./aerial-processing';
 import {DurableObject,WorkerEntrypoint} from 'cloudflare:workers';
 import type {WorkerAction} from '../../../supabase/functions/property-video-jobs/contracts.ts';
-import {UUID,capabilities,outputCapabilities,egress,isTerminal,sanitizedFailure} from './controller';
+import {UUID,capabilities,outputCapabilities,egress,isTerminal,sanitizedFailure,cpuPollDelay,videoWaitOnly,WAIT_RECHECK_MS,WAIT_QUIET_MS,WAIT_PARK_MS} from './controller';
 import type {SlotState,EgressProps,CPUAction,PrepareImageAction} from './controller';
 import {photoCapabilities,photoOutputCapabilities,checkedPhotoResult,photoFailure,photoPrewarmOnly,photoPollDelay,photoCallbackDelay,PHOTO_PREWARM_HOLD_MS} from './photo-quality';
 import type {PhotoSlotState,PhotoAction} from './photo-quality';
@@ -118,8 +118,8 @@ export class PropertyVideoCPU extends DurableObject<Env> {
   protected photoMotionOnly=false;
   private advancing=false;
   private reconcilingHeld=false;
-  /** In-memory only: the photo capability set this instance last bound. */
-  private photoEgressBound?:string;
+  /** In-memory only: the capability set this instance last bound for its process. */
+  private egressBound?:string;
   constructor(ctx:DurableObjectState,env:Env) {
     super(ctx,env);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS slot (id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL)');
@@ -151,6 +151,29 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     if(!['added-legacy-limits','preserved-versioned-limits'].includes(savedMode)||JSON.stringify(current)!==JSON.stringify(saved))throw new TemporalEnvelopeRefusal();
     const row=this.ctx.storage.sql.exec<{observation:string}>('SELECT observation FROM temporal_attestation WHERE task_id=?',state.taskID).toArray()[0];
     if(row?.observation!==JSON.stringify(state.temporalAttestation))throw new TemporalEnvelopeRefusal();
+  }
+  /** Advisory motion check (owner decision 12 Nov 2026): an unattestable
+   * measurement is an unknown verdict, never a hold. The frames go to the
+   * authority without a report; no verdict is computed, changed or upgraded. */
+  private dropTemporal(state:SlotState):void {
+    if(state.task?.action==='extract_frames')delete (state.task as {temporal_qc?:unknown}).temporal_qc;
+    if(state.pendingCallback?.path==='qc')delete (state.pendingCallback.body as Record<string,unknown>).temporal;
+    state.temporalProducer=undefined;state.temporalAttestation=undefined;state.temporalUnattested=true;this.save(state);
+  }
+  /** What this slot holds, for the dispatcher's admission order. Read-only:
+   * no alarm, lease, process or saved state is touched. */
+  async holder():Promise<{id:string;state:'fresh'|'waiting'|'warm'|'busy';since?:number}|null> {
+    const state=this.read();
+    if(!state)return null;
+    if(!('jobID'in state))return{id:state.checkID,state:photoPrewarmOnly(state)?'warm':'busy'};
+    if(this.waitingIdle(state))return{id:state.jobID,state:'waiting',since:state.waiting.since};
+    return{id:state.jobID,state:state.task||state.taskID||state.pendingCallback||state.photoMotionStartup||state.temporalHold?'busy':'fresh'};
+  }
+  /** A supplier wait may be replaced only between its looks. While its own
+   * look is in flight the alarm turn still owns the saved state, and replacing
+   * it there would let that turn write the old job back over the new owner. */
+  private waitingIdle(state:WorkState|null):state is SlotState&{waiting:{since:number;at:number}} {
+    return !this.advancing&&videoWaitOnly(state);
   }
   private read():WorkState|null {const row=this.ctx.storage.sql.exec<{state:string}>('SELECT state FROM slot WHERE id=1').toArray()[0];return row?JSON.parse(row.state):null;}
   private save(state:WorkState):void {this.ctx.storage.sql.exec('INSERT INTO slot (id,state) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state',JSON.stringify(state));}
@@ -212,6 +235,13 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     // An unused photo warm-up never delays video work: release it (stop()
     // destroys that process, so this job still boots its own fresh one).
     if(photoPrewarmOnly(prior)){await this.stop();prior=null;}
+    if(!this.photoMotionOnly&&videoWaitOnly(prior)){
+      // A supplier wait holds no lease, task or process, so another job takes
+      // the slot at once (between its looks). For the waiting job itself, a
+      // generic wake moments after its own look keeps the scheduled one.
+      if(prior.jobID===jobID){if(Date.now()-prior.waiting.at<WAIT_QUIET_MS)return true;}
+      else if(this.waitingIdle(prior))prior=null;
+    }
     if(prior&&'jobID'in prior&&this.photoMotionOnly&&prior.photoMotionStartup?.held){
       const same=prior.jobID===jobID&&prior.workKind===workKind;
       if(!await this.reconcileHeldTerminal(prior))return same;
@@ -220,16 +250,20 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       prior=this.read();
     }
     if(prior&&'jobID'in prior&&prior.workKind!==workKind)return false;
+    // A hold saved by an earlier controller release is let go on its own alarm.
+    if(prior&&'jobID'in prior&&prior.temporalHold&&prior.jobID!==jobID){await this.ctx.storage.setAlarm(Date.now()+1);return false;}
     if (prior&&('kind'in prior&&prior.kind==='photo_quality'||!('jobID'in prior)||prior.jobID!==jobID)) return false;
     if(prior&&'jobID'in prior&&this.photoMotionOnly&&prior.photoMotionStartup?.held)return true; // no automatic rearm of uncertain startup
-    if(prior&&'jobID'in prior&&prior.temporalHold)return true; // retain ownership without another alarm
     if (!prior) this.save({jobID,slot,token:crypto.randomUUID()+crypto.randomUUID(),...(workKind?{workKind}:{} )});
     await this.ctx.storage.setAlarm(Date.now()+1);
     return true;
   }
   async wakePhoto(checkID:string,slot:'slot-0'|'slot-1'):Promise<boolean> {
     if(this.env.ENABLED!=='true'||!UUID.test(checkID)||!['slot-0','slot-1'].includes(slot))return false;
-    const prior=this.read();
+    let prior=this.read();
+    // A slot that only waits on a video supplier holds nothing and is
+    // available. (The dispatcher offers a free slot first.)
+    if(this.waitingIdle(prior))prior=null;
     if(photoPrewarmOnly(prior)){
       // The warm process has never held a lease, a task or customer bytes, so a
       // ready check may use it instead of waiting for the check it was started
@@ -242,11 +276,13 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(Date.now()+1);return true;
   }
   /** Best effort: start this slot's process while the edit is still generating,
-   * so the comparison does not wait for a cold start. Never displaces anything,
-   * issues no lease and binds no egress; any real work may take the slot. */
+   * so the comparison does not wait for a cold start. Never displaces work (a
+   * slot that only waits on a video supplier holds none), issues no lease and
+   * binds no egress; any real work may take the slot. */
   async prewarmPhoto(checkID:string,slot:'slot-0'|'slot-1'):Promise<boolean> {
     if(this.env.ENABLED!=='true'||!UUID.test(checkID)||!['slot-0','slot-1'].includes(slot))return false;
-    const prior=this.read();
+    let prior=this.read();
+    if(this.waitingIdle(prior))prior=null;
     if(prior){const owner=prior as PhotoSlotState;return owner.kind==='photo_quality'&&owner.checkID===checkID;}
     if(this.ctx.container?.running)return false;
     this.save({kind:'photo_quality',checkID,slot,token:crypto.randomUUID()+crypto.randomUUID(),prewarmUntil:Date.now()+PHOTO_PREWARM_HOLD_MS});
@@ -260,8 +296,45 @@ export class PropertyVideoCPU extends DurableObject<Env> {
   }
   private async stop():Promise<void> {
     if (this.ctx.container?.running) await this.ctx.container.destroy();
+    this.egressBound=undefined;
     this.ctx.storage.sql.exec('DELETE FROM slot WHERE id=1');
     await this.ctx.storage.deleteAlarm();
+  }
+  /** SQL owns the supplier receipt and its polling lease. While a supplier
+   * renders this slot keeps no lease, task or process, and any other work may
+   * take it (wake, wakePhoto, prewarmPhoto). It only remembers to look again at
+   * the function's own re-check cadence instead of at the next cron minute.
+   * After WAIT_PARK_MS of continuous waiting it lets go and cron takes over. */
+  private async park(state:SlotState):Promise<void> {
+    const now=Date.now(),since=state.waiting?.since??now;
+    if(now-since>=WAIT_PARK_MS){await this.stop();return;}
+    if(this.ctx.container?.running)await this.ctx.container.destroy();
+    this.egressBound=undefined;
+    state.waiting={since,at:now};this.save(state);
+    await this.ctx.storage.setAlarm(now+WAIT_RECHECK_MS);
+  }
+  /** A finished job frees this slot between cron minutes. Read the durable
+   * queue once and take the next item now, so a run of short tasks (ten photo
+   * preparations, say) goes back to back instead of two per minute. Called only
+   * after this ownership ran a CPU task, so an idle or already-terminal queue
+   * item cannot loop. SQL claims still decide every action of the next job. */
+  private async continueQueue(done:SlotState):Promise<void> {
+    if(this.photoMotionOnly||this.env.ENABLED!=='true'||!this.env.CPU)return;
+    try{
+      const queue=await bridge(this.env,'queue');
+      const jobs=queue.enabled===true&&Array.isArray(queue.jobs)?queue.jobs.slice(0,32) as Array<{job_id?:unknown;source_mode?:unknown;work_kind?:unknown}|null>:[];
+      const sibling=jobs.length?await this.env.CPU.getByName(done.slot==='slot-0'?'slot-1':'slot-0').holder():null;
+      for(const job of jobs){
+        // Photo Motion and aerial work belong to their own separately budgeted atom.
+        if(!job||typeof job.job_id!=='string'||!UUID.test(job.job_id)||job.source_mode!=null||job.work_kind!==undefined)continue;
+        if(job.job_id===done.jobID||sibling?.id===job.job_id)continue;
+        if(!this.read())this.save({jobID:job.job_id,slot:done.slot,token:crypto.randomUUID()+crypto.randomUUID()});
+        break;
+      }
+    }catch(error){console.warn('property_video_continue_refused',dispatchDiagnostic(error));}
+    // Whoever holds the slot now (the item taken above, or a wake that arrived
+    // while the queue was read) is looked at immediately.
+    if(this.read())await this.ctx.storage.setAlarm(Date.now()+1);
   }
   private async cpu(path:string,body?:unknown):Promise<Record<string,unknown>> {
     const state=this.read();
@@ -371,8 +444,8 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     state.photoMotionStartup!.executeIssued=true;state.photoMotionStartup!.stage='execute';this.save(state);
     const accepted=await this.photoStartupWait(state,'execute',()=>this.cpu('execute',task));
     if(typeof accepted.task_id!=='string'||!/^[0-9a-f]{64}$/.test(accepted.task_id))throw Error('cpu_receipt_invalid');
-    state.taskID=accepted.task_id;state.photoMotionStartup!.stage='accepted';this.save(state);
-    await this.ctx.storage.setAlarm(Date.now()+POLL_MS);
+    state.taskID=accepted.task_id;state.photoMotionStartup!.stage='accepted';state.pollSince=Date.now();this.save(state);
+    await this.ctx.storage.setAlarm(Date.now()+this.pollDelay(state));
   }
   private async stopPhotoStartup(state:SlotState):Promise<boolean> {
     if(!state.photoMotionStartup!.startIssued&&!this.ctx.container?.running)return true;
@@ -417,10 +490,17 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       state.photoMotionImage=state.photoMotionProducer.image_uri;
       state.photoMotionStartedAt=Date.now();this.save(state);
     }
-    // A deployment never retroactively binds an already-running old process.
-    if(temporal&&container.running)throw new TemporalEnvelopeRefusal();
     const startImage=container.images.cpu;
-    const producer=temporal?bindTemporalProducer(state.task as Extract<CPUAction,{action:'extract_frames'}>,this.env.CPU_TEMPORAL_PRODUCER_IMAGE_URI,startImage):undefined;
+    let producer:ReturnType<typeof bindTemporalProducer>|undefined;
+    if(temporal&&'jobID'in state)try{
+      // A deployment never retroactively binds an already-running old process.
+      if(container.running)throw new TemporalEnvelopeRefusal();
+      producer=bindTemporalProducer(state.task as Extract<CPUAction,{action:'extract_frames'}>,this.env.CPU_TEMPORAL_PRODUCER_IMAGE_URI,startImage);
+    }catch(error){
+      // Advisory motion check: a producer that cannot be attested measures
+      // nothing. The same task object is executed, now without the request.
+      if(!(error instanceof TemporalEnvelopeRefusal))throw error;this.dropTemporal(state);
+    }
     if (!container.running) {
       try {container.start({image:startImage,instance:'standard-3',enableInternet:false,
         env:{CONTAINER_TOKEN:state.token,MEDIA_HOSTS:this.env.MEDIA_HOSTS,...(photo&&'jobID'in state?{PHOTO_MOTION_STOP_AT_MS:String(state.photoMotionStartedAt!+CPU_TIMEOUT_MS),PHOTO_MOTION_PRODUCER_IDENTITY:JSON.stringify(state.photoMotionProducer)}:{})},labels:{workload:'property-video'}});}catch(error){throw cpuAPIFailure('start',error);}
@@ -434,6 +514,9 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       try {await container.setInactivityTimeout(60_000);}catch(error){throw cpuAPIFailure('inactivity',error);}
     }
     await this.bindEgress(state.capabilities);
+    // Bound for this process: close status looks do not re-issue the same
+    // interceptor while the task is downloading its inputs.
+    this.egressBound=JSON.stringify(state.capabilities);
     const deadline=Date.now()+COLD_READY_MS;
     let last:unknown;
     while (Date.now()<deadline) {
@@ -452,8 +535,13 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     if(current&&'kind'in current&&current.kind==='photo_quality'){await this.advancePhoto(current);return;}
     let state=current as SlotState|null;
     if (!state) return;
-    if(state.temporalHold){await this.ctx.storage.deleteAlarm();return;}
     if (this.env.ENABLED!=='true') {await this.stop();return;}
+    if(state.temporalHold){
+      // Saved by a controller release from before the motion check became
+      // advisory. Let it go: the retained work continues without a report (a
+      // long-expired lease is then refused by the authority and frees the slot).
+      delete state.temporalHold;this.dropTemporal(state);
+    }
     try {
       if(this.photoMotionOnly&&state.photoMotionStartup?.held){await this.ctx.storage.deleteAlarm();return;}
       if(this.photoMotionOnly&&state.photoMotionTerminal){await this.completePhotoMotion(state);return;}
@@ -478,7 +566,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
             checkedPhotoMotionResult(state.pendingCallback.body,state.task,true);
           }
         }
-        await this.checkedPendingTemporal(state);
+        try{await this.checkedPendingTemporal(state);}catch(error){if(!(error instanceof TemporalEnvelopeRefusal))throw error;this.dropTemporal(state);}
         // The receipt is durable and uploads/extraction are done. An authority
         // outage must not leave an idle CPU billed while callback retries sleep.
         if (this.ctx.container?.running&&!(this.photoMotionOnly&&state.photoMotionStartup?.uncertain)) await this.ctx.container.destroy();
@@ -486,7 +574,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
         if(this.photoMotionOnly&&state.photoMotionStartup?.uncertain){state.photoMotionStartup.held=true;this.save(state);await this.ctx.storage.deleteAlarm();return;}
         state.pendingCallback=undefined;
         state.photoMotionStartup=undefined;state.photoMotionTerminal=undefined;
-        state.task=undefined;state.taskID=undefined;state.outputs=undefined;state.capabilities=undefined;state.startedAt=undefined;state.heartbeatAt=undefined;state.temporalProducer=undefined;state.temporalAttestation=undefined;state.temporalRawResult=undefined;state.photoMotionImage=undefined;state.photoMotionStartedAt=undefined;state.photoMotionProducer=undefined;
+        state.task=undefined;state.taskID=undefined;state.outputs=undefined;state.capabilities=undefined;state.startedAt=undefined;state.heartbeatAt=undefined;state.pollSince=undefined;state.temporalUnattested=undefined;state.temporalProducer=undefined;state.temporalAttestation=undefined;state.temporalRawResult=undefined;state.photoMotionImage=undefined;state.photoMotionStartedAt=undefined;state.photoMotionProducer=undefined;
         this.save(state);
       }
       if (state.taskID&&state.task) {
@@ -506,9 +594,9 @@ export class PropertyVideoCPU extends DurableObject<Env> {
           await this.photoStartupWait(state,'inactivity',()=>this.ctx.container!.setInactivityTimeout(60_000),true,deadline);
           await this.photoStartupWait(state,'egress',()=>this.bindEgress(state!.capabilities!),true,deadline);
           state.photoMotionStartup.stage='accepted';this.save(state);
-        }else await this.bindEgress(state.capabilities!);
+        }else await this.bindEgressOnce(state.capabilities!);
         const status=await this.cpu('status',{task_id:state.taskID});
-        if (status.state==='working') {await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;}
+        if (status.state==='working') {await this.ctx.storage.setAlarm(Date.now()+this.pollDelay(state));return;}
         if (status.state==='failed'||status.state==='missing') throw new CPUFailure('status',status.state==='failed'?'cpu_task_failed':'cpu_task_missing');
         let result=status.result as Record<string,unknown>;
         if (!result||result.job_id!==state.jobID||result.lease_token!==state.task.lease_token) throw Error('cpu_receipt_identity_conflict');
@@ -521,22 +609,30 @@ export class PropertyVideoCPU extends DurableObject<Env> {
           const granted={...output,expires_at:expiresAt};
           state.outputs=granted;
           state.capabilities=outputCapabilities(granted,result,new Set(this.env.MEDIA_HOSTS.split(',')));
+          state.pollSince=Date.now(); // the upload is a new, usually short, wait
           this.save(state);
           if(this.photoMotionOnly&&photoMotionTask(state.task)){
             if(!state.photoMotionStartup)throw Error('photo_motion_startup_binding_refused');
             const deadline=Math.min(Date.now()+COLD_READY_MS,state.photoMotionStartedAt!+CPU_TIMEOUT_MS);
             await this.photoStartupWait(state,'egress',()=>this.bindEgress(state!.capabilities!),true,deadline);
             state.photoMotionStartup.stage='accepted';this.save(state);
-          }else await this.bindEgress(state.capabilities);
+          }else await this.bindEgressOnce(state.capabilities);
           await this.cpu('upload',{task_id:state.taskID,output:granted});
-          await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;
+          await this.ctx.storage.setAlarm(Date.now()+this.pollDelay(state));return;
         }
         if (!(status.state==='inspected'&&state.task.action==='inspect_audio'||status.state==='extracted'&&state.task.action==='extract_frames'||status.state==='uploaded'&&(state.task.action==='compose'||state.task.action==='prepare_image'))) throw Error('cpu_protocol_refused');
         if (state.task.action==='inspect_audio'&&result.manifest_sha256!==state.task.manifest_sha256)throw Error('cpu_manifest_identity_conflict');
         if(state.task.action==='extract_frames'&&state.task.temporal_qc){
           state.temporalRawResult=result;this.save(state); // retain original measurement before any metadata adapter
-          const adapted=await attestTemporalExtract(state.task,result,state.temporalProducer,state.taskID);
-          this.retainTemporalAttestation(adapted.attestation);state.temporalAttestation=adapted.attestation;result=adapted.result;
+          try{
+            const adapted=await attestTemporalExtract(state.task,result,state.temporalProducer,state.taskID);
+            this.retainTemporalAttestation(adapted.attestation);state.temporalAttestation=adapted.attestation;result=adapted.result;
+          }catch(error){
+            // Advisory motion check: an unreadable or unattestable measurement
+            // is an unknown verdict. Send the frames without it and carry on.
+            if(!(error instanceof TemporalEnvelopeRefusal))throw error;
+            const{temporal:_unattested,...frames}=result;result=frames;this.dropTemporal(state);
+          }
         }
         if(photoMotionTask(state.task)){
           // Retain the validated terminal receipt BEFORE any native stop await.
@@ -551,39 +647,46 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       }
       const action=await this.bridgeFor(state,'tick',{job_id:state.jobID,worker_id:state.slot}) as unknown as WorkerAction|PrepareImageAction;
       if (action.job_id!==state.jobID) throw Error('job_identity_conflict');
-      if (isTerminal(action)) {await this.stop();return;}
+      if (isTerminal(action)) {const worked=state.worked===true;await this.stop();if(worked)await this.continueQueue(state);return;}
       if (action.action==='wait') {
         // SQL owns the admitted supplier receipt and its polling lease. An
         // acknowledged idle tick must not reserve a scarce CPU slot while a
-        // supplier renders. Cron will rediscover the same durable job. Keep
+        // supplier renders: the shared class parks (holds nothing, yields to
+        // any other work, looks again in WAIT_RECHECK_MS); the Photo Motion
+        // atom releases and cron rediscovers the same durable job. Keep
         // incomplete local CPU/callback evidence until it is reconciled.
-        if (!state.task&&!state.taskID&&!state.pendingCallback) {await this.stop();return;}
+        if (!state.task&&!state.taskID&&!state.pendingCallback) {if(this.photoMotionOnly)await this.stop();else await this.park(state);return;}
         if (this.ctx.container?.running) await this.ctx.container.destroy();
         await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;
       }
       if (action.action!=='extract_frames'&&action.action!=='compose'&&action.action!=='prepare_image'&&action.action!=='inspect_audio') throw Error('closed_action_required');
       const task=action as CPUAction;
       checkedAerialWorkKind(state.workKind,task);
-      state.task=task;state.startedAt=Date.now();
+      state.task=task;state.startedAt=Date.now();state.worked=true;delete state.waiting;
+      // The tick has just issued this lease: its first renewal is due a minute
+      // from now, not on the first status look. (Photo Motion renews in startup.)
+      if(!this.photoMotionOnly)state.heartbeatAt=state.startedAt;
       state.capabilities=capabilities(task,new Set(this.env.MEDIA_HOSTS.split(',')));
       this.save(state);
       if(this.photoMotionOnly&&photoMotionTask(task)){await this.photoStartup(state,false);return;}
       await this.boot(state);
       const accepted=await this.cpu('execute',action);
       if (typeof accepted.task_id!=='string'||!/^[0-9a-f]{64}$/.test(accepted.task_id)) throw Error('cpu_receipt_invalid');
-      state.taskID=accepted.task_id;this.save(state);
-      await this.ctx.storage.setAlarm(Date.now()+POLL_MS);
+      state.taskID=accepted.task_id;state.pollSince=Date.now();this.save(state);
+      await this.ctx.storage.setAlarm(Date.now()+this.pollDelay(state));
     } catch (error) {
       console.warn('property_video_cpu_refused',cpuDiagnostic(error));
       const startup=this.photoMotionOnly?(this.read() as SlotState|null)?.photoMotionStartup:undefined;
       const observation={...closedDiagnostic(error),...(startup?{startup_stage:startup.stage,startup_elapsed_ms:Math.max(0,Math.min(CPU_TIMEOUT_MS,Date.now()-startup.begunAt)),startup_uncertain:!!startup.uncertain}:{} )};
       this.ctx.storage.sql.exec('INSERT INTO diagnostic (id,observation) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET observation=excluded.observation',JSON.stringify(observation));
+      this.egressBound=undefined;
       if(error instanceof TemporalEnvelopeRefusal){
-        // Keep the unbound/invalid task and original result for reconciliation.
-        // No automatic re-extract, callback upgrade, restart or provider retry.
-        const held=this.read() as SlotState|null;if(held){held.temporalHold=true;this.save(held);}
-        if(this.ctx.container?.running)await this.ctx.container.destroy();
-        await this.ctx.storage.deleteAlarm();return;
+        // Last resort (every known site already handles its own refusal). The
+        // motion check is advisory: never hold the slot. Drop the measurement
+        // once and look again; a second refusal takes the ordinary fenced CPU
+        // failure below. No verdict upgrade, provider retry or paid action.
+        const unattested=this.read() as SlotState|null;
+        if(unattested&&!unattested.temporalUnattested){this.dropTemporal(unattested);await this.ctx.storage.setAlarm(Date.now()+1);return;}
       }
       if(error instanceof AuthorityRefusal&&[403,404,409].includes(error.status)){
         if(this.photoMotionOnly&&state?.photoMotionStartup){
@@ -615,13 +718,14 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       }
     }
   }
-  private async bindPhotoEgress(props:EgressProps):Promise<void> {
+  private async bindEgressOnce(props:EgressProps):Promise<void> {
     // Polls are frequent, so re-issue the interceptor only when the capability
     // set changed or this instance restarted (the marker is not persisted).
     const key=JSON.stringify(props);
-    if(this.photoEgressBound===key)return;
-    await this.bindEgress(props);this.photoEgressBound=key;
+    if(this.egressBound===key)return;
+    await this.bindEgress(props);this.egressBound=key;
   }
+  private pollDelay(state:SlotState):number {return cpuPollDelay(state.pollSince??state.startedAt,Date.now(),POLL_MS,this.photoMotionOnly);}
   /** Start, but do not use, the process a generating edit's check will need. */
   private async prewarmPhotoContainer(state:PhotoSlotState):Promise<void> {
     const container=this.ctx.container;
@@ -670,7 +774,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
           if(current.current!==true){await this.stop();return;}
           state.heartbeatAt=Date.now();this.save(state);
         }
-        await this.bindPhotoEgress(state.capabilities!);
+        await this.bindEgressOnce(state.capabilities!);
         const status=await this.cpu('status',{task_id:state.taskID});
         if(status.state==='working'){await this.ctx.storage.setAlarm(Date.now()+photoPollDelay(state.startedAt,Date.now(),POLL_MS));return;}
         if(status.state==='failed'||status.state==='missing')throw new CPUFailure('status',status.state==='failed'?'cpu_task_failed':'cpu_task_missing');
@@ -678,7 +782,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
         if(status.state==='prepared'){
           const output=await call('derivatives',{check_id:state.checkID,lease_token:state.task.lease_token,manifest:result.manifest});
           state.capabilities=photoOutputCapabilities(output,result,new Set(this.env.MEDIA_HOSTS.split(',')));
-          this.save(state);await this.bindPhotoEgress(state.capabilities);
+          this.save(state);await this.bindEgressOnce(state.capabilities);
           await this.cpu('upload',{task_id:state.taskID,output});
           await this.ctx.storage.setAlarm(Date.now()+photoPollDelay(state.startedAt,Date.now(),POLL_MS));return;
         }
@@ -700,14 +804,14 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       // from now, not on the first status poll.
       state.task=action as unknown as PhotoAction;state.startedAt=Date.now();state.heartbeatAt=state.startedAt;delete state.prewarmUntil;
       state.capabilities=photoCapabilities(state.task,new Set(this.env.MEDIA_HOSTS.split(',')));this.save(state);
-      this.photoEgressBound=undefined;
+      this.egressBound=undefined;
       await this.boot(state);
       const accepted=await this.cpu('execute',action);
       if(typeof accepted.task_id!=='string'||!/^[0-9a-f]{64}$/.test(accepted.task_id))throw Error('cpu_receipt_invalid');
       state.taskID=accepted.task_id;this.save(state);await this.ctx.storage.setAlarm(Date.now()+photoPollDelay(state.startedAt,Date.now(),POLL_MS));
     }catch(error){
       console.warn('photo_quality_cpu_refused',cpuDiagnostic(error));
-      this.photoEgressBound=undefined;
+      this.egressBound=undefined;
       this.ctx.storage.sql.exec('INSERT INTO diagnostic (id,observation) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET observation=excluded.observation',JSON.stringify(closedDiagnostic(error)));
       if(error instanceof AuthorityRefusal&&[403,404,409].includes(error.status)){await this.stop();return;}
       if(state.task&&!state.pendingCallback){
@@ -734,6 +838,64 @@ export class PhotoMotionCPU extends PropertyVideoCPU {
   override async prewarmPhoto(_checkID:string,_slot:'slot-0'|'slot-1'):Promise<boolean>{return false;}
 }
 
+type Holder=Awaited<ReturnType<PropertyVideoCPU['holder']>>;
+const SHARED_SLOTS=['slot-0','slot-1'] as const;
+/** One read of what the two shared CPU atoms hold; it only orders offers. */
+const sharedHolders=(env:Env):Promise<Holder[]>=>Promise.all(SHARED_SLOTS.map(slot=>env.CPU.getByName(slot).holder()));
+/** Offer one item that no shared atom holds. Each atom still decides for
+ * itself; the read above only orders the offers: a slot that already holds the
+ * item first (a photo start or warm-up repeated for the same check), then a
+ * free slot, then one that only waits on a video supplier (it holds nothing;
+ * the longest wait yields first), then, for video, an unused photo warm-up. A
+ * slot this pass has already given or re-armed is not offered again. */
+async function offer(env:Env,id:string,holders:Holder[],kind:'video'|'photo'|'warm'):Promise<boolean> {
+  const call=async(index:number)=>{
+    const slot=SHARED_SLOTS[index],cpu=env.CPU.getByName(slot);
+    const admitted=kind==='video'?await cpu.wake(id,slot):kind==='photo'?await cpu.wakePhoto(id,slot):await cpu.prewarmPhoto(id,slot);
+    if(admitted&&(holders[index]?.id!==id||holders[index]?.state==='waiting'))holders[index]={id,state:kind==='warm'?'warm':'fresh'};
+    return admitted;
+  };
+  const own=holders.flatMap((holder,index)=>holder?.id===id?[index]:[]);
+  let kept=false;for(const index of own)kept=await call(index)||kept;
+  if(kept)return true;
+  // A ready check may use an unused warm-up as it may a free slot (that
+  // process never held a lease or customer bytes); a warm-up displaces none.
+  const rank=(holder:Holder)=>holder===null?0:holder.state==='waiting'?1:holder.state==='warm'?(kind==='photo'?0:kind==='video'?2:3):3;
+  const since=(holder:Holder)=>holder?.since??0;
+  for(const index of [0,1].sort((a,b)=>rank(holders[a])-rank(holders[b])||since(holders[a])-since(holders[b])))if(rank(holders[index])<3&&await call(index))return true;
+  return false;
+}
+/** Give this pass's queued video items their turn on the two shared atoms.
+ * Items that no slot holds go first, so a new job, a resumed job or a photo
+ * preparation starts now even while both slots only wait on suppliers; such a
+ * slot holds nothing, and its job is found again on a later pass. Preparations
+ * (short CPU work a user is waiting on) lead; the rest rotate so that more
+ * waiting jobs than slots still each get their look. Then the jobs that do
+ * hold a slot are re-armed there, never copied onto a second waiting slot. */
+async function offerShared(env:Env,items:Array<{id:string;prepare:boolean}>):Promise<void> {
+  if(!items.length)return;
+  if(!env.CPU)throw Error('cpu_binding_missing');
+  const holders=await sharedHolders(env),seen=[...holders];
+  const holds=(id:string)=>seen.some(holder=>holder?.id===id);
+  const waiting=items.filter(item=>!holds(item.id)),first=waiting.filter(item=>item.prepare),rest=waiting.filter(item=>!item.prepare);
+  const turn=rest.length?Math.floor(Date.now()/WAIT_RECHECK_MS)%rest.length:0;
+  for(const item of [...first,...rest.slice(turn),...rest.slice(0,turn)])await offer(env,item.id,holders,'video');
+  for(const item of items)for(const index of [0,1]){
+    if(seen[index]?.id!==item.id||holders[index]?.id!==item.id)continue; // not its slot, or given away above
+    if(await env.CPU.getByName(SHARED_SLOTS[index]).wake(item.id,SHARED_SLOTS[index])&&holders[index]!.state==='waiting')holders[index]={id:item.id,state:'fresh'};
+  }
+  // Capacity left after every queued item had its turn: while a job's one
+  // holder runs a CPU task, its next clip may be polled or reviewed on a slot
+  // that is still free (never by displacing anything).
+  for(const item of items){
+    const own=seen.filter(holder=>holder?.id===item.id),spare=holders.findIndex(holder=>holder===null);
+    if(spare<0)break;
+    if(own.length!==1||own[0]!.state!=='busy')continue;
+    // A refusal means something else took the slot meanwhile; stop offering it.
+    holders[spare]={id:item.id,state:await env.CPU.getByName(SHARED_SLOTS[spare]).wake(item.id,SHARED_SLOTS[spare])?'fresh':'busy'};
+  }
+}
+
 async function dispatch(env:Env):Promise<void> {
   if (env.ENABLED!=='true') return;
   // A missing configured photo namespace fails before any queue request.
@@ -743,28 +905,36 @@ async function dispatch(env:Env):Promise<void> {
   // Terminal cancellation can remove the queue item before cleanup is deployed.
   // Inspect only the configured object's saved owner, including empty queues.
   const reconciledJob=env.PHOTO_MOTION_CPU?await env.PHOTO_MOTION_CPU.getByName(photoSlot!).reconcileHeldOnly():null;
-  const jobs=queue.jobs.slice(0,32) as Array<{job_id:string;source_mode?:string|null;work_kind?:AerialWorkKind}>;
-  for (const job of jobs) {
-    if (!UUID.test(job.job_id)) continue;
-    if(job.source_mode!=null&&job.source_mode!==PHOTO_MODE)throw Error('source_mode_refused');
-    if(job.work_kind!==undefined&&(job.source_mode!==PHOTO_MODE||!aerialWorkKind(job.work_kind)))throw Error('aerial_work_kind_conflict');
-    if(job.source_mode===PHOTO_MODE&&job.job_id===reconciledJob)continue; // Never rearm the just-reconciled terminal owner.
-    const namespace=job.source_mode===PHOTO_MODE?env.PHOTO_MOTION_CPU:env.CPU;
-    if(!namespace)throw Error('photo_motion_binding_missing');
-    if (await namespace.getByName(job.source_mode===PHOTO_MODE?photoSlot!:'slot-0').wake(job.job_id,'slot-0',job.work_kind)) continue;
-    if(job.source_mode===PHOTO_MODE)continue; // One separately budgeted photo atom.
-    await namespace.getByName('slot-1').wake(job.job_id,'slot-1');
-  }
+  const jobs=queue.jobs.slice(0,32) as Array<{job_id:string;source_mode?:string|null;work_kind?:AerialWorkKind;prepare?:unknown}>;
+  const shared:Array<{id:string;prepare:boolean}>=[];let refusal:unknown;
+  try{
+    for (const job of jobs) {
+      if (!UUID.test(job.job_id)) continue;
+      if(job.source_mode!=null&&job.source_mode!==PHOTO_MODE)throw Error('source_mode_refused');
+      if(job.work_kind!==undefined&&(job.source_mode!==PHOTO_MODE||!aerialWorkKind(job.work_kind)))throw Error('aerial_work_kind_conflict');
+      if(job.source_mode===PHOTO_MODE&&job.job_id===reconciledJob)continue; // Never rearm the just-reconciled terminal owner.
+      if(job.source_mode===PHOTO_MODE){
+        if(!env.PHOTO_MOTION_CPU)throw Error('photo_motion_binding_missing');
+        await env.PHOTO_MOTION_CPU.getByName(photoSlot!).wake(job.job_id,'slot-0',job.work_kind); // One separately budgeted photo atom.
+        continue;
+      }
+      if(!shared.some(item=>item.id===job.job_id))shared.push({id:job.job_id,prepare:job.prepare===true});
+    }
+  }catch(error){refusal=error;}
+  // As before, a refused row stops the pass but the rows listed ahead of it still get their turn.
+  await offerShared(env,shared);
+  if(refusal)throw refusal;
 }
 
 async function dispatchPhoto(env:Env):Promise<void>{
   if(env.ENABLED!=='true')return;
   const queue=await bridge(env,'queue',undefined,'photo');
   if(queue.enabled!==true||!Array.isArray(queue.checks))return;
+  let holders:Holder[]|undefined;
   for(const item of queue.checks.slice(0,32) as Array<{check_id:string}>){
     if(!UUID.test(item.check_id))continue;
-    if(await env.CPU.getByName('slot-0').wakePhoto(item.check_id,'slot-0'))continue;
-    await env.CPU.getByName('slot-1').wakePhoto(item.check_id,'slot-1');
+    if(!holders)holders=await sharedHolders(env);
+    await offer(env,item.check_id,holders,'photo');
   }
   // Judges use the existing service-only Edge route, not a CPU/container atom.
   // A lost reply never causes a local retry: the SQL funding/bind journal owns
@@ -799,13 +969,13 @@ export default {
       // refusal is normal (both slots busy) and changes nothing for the check.
       const body=await photoStartBody(request);if(!body)return json({error:'bounded_check_required'},400);
       const checkID=body.check_id;
-      const accepted=await env.CPU.getByName('slot-0').prewarmPhoto(checkID,'slot-0')||await env.CPU.getByName('slot-1').prewarmPhoto(checkID,'slot-1');
+      const accepted=await offer(env,checkID,await sharedHolders(env),'warm');
       return json({accepted,check_id:checkID},accepted?202:200);
     }
     if(photoStart){
       const body=await photoStartBody(request);if(!body)return json({error:'bounded_check_required'},400);
       const checkID=body.check_id;
-      const accepted=await env.CPU.getByName('slot-0').wakePhoto(checkID,'slot-0')||await env.CPU.getByName('slot-1').wakePhoto(checkID,'slot-1');
+      const accepted=await offer(env,checkID,await sharedHolders(env),'photo');
       return json(accepted?{accepted:true,check_id:checkID}:{accepted:false,check_id:checkID},accepted?202:503);
     }
     ctx.waitUntil(dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))));
