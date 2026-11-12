@@ -26,7 +26,18 @@ export interface PhotoEvidence {
 }
 export interface PhotoQualityCheck {id:string;evidence_id:string;policy:string;state:string;lease_token:string|null;lease_until:string|null;judge_started_at:string|null;finished_at?:string|null;derivatives:PhotoDerivative[]|null;derivative_manifest_sha256:string|null;result?:unknown}
 export interface PhotoDerivative extends PhotoEvidenceFile {role:"source"|"candidate";region:"whole"|"tl"|"tr"|"bl"|"br";etag:string}
-export interface PhotoQualityEnvelope {evidence:PhotoEvidence;check:PhotoQualityCheck;can_continue:boolean;created?:boolean}
+/** Delivery record written by photo_quality_release, which also accepts the
+ * edit. `review` is the advisory check's outcome once it closes; it never
+ * gates anything. */
+export interface PhotoRelease {released_at:string;output_sha256:string;facts?:Record<string,unknown>|null;review?:Record<string,unknown>|null;review_closed_at?:string|null}
+export interface PhotoQualityEnvelope {evidence:PhotoEvidence;check:PhotoQualityCheck;can_continue:boolean;created?:boolean;release?:PhotoRelease|null}
+/** True only for a prospective edit whose release names its exact retained
+ * candidate. A release of other bytes, or of calibration evidence, is nothing. */
+export function photoReleased(row:PhotoQualityEnvelope):boolean{
+ const r=row.release,e=row.evidence;
+ return !!r&&typeof r==="object"&&typeof r.released_at==="string"&&Number.isFinite(Date.parse(r.released_at))&&photoSHA(r.output_sha256)
+  &&e.purpose!=="calibration"&&!!e.output&&r.output_sha256===e.output.sha256&&!!e.output_etag&&!!e.provenance_id;
+}
 export const photoUUID=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(v);
 export const photoSHA=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{64}$/.test(v);
 export async function photoBytesHash(bytes:Uint8Array<ArrayBuffer>):Promise<string>{return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");}
@@ -115,30 +126,100 @@ export async function retainPhotoCandidate(admin:PhotoAdmin,row:PhotoQualityEnve
  const e=await photoQualityRpc(admin,"photo_quality_evidence_reserve",{p_actor:row.evidence.actor_id,p_evidence:row.evidence.id,p_output:output});
  return await persistEvidence(admin,photoEnvelope({...row,evidence:e},e.actor_id),"output",bytes,io);
 }
+/** Deliver and accept the retained, decodable candidate before the advisory
+ * check finishes (owner decision 12 Nov 2026). SQL writes the delivery
+ * receipts, sets the edit to accepted and marks its disclosure record
+ * publishable, so it can be used on the listing at once; the check closes on
+ * its own row afterwards. Any refusal, missing migration or disabled switch
+ * returns null, and the caller keeps the previous wait path. Never throws. */
+export async function releasePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope,facts:Record<string,unknown>):Promise<PhotoQualityEnvelope|null>{
+ const e=row.evidence;
+ if(e.purpose==="calibration"||!e.output||!e.output_etag||!e.provenance_id)return null;
+ try{
+  // Operator switch, no deploy needed: app_config photo_quality.early_release=false.
+  const config=await admin.from("app_config").select("value").eq("key","photo_quality").maybeSingle();
+  if(config.error||config.data?.value?.early_release===false)return null;
+  const released=photoEnvelope(await photoQualityRpc(admin,"photo_quality_release",{p_actor:e.actor_id,p_evidence:e.id,p_facts:facts}),e.actor_id);
+  return released.evidence.id===e.id&&released.check.id===row.check.id&&released.evidence.output?.sha256===e.output.sha256&&photoReleased(released)?released:null;
+ }catch(error){
+  console.error(JSON.stringify({event:"photo_early_release_unavailable",evidence_id:e.id,status:error instanceof HttpError?error.status:null,code:error instanceof HttpError?error.code:"unknown"}));
+  return null;
+ }
+}
 export async function failPhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope,phase:string,facts:Record<string,unknown>):Promise<PhotoQualityEnvelope>{
  const e=row.evidence;return photoEnvelope(await photoQualityRpc(admin,"photo_quality_failure",{p_actor:e.actor_id,p_evidence:e.id,p_phase:phase,p_facts:facts}),e.actor_id);
 }
 export function photoQualityIdentity(row:PhotoQualityEnvelope,selected:string):Record<string,unknown>{const e=row.evidence;return{check_id:row.check.id,evidence_id:e.id,org_id:e.org_id,selected_library_org_id:selected,listing_id:e.listing_id,generation_request_key:e.request_key};}
+/** Plain-language reason for a closed edit, by the phase that ended it. */
+export function photoClosedMessage(phase:string|undefined,hasOutput:boolean):string{
+ const again=" Your original photo is unchanged.";
+ if(phase==="generation"&&!hasOutput)return"The edit service did not send back an image, so nothing was saved and this edit was not counted."+again+" Tap the edit again to retry.";
+ if(phase==="photo_provider_wire_size")return"The edit service sent back more data than we can safely receive, so no image was saved."+again+" Try the edit again; it may use another edit from your allowance.";
+ if(phase==="photo_output_size")return"The edited photo came back larger than 25 MB, which is more than we can save."+again+" Try the edit again; it uses another edit from your allowance.";
+ if(phase==="photo_output_validation")return"The edit service sent back a file that is not a readable photo, so it could not be saved."+again+" Try the edit again; it uses another edit from your allowance.";
+ if(phase==="photo_output_geometry")return"The edited photo came back too small to use, so it was not delivered."+again+" Try the edit again; it uses another edit from your allowance.";
+ if(phase==="evidence_persistence")return"The edited photo could not be saved to storage, so it was not delivered."+again+" Try the edit again; it uses another edit from your allowance.";
+ if(phase==="prepared_source_persistence"||phase==="recipe_recording")return"We could not save the photo you sent before editing it, so no edit was started or counted."+again+" Try the edit again.";
+ return"This edit did not finish and its result was not saved."+again+" You can start the edit again; it may use another edit from your allowance.";
+}
 export function throwPhotoQualityState(row:PhotoQualityEnvelope,selected:string):never{
  const state=row.check.state,failure=row.evidence.failure,cost=failure?.facts?.provider_cost_incurred,details={...photoQualityIdentity(row,selected),photo_quality:{policy:row.evidence.policy,check_id:row.check.id,state},retry_existing_job:true,...(failure?.phase?{failure_phase:failure.phase}:{}),...(typeof cost==="boolean"||cost==="possible"?{provider_cost_incurred:cost,retained_output:failure?.facts?.retained_output===true}:{})};
  // A terminal HOLD is immutable, but must not lock the source's local edit
  // slot forever. Active/unknown/inconsistent rows keep their same operation.
  const finished=row.check.finished_at;
  if(state==="hold"&&row.evidence.state==="hold"&&typeof finished==="string"&&Number.isFinite(Date.parse(finished)))
-  throw new HttpError(422,"This edit could not be confirmed and remains private. Your original is unchanged. You can start a new edit; it may use another edit from your allowance.","photo_quality_closed",{...details,operation_closed:true,retry_existing_job:false});
+  // Say exactly what happened and what to do next, in plain words (owner
+  // decision 12 Nov 2026). Only technical failures reach this point: a check
+  // outcome no longer closes an edit.
+  throw new HttpError(422,photoClosedMessage(failure?.phase,!!row.evidence.output),"photo_quality_closed",{...details,operation_closed:true,retry_existing_job:false,...(failure?.phase==="generation"&&!row.evidence.output?{retryable:true}:{})});
  if(state==="refuse")throw new HttpError(422,"This edit changed fixed property features or failed the photo quality review. The original is unchanged; the generated edit remains private.","photo_quality_refused",details);
  if(state==="hold"||state==="checking"&&row.check.judge_started_at!==null)throw new HttpError(409,failure?.phase==="photo_output_size"?"The generated photo exceeded the safe output limit and could not be saved. This generation was already processed. The original is unchanged; no additional edit was started.":failure?.phase==="photo_provider_wire_size"?"The supplier response exceeded the safe transfer limit and could not be confirmed. This operation remains under review; no additional edit was started.":"The saved photo operation needs review before its edit can be used. No new edit or repeat quality check was started.","photo_quality_hold",details);
  throw new HttpError(409,"The edit is saved privately while its photo quality review is pending. Check this saved edit again; no new generation is needed.","photo_quality_pending",details);
 }
-/** Called only after fresh SQL/current-library authority and atomic acceptance.
- * The exact accepted object is re-hashed; a cached/signed URL is never authority. */
+/** The honest review state sent beside a delivered image. An accepted,
+ * never-released edit keeps the exact legacy shape. A released edit is
+ * accepted and publishable at once; `review` says where its advisory check
+ * stands: "pending", "recorded" (a verdict was saved) or "unavailable". */
+export function photoQualityFacts(row:PhotoQualityEnvelope):Record<string,unknown>{
+ const e=row.evidence,accepted=e.state==="accept";
+ if(!photoReleased(row))return{policy:e.policy,check_id:row.check.id,state:"accept"};
+ const geometry=row.release?.facts?.geometry as Record<string,unknown>|undefined;
+ const open=["pending","preparing","derivative_ready","checking"].includes(row.check.state);
+ const saved=row.release?.review?.review,result=row.check.result as {action?:unknown}|null|undefined;
+ const review=typeof saved==="string"?saved:open?"pending":result?.action==="accept"&&e.failure?.facts?.quality_review!=="unavailable"?"recorded":"unavailable";
+ return{policy:e.policy,check_id:row.check.id,state:accepted?"accept":e.state,check_state:row.check.state,advisory:true,delivery:"released",publishable:accepted,review,
+  ...(e.failure?.phase&&!accepted?{failure_phase:e.failure.phase}:{}),
+  ...(geometry&&geometry.meets_request===false?{resolution:{requested:geometry.requested??null,width:geometry.width??null,height:geometry.height??null,meets_request:false}}:{})};
+}
+export const PHOTO_CHECK_STALLED_MS=5*60_000;
+export const PHOTO_CHECK_UNSTARTED_MS=10*60_000;
+/** Status-path half of the reaper (the controller queue runs the other half
+ * every minute). A check whose judge started long ago without reporting, or
+ * that never got a comparison, must not strand its edit: SQL closes it as
+ * "review unavailable" and the edit becomes ordinary accepted media. The
+ * thresholds are re-checked in SQL; this only avoids a needless call. Never
+ * throws, never starts a comparison, a judge or a generation. */
+export async function settleStalePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope,actor:string,selected:string|null,now=Date.now()):Promise<PhotoQualityEnvelope>{
+ const e=row.evidence,q=row.check as PhotoQualityCheck&{created_at?:string|null};
+ if(e.purpose==="calibration"||!e.output_etag||!e.provenance_id||!["evidence_ready","checking","accept"].includes(e.state))return row;
+ const started=typeof q.judge_started_at==="string"?Date.parse(q.judge_started_at):NaN,created=typeof q.created_at==="string"?Date.parse(q.created_at):NaN;
+ const stalled=q.state==="checking"&&Number.isFinite(started)&&now-started>PHOTO_CHECK_STALLED_MS;
+ const unstarted=["pending","preparing","derivative_ready"].includes(q.state)&&q.judge_started_at===null&&Number.isFinite(created)&&now-created>PHOTO_CHECK_UNSTARTED_MS;
+ if(!stalled&&!unstarted)return row;
+ try{await photoQualityRpc(admin,"photo_quality_reap",{p_evidence:e.id,p_limit:1});return await statusPhotoQuality(admin,actor,row.check.id,selected);}
+ catch{return row;}
+}
+/** Called only after fresh SQL/current-library authority and either atomic
+ * acceptance or a recorded private release of these exact bytes.
+ * The exact object is re-hashed; a cached/signed URL is never authority. */
 export async function photoQualityResponse(admin:PhotoAdmin,row:PhotoQualityEnvelope,actor:string,selected:string|null,extra:Record<string,unknown>={},io=photoEvidenceIO,inline?:{imageB64:string;key:string;mime:string;sha256:string;bytes:number}):Promise<Response>{
  await photoQualityScope(admin,row,actor,selected);assert(selected,404,"Select the saved edit's library.","not_found");
  if(row.evidence.purpose==="calibration"){
   if(!["accept","refuse","hold"].includes(row.check.state))throwPhotoQualityState(row,selected);
   return json({...photoQualityIdentity(row,selected),purpose:"calibration",publishable:false,photo_quality:{policy:row.evidence.policy,check_id:row.check.id,state:row.check.state},result:row.check.result??null});
  }
- if(row.check.state!=="accept"||row.evidence.state!=="accept")throwPhotoQualityState(row,selected);
+ row=await settleStalePhotoQuality(admin,row,actor,selected);
+ if((row.check.state!=="accept"||row.evidence.state!=="accept")&&!photoReleased(row))throwPhotoQualityState(row,selected);
  const e=row.evidence,file=e.output;assert(file&&e.provenance_id&&e.output_etag,503,"The accepted photo receipt is incomplete.");assertPhotoEvidenceFile(e,file,"output");
  const {data,error}=await admin.from("private_ai_outputs").select("org_id,user_id,listing_id,bucket,storage_key,bytes").eq("org_id",e.org_id).eq("user_id",actor).eq("bucket","renders").eq("storage_key",file.key).maybeSingle();
  assert(!error&&data&&data.org_id===e.org_id&&data.user_id===actor&&data.listing_id===e.listing_id&&data.bucket==="renders"&&data.storage_key===file.key&&Number(data.bytes)===file.bytes,503,"The accepted photo delivery receipt could not be verified.");
@@ -151,7 +232,7 @@ export async function photoQualityResponse(admin:PhotoAdmin,row:PhotoQualityEnve
   imageB64=inline.imageB64;
  }else{const bytes=await io.read(file.key,file.bytes);assert(await photoBytesHash(bytes)===file.sha256,503,"The accepted photo bytes changed.");imageB64=bytesToB64(bytes);}
  const fresh=await statusPhotoQuality(admin,actor,row.check.id,selected);
- assert(fresh.check.state==="accept"&&fresh.evidence.state==="accept"&&fresh.evidence.output?.sha256===file.sha256&&fresh.evidence.output?.key===file.key,409,"The photo quality review changed. Check its status again.","conflict");
+ assert((fresh.check.state==="accept"&&fresh.evidence.state==="accept"||photoReleased(fresh))&&fresh.check.id===row.check.id&&fresh.evidence.id===e.id&&fresh.evidence.output?.sha256===file.sha256&&fresh.evidence.output?.key===file.key,409,"The photo quality review changed. Check its status again.","conflict");
  const kind=e.edit==="stage"?"virtual_stage":e.edit==="declutter"?"declutter":"photo_edit";
- return photoJsonResponse({...extra,...photoQualityIdentity(fresh,selected),edit:e.edit,...(e.style?{style:e.style}:{}),disclosure:disclosureFallback(kind,e.edit),provenance:{id:e.provenance_id,recorded:true},photo_quality:{policy:e.policy,check_id:fresh.check.id,state:"accept"}},imageB64,file.mime,file.key);
+ return photoJsonResponse({...extra,...photoQualityIdentity(fresh,selected),edit:e.edit,...(e.style?{style:e.style}:{}),disclosure:disclosureFallback(kind,e.edit),provenance:{id:e.provenance_id,recorded:true},photo_quality:photoQualityFacts(fresh)},imageB64,file.mime,file.key);
 }

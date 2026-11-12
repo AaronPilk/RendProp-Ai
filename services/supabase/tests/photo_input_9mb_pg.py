@@ -46,7 +46,7 @@ try:
   ('calibration-9mb','photo_quality_calibration_begin(uuid,uuid,text,text,uuid,text,text,uuid,jsonb,jsonb)',"(p_input->>'bytes')::bigint>9000000","(p_input->>'bytes')::bigint>99999999",'calibration one byte above9MB refused'),
   ('quarantine','photo_quality_private_output_guard()',"if(new.storage_key like'ai-router/%/photo-evidence/%'", "if(false and new.storage_key like'ai-router/%/photo-evidence/%'", 'pending evidence cannot bypass ordinary registry'),
   ('legacy-quarantine','photo_quality_private_output_guard()',"or exists(select 1 from public.photo_edit_evidence e where e.legacy_keys?new.storage_key)", "", 'pending evidence cannot bypass legacy pointerless fallback'),
-  ('settled-qc','photo_quality_finish(uuid,uuid,uuid,jsonb)',"and r.id is not null and l.id is not null", "and true", 'passing text without settled paid QC receipt is held'),
+  ('settled-qc','photo_quality_finish(uuid,uuid,uuid,jsonb)',"and r.id is not null and l.id is not null", "and true", 'passing text without settled paid QC receipt is delivered but never recorded as a review'),
   ('paired-crops','photo_quality_derivatives_reserve(uuid,uuid,jsonb)',"if v->'crop'is distinct from crop or", "if false or", 'quadrant crop gap is refused'),
   ('calibration-replay-isolation','photo_quality_lookup(uuid,uuid,text)',"and e.purpose='prospective'", "", 'ordinarysaved2Klookup ignorescalibrationjournal'),
   ('calibration-nonpromotion','photo_quality_private_output_guard()',"and e.purpose='prospective'", "", 'passingcalibrationcannotbypassdeliverableregistry')]:

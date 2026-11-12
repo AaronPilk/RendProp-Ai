@@ -279,7 +279,10 @@ class InventoryTests(RunnerCase):
             '20261106230302_workspace_directory_candidate_orgs_20261107.sql',
             '20261106231733_photo_quality_advisory_judge_20261107.sql',
         }
-        self.assertEqual(len(guarded) - 4 - len(performance_migrations), 39)
+        release_migrations = {'20261112193000_photo_quality_early_release.sql',
+                              '20261112220000_photo_motion_advisory_photo_verdict.sql'}
+        self.assertEqual(len(guarded) - 4 - len(performance_migrations) - len(release_migrations), 39)
+        self.assertLessEqual(release_migrations, set(guarded))
         self.assertIn(reviewer_migration, guarded)
         self.assertIn(declutter_migration, guarded)
         self.assertLessEqual(publication_migrations, set(guarded))

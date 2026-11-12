@@ -86,7 +86,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {DECLUTTER_ASSESSMENT_PROTOCOL,DECLUTTER_ASSESSMENT_INSTRUCTION,parseDeclutterAssessment,unavailableDeclutterAssessment} from ${url("./declutter-assessment.ts")};
  import {decodeBase64Bytes} from ${url("../_shared/base64-bytes.ts")};
  import {PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from ${url("./photo-qc-wait.ts")};
- import {preparePhoto2KInput,photo2KChain,assertPhoto2KGeometry,assertPhotoPro4KGeometry} from ${url("./photo-quality.ts")};
+ import {preparePhoto2KInput,photo2KChain,assertPhoto2KGeometry,assertPhotoPro4KGeometry,deliverableOffSizePhoto} from ${url("./photo-quality.ts")};
  import {normalPhotoQualityProfile as actualNormalProfile,normalPhotoQualityRoutes as actualNormalRoutes,prepareNormalPhotoPro4KInput,priceNormalPhotoQualityRoute} from ${url("./normal-photo-quality.ts")};
  import {orderSteps} from ${url("../_shared/router.ts")};
  const normalPhotoQualityProfile=(task,masked)=>actualNormalProfile(task,masked,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>{state.normalLookups=(state.normalLookups??0)+1;return{data:{value:state.normalWithdraw&&state.normalLookups>1?{enabled:false}:state.normalProfile??null},error:null};}})})})});
@@ -113,6 +113,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import * as actualQualityStore from ${url("./photo-qc-store.ts")};
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
  import {recordPhotoRecipe} from ${url("./photo-recipe.ts")};
+ import {photoGenerationRetryable} from ${url("./photo-retry.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
  const actualEvidence=${actualEvidence};
  export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,assessmentAdmissions:0,assessmentQuota:false,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0,recipes:[],events:[],recipeFail:false,noDispatch:0};
@@ -202,17 +203,28 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  };
  const retainPhotoCandidate=actualEvidence?actualQualityStore.retainPhotoCandidate:async(_admin,row,decoded)=>{
   row.saved=await persistOwnedPhotoResult(admin,row.identity,{status:"done",mime:decoded.mime,result_url:"data:"+decoded.mime+";base64,"+state.output},undefined,decoded.data);
-  row.evidence.output_etag="synthetic-confirmed";
+  row.evidence.output_etag="synthetic-confirmed";row.evidence.provenance_id="synthetic-provenance";
   row.evidence.output={key:row.saved.key,mime:decoded.mime,bytes:decoded.bytes,sha256:"a".repeat(64)};
   row.check.state=state.qualityPending?"pending":"accept";return row;
  };
  const failPhotoQuality=actualEvidence?actualQualityStore.failPhotoQuality:async(_admin,row,phase,facts)=>{row.check.state="hold";row.failure={phase,facts};return row;};
  const continuePhotoQuality=async(_admin,row)=>row;
  const waitForPhotoQuality=async(...args)=>{state.waits=(state.waits??0)+1;state.waitDeadline=args[2].deadline;state.waitRemaining=args[2].deadline-Date.now();return await continuePhotoQuality(...args);};
+ // Early private release is off unless a test opts in, so every pre-existing
+ // case keeps exercising the unchanged wait-for-the-check path. The opt-in
+ // models SQL: only a retained candidate with its disclosure can be released.
+ const photoComparisonClient={}; // no warm-up helper in this harness; the hook must be a no-op
+ const photoReleased=row=>!!row?.release;
+ const releasePhotoQuality=async(_admin,row,facts)=>{
+  state.releaseCalls=(state.releaseCalls??0)+1;state.releaseFacts=facts;
+  if(!state.earlyRelease||!row.evidence?.output_etag)return null;
+  row.release={released_at:new Date().toISOString(),output_sha256:row.evidence.output?.sha256??"a".repeat(64),facts};return row;
+ };
+ const continuePhotoQualityAfterResponse=(_admin,_row,args)=>{state.backgroundChecks=(state.backgroundChecks??0)+1;state.backgroundDeadline=args.deadline;};
  const calibrationRequest=body=>body;
  const beginPhotoCalibration=async()=>{state.calibrationCalls=(state.calibrationCalls??0)+1;return{evidence:{id:"synthetic-calibration"},check:{state:"pending"}};};
  const photoQualityResponse=actualEvidence?actualQualityStore.photoQualityResponse:async(_admin,row)=>{
-  if(row.check.state!=="accept")throw new HttpError(409,"Saved photo is private pending review.",row.check.state==="hold"?"photo_quality_hold":"photo_quality_pending",{check_id:"synthetic-check",evidence_id:"synthetic-evidence",retry_existing_job:true,failure_phase:row.failure?.phase,...row.failure?.facts});
+  if(row.check.state!=="accept"&&!row.release)throw new HttpError(409,"Saved photo is private pending review.",row.check.state==="hold"?"photo_quality_hold":"photo_quality_pending",{check_id:"synthetic-check",evidence_id:"synthetic-evidence",retry_existing_job:true,failure_phase:row.failure?.phase,...row.failure?.facts});
   const metadata={edit:row.args.edit,...(row.args.style?{style:row.args.style}:{}),disclosure:"Synthetic disclosure",provenance:{id:"synthetic-provenance",recorded:true}};
   if(!row.responded){row.responded=true;return photoJsonResponse(metadata,state.output,row.saved.mime,row.saved.key);}
   const saved=await restorePhotoResult(admin,row.identity);if(!saved)throw new HttpError(503,"Saved photo is not available.");
@@ -257,7 +269,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
 }
 // Load exact production signers only after synthetic test credentials exist.
 for(const [key,value] of Object.entries({CLOUDFLARE_ACCOUNT_ID:"a".repeat(32),R2_ACCESS_KEY_ID:"b".repeat(32),R2_SECRET_ACCESS_KEY:"c".repeat(64)}))Deno.env.set(key,value);
-const {ProviderResponseLimitError}=await import("../_shared/providers/common.ts");
+const {ProviderResponseLimitError,ProviderError}=await import("../_shared/providers/common.ts");
 Deno.test("actual photo handler router-off and router-on persist once and replay inline without another quota or provider",async()=>{
  for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
  const first=await f.run(f.request());assertEquals(first.status,200);const result=await first.json();assertEquals(result.image_b64,OUTPUT);assert(/^ai-router\/.+\/completed-photo\/[a-f0-9]{64}\.jpg$/.test(result.asset_key));
@@ -320,8 +332,11 @@ Deno.test("actual staging refuses1K fallback while preserving the surgical promp
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.stage",unit:"output_image",unit_cents:4}];
   const brief="Outdoor chairs and a small movable table, with natural linen cushions.";
   const request=f.request({edit:"stage",style:"rustic",prompt:brief}),body=await request.clone().json();
-  const response=await f.run(request);assertEquals(response.status,409,await response.text());
-  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.helperDispatch,0);
+  // One automatic retry, on the SAME prepared 2K route: never the 1K fallback.
+  const response=await f.run(request);assertEquals(response.status,200,await response.text());
+  assertEquals(f.state.submits,2);assertEquals(f.state.holds,2);assertEquals(f.state.helperDispatch,0);assertEquals(f.state.charges,1,"one customer charge for one delivered image");
+  assertEquals(f.state.holdArguments.map(a=>[a.p_stage,a.p_provider,a.p_model]),[["photo.stage:0","gemini","gemini-3.1-flash-image"],["photo.stage:1","gemini","gemini-3.1-flash-image"]]);
+  assertEquals(f.state.costs.length,1);assertEquals(f.state.costs[0].meta.stage,"photo.stage:1");assertEquals(f.state.costs[0].meta.automatic_retry,true);assertEquals(f.state.inputs[1].extra.photo_quality_2k,true);
   assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
   assert(f.state.prompts[0].includes("solid slabs solid"));assert(f.state.prompts[0].includes("existing open pergolas open"));
   for(const input of f.state.inputs){assertEquals(input.image_b64,body.image_b64);assertEquals(input.image_url,`data:image/jpeg;base64,${body.image_b64}`);}
@@ -368,8 +383,8 @@ Deno.test("actual custom handler cannot quietly fallback to1K after its prepared
  const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
   {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.custom",unit:"output_image",unit_cents:6.7},
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.custom",unit:"output_image",unit_cents:4}];
-  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,409,await response.text());
-  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
+  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,200,await response.text());
+  assertEquals(f.state.submits,2,"one automatic retry on the same 2K route");assertEquals(f.state.holds,2);assertEquals(f.state.holdArguments.every(a=>a.p_provider==="gemini"&&a.p_model==="gemini-3.1-flash-image"),true,"never the 1K fallback");assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assertEquals(f.state.inputs[1].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
  }finally{f.close();}
 });
 Deno.test("legacy photo polisher clarifies before a paid helper and refuses invented same-category work",async()=>{
@@ -935,4 +950,56 @@ Deno.test("declutter assessment invalid protocol or changed prepared bytes refus
  for(const extra of[{declutter_assessment_protocol:"unknown",source_sha256:"a".repeat(64)},{declutter_assessment_protocol:"declutter-assessment-v1"},{declutter_assessment_protocol:"declutter-assessment-v1",source_sha256:"a".repeat(64)}]){
   const f=await fixture();try{const response=await f.run(f.request({edit:"suggest",...extra}));assertEquals(response.status,400);assertEquals([f.state.helperDispatch,f.state.submits,f.state.puts],[0,0,0]);assertEquals(f.state.costs,[]);}finally{f.close();}
  }
+});
+
+Deno.test("early private release answers with the image before the advisory check and never waits for it",async()=>{
+ const f=await fixture();try{
+  f.state.qualityPending=true;f.state.earlyRelease=true;
+  const response=await f.run(f.request());assertEquals(response.status,200);
+  const body=await response.json();assertEquals(body.image_b64,f.state.output);assertEquals(body.provenance.recorded,true);
+  assertEquals(f.state.waits??0,0,"The reply must not wait for the comparison or the judge");
+  assertEquals(f.state.backgroundChecks,1,"The saved check continues exactly once after the reply");
+  assertEquals(f.state.releaseCalls,1);assertEquals(f.state.releaseFacts.geometry.meets_request,true);assertEquals(f.state.releaseFacts.geometry.requested,"2K");
+  // Money and provenance order is unchanged: one hold, one provider call,
+  // one ledger row, and the operation journal completed before the release.
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.completes,1);
+ }finally{f.close();}
+});
+Deno.test("without a release receipt the pending edit stays private exactly as before",async()=>{
+ const f=await fixture();try{
+  f.state.qualityPending=true;
+  const response=await f.run(f.request());assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");
+  assertEquals(f.state.releaseCalls,1);assertEquals(f.state.waits,1);assertEquals(f.state.backgroundChecks??0,0);
+ }finally{f.close();}
+});
+Deno.test("an off-size but complete paid photo is delivered with its real size only when its release is recorded",async()=>{
+ const refused=await fixture();try{
+  refused.state.output=outputJPEG(1024,1024);
+  assertEquals((await refused.run(refused.request())).status,409);assertEquals(refused.state.quality.failure.phase,"photo_output_geometry");assertEquals(refused.state.submits,1);
+ }finally{refused.close();}
+ const delivered=await fixture();try{
+  delivered.state.output=outputJPEG(1024,1024);delivered.state.earlyRelease=true;delivered.state.qualityPending=true;
+  const response=await delivered.run(delivered.request());assertEquals(response.status,200);assertEquals((await response.json()).image_b64,delivered.state.output);
+  assertEquals(delivered.state.releaseFacts.geometry,{requested:"2K",width:1024,height:1024,meets_request:false});assertEquals(delivered.state.submits,1);assertEquals(delivered.state.waits??0,0);
+ }finally{delivered.close();}
+ const tiny=await fixture();try{
+  tiny.state.output=outputJPEG(200,150);tiny.state.earlyRelease=true;
+  assertEquals((await tiny.run(tiny.request())).status,409);assertEquals(tiny.state.releaseCalls??0,0,"A frame with no usable picture is never released");
+ }finally{tiny.close();}
+});
+
+Deno.test("a second transient failure ends the edit once: refund, closed operation, retryable, no third attempt",async()=>{
+ const f=await fixture();try{
+  // Every attempt fails with a dropped connection (not only the first).
+  f.state.afterSubmit=()=>{throw new TypeError("Synthetic connection reset");};
+  const response=await f.run(f.request());assert(response.status!==200);
+  assertEquals(f.state.submits,2,"exactly one retry");assertEquals(f.state.holds,2);assertEquals(f.state.refunds,1);assertEquals(f.state.costs.length,0);assertEquals(f.state.charges,1);
+ }finally{f.close();}
+});
+Deno.test("a safety refusal is never retried",async()=>{
+ const f=await fixture();try{
+  f.state.afterSubmit=()=>{throw new ProviderError("gemini","nsfw","Synthetic safety refusal");};
+  const response=await f.run(f.request());assert(response.status!==200);
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.costs.length,0);
+ }finally{f.close();}
 });

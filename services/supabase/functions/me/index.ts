@@ -1084,7 +1084,10 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
       evidence.data[0].output?.key === row.altered_key && row.qc.evidence_id === evidence.data[0].id,404,"Disclosure record not found.");
     const check = await admin.from("photo_quality_checks").select("id,evidence_id,state,automatic").eq("evidence_id",evidence.data[0].id).eq("automatic",true).limit(2);
     assert(!check.error,503,"Disclosure check could not be verified.");
-    assert(check.data?.length === 1 && check.data[0].state === "accept" && check.data[0].id === row.qc.check_id,404,"Disclosure record not found.");
+    // The edit is accepted media from the moment it is delivered (owner
+    // decision 12 Nov 2026); its advisory check may still be open. The check
+    // row must still be this edit's own automatic check.
+    assert(check.data?.length === 1 && check.data[0].id === row.qc.check_id,404,"Disclosure record not found.");
     prior = {id:row.id,org_id:row.org_id,listing_id:row.listing_id};
   }
   if (prior.listing_id === null) {

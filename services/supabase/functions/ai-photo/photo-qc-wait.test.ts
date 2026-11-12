@@ -1,5 +1,5 @@
 import {assertEquals} from "https://deno.land/std@0.224.0/assert/mod.ts";
-import {waitForPhotoQuality,type PhotoWaitDependencies} from "./photo-qc-wait.ts";
+import {waitForPhotoQuality,continuePhotoQualityAfterResponse,type PhotoWaitDependencies} from "./photo-qc-wait.ts";
 import type {PhotoQualityEnvelope} from "./photo-qc-store.ts";
 const actor="ea100606-0000-4000-8000-000000000001",org="ea100606-0000-4000-8000-000000000002",listing="ea100606-0000-4000-8000-000000000003",id="ea100606-0000-4000-8000-000000000004";
 function fixture(){
@@ -52,4 +52,37 @@ Deno.test("request absolute deadline cannot restart a fresh120s QC budget",async
 });
 Deno.test("ready derivatives use only caller remainder, never a fresh judge deadline",async()=>{
  const f=fixture();f.state.now=70_000;f.row.check.state="derivative_ready";await f.run(130_000);assertEquals(f.state.deadline,130_000);assertEquals(f.state.judges,1);assertEquals(f.state.starts,0);
+});
+Deno.test("after an early release the saved check continues once on a detached request and can never reject",async()=>{
+ const f=fixture(),seen={work:null as Promise<unknown>|null,calls:0,aborted:true,deadline:0,method:""};
+ const host=globalThis as {EdgeRuntime?:unknown},previous=host.EdgeRuntime;
+ host.EdgeRuntime={waitUntil:(work:Promise<unknown>)=>{seen.work=work;}};
+ try{
+  // The phone's connection is gone once the reply is sent; its abort must not end the check.
+  f.state.abort.abort();
+  continuePhotoQualityAfterResponse(f.admin,f.row,{actor,selected:org,url:"https://example.invalid/ai-photo",deadline:130_000},async(_admin,_row,args)=>{
+   seen.calls++;seen.aborted=args.request.signal.aborted;seen.deadline=args.deadline!;seen.method=args.request.method;throw Error("synthetic background failure");});
+  assertEquals(seen.work instanceof Promise,true);await seen.work;
+  assertEquals(seen.calls,1);assertEquals(seen.aborted,false);assertEquals(seen.deadline,130_000);assertEquals(seen.method,"POST");
+ }finally{host.EdgeRuntime=previous;}
+ // Without a runtime that keeps the instance alive, only the controller wake
+ // is sent: the deadline handed on leaves no room for a status loop or judge.
+ delete host.EdgeRuntime;
+ try{
+  const wake={calls:0,deadline:0},before=Date.now();
+  continuePhotoQualityAfterResponse(f.admin,f.row,{actor,selected:org,url:"https://example.invalid/ai-photo",deadline:before+110_000},async(_admin,row,args)=>{wake.calls++;wake.deadline=args.deadline!;return row;});
+  await Promise.resolve();assertEquals(wake.calls,1);assertEquals(wake.deadline<=Date.now()+45_000,true);
+  const real=fixture();real.deps.now=()=>Date.now();
+  await new Promise<void>(done=>continuePhotoQualityAfterResponse(real.admin,real.row,{actor,selected:org,url:"https://example.invalid/ai-photo",deadline:Date.now()+110_000},async(admin,row,args)=>{try{return await waitForPhotoQuality(admin,row,args,real.deps);}finally{done();}}));
+  assertEquals(real.state.starts,1);assertEquals(real.state.reads,0);assertEquals(real.state.judges,0);
+ }finally{host.EdgeRuntime=previous;}
+});
+Deno.test("the detached continuation runs the real wait: one wake, scoped reads, one judge inside the request deadline",async()=>{
+ const f=fixture();f.state.now=20_000;const seen={work:null as Promise<unknown>|null};
+ const host=globalThis as {EdgeRuntime?:unknown},previous=host.EdgeRuntime;
+ host.EdgeRuntime={waitUntil:(work:Promise<unknown>)=>{seen.work=work;}};
+ try{
+  continuePhotoQualityAfterResponse(f.admin,f.row,{actor,selected:org,url:"https://example.invalid/ai-photo",deadline:130_000},(admin,row,args)=>waitForPhotoQuality(admin,row,args,f.deps));
+  await seen.work;assertEquals(f.state.starts,1);assertEquals(f.state.reads,2);assertEquals(f.state.judges,1);assertEquals(f.state.deadline,130_000);
+ }finally{host.EdgeRuntime=previous;}
 });

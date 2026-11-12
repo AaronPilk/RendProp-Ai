@@ -33,7 +33,14 @@ export async function handler(req:Request){try{
   ]);
   // A prepared comparison can outlive its initiating phone request. Return only
   // bounded identities; the existing judge rechecks scope and paid dispatch.
-  assert(!rows.error&&!judges.error,503,'Saved photo checks could not be listed.');return json({enabled:true,checks:(rows.data??[]).map(x=>({check_id:x.id})),judges:(judges.data??[]).map(x=>({check_id:x.id}))});
+  assert(!rows.error&&!judges.error,503,'Saved photo checks could not be listed.');
+  // Reaper (owner decision 12 Nov 2026): a prospective check whose judge never
+  // reported, or that never got a comparison, is closed as "review
+  // unavailable" so its edit is ordinary accepted media. Bounded, idempotent
+  // and best effort: before its migration the RPC is absent and the queue is
+  // unchanged. It never starts a comparison, a judge or a generation.
+  try{await rpc('photo_quality_reap',{p_evidence:null,p_limit:20});}catch{/* the next minute tries again */}
+  return json({enabled:true,checks:(rows.data??[]).map(x=>({check_id:x.id})),judges:(judges.data??[]).map(x=>({check_id:x.id}))});
  }
  assert(req.method==='POST'&&seg.length===1,405,'Use an explicit private photo comparison action.');
  const b=await readJsonLimited<Record<string,any>>(req,65536),check=uuid(b.check_id);

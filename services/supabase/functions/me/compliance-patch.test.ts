@@ -39,7 +39,7 @@ try {
 
 type Mode = "owned" | "foreign-listing" | "revoked-team" | "marketing" |
   "wrong-org" | "wrong-library" | "hidden-unbound" | "missing" |
-  "held" | "foreign-actor" | "unrelated-hidden" | "invalid-asset";
+  "held" | "foreign-actor" | "unrelated-hidden" | "invalid-asset" | "open-check" | "foreign-check";
 
 async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_asset_id: ASSET }): Promise<{ status: number; body: Record<string, unknown>; calls: string[] }> {
   const previous = globalThis.fetch;
@@ -98,7 +98,7 @@ async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_as
       assertEquals(req.headers.get("authorization"), "Bearer fixture-service");
       assertEquals(url.searchParams.get("evidence_id"), `eq.${EVIDENCE}`);
       assertEquals(url.searchParams.get("automatic"), "eq.true");
-      return json([{ id: CHECK, evidence_id: EVIDENCE, state: "accept", automatic: true }]);
+      return json([{ id: mode === "foreign-check" ? OTHER_ORG : CHECK, evidence_id: EVIDENCE, state: mode === "open-check" ? "checking" : "accept", automatic: true }]);
     }
     if (url.pathname === "/rest/v1/rpc/set_provenance_media") {
       assertEquals(req.headers.get("authorization"), "Bearer fixture-user");
@@ -174,4 +174,15 @@ Deno.test("hidden provenance cannot be relabeled or have its original reassigned
     assertEquals(result.calls.some((x) => x.endsWith("/set_provenance_media")), false);
     assertEquals(result.calls.some((x) => x.endsWith("/photo_edit_evidence")), false);
   }
+});
+
+Deno.test("an accepted edit can attach its exact result while its advisory check is still open", async () => {
+  const result = await attempt("open-check");
+  assertEquals(result.status, 200);
+  assertEquals(result.body.ok, true);
+  assertEquals(result.calls.filter((x) => x.endsWith("/set_provenance_media")).length, 1);
+  // The check must still be this edit's own automatic check.
+  const foreign = await attempt("foreign-check");
+  assertEquals(foreign.status, 404);
+  assertEquals(foreign.calls.some((x) => x.endsWith("/set_provenance_media")), false);
 });

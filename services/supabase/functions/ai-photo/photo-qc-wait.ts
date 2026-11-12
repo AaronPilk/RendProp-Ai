@@ -80,3 +80,29 @@ export async function waitForPhotoQuality(admin:PhotoAdmin,initial:PhotoQualityE
   return row;
  }
 }
+/** After an early private release the reply no longer waits for the advisory
+ * check, so the check continues here: one controller wake, scoped status
+ * reads, then the single funded judge, all inside the SAME request budget the
+ * synchronous path used. The client connection and its abort signal end with
+ * the reply, so this uses a detached request.
+ *
+ * The judge is only driven from here when the runtime guarantees the instance
+ * outlives the reply (EdgeRuntime.waitUntil). Without that guarantee an
+ * instance retired mid-call would cut a dispatched judge and leave a HOLD, so
+ * only the controller wake is sent and the per-minute controller queue, which
+ * owns every saved pending check and prepared judge, runs the judge itself.
+ * Either way the SQL lease/bind journal allows exactly one comparison and one
+ * judge. Never throws. */
+export function continuePhotoQualityAfterResponse(admin:PhotoAdmin,row:PhotoQualityEnvelope,args:{actor:string;selected:string|null;url:string;instruction?:string;deadline:number},wait:typeof waitForPhotoQuality=waitForPhotoQuality):void{
+ const runtime=(globalThis as {EdgeRuntime?:{waitUntil?:(work:Promise<unknown>)=>void}}).EdgeRuntime;
+ const durable=!!runtime&&typeof runtime.waitUntil==="function";
+ let task:Promise<void>;
+ try{
+  const request=new Request(args.url,{method:"POST"});
+  // A deadline no later than the judge reserve lets waitForPhotoQuality wake
+  // the controller and return before any status loop or judge call.
+  const deadline=durable?args.deadline:Math.min(args.deadline,Date.now()+PHOTO_CHECK_JUDGE_RESERVE_MS);
+  task=wait(admin,row,{actor:args.actor,selected:args.selected,request,instruction:args.instruction,deadline}).then(()=>{},()=>{});
+ }catch{return;}
+ try{if(durable)runtime!.waitUntil!(task);}catch{/* The controller queue still completes the saved check. */}
+}
