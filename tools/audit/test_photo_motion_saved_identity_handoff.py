@@ -480,7 +480,7 @@ def main():
         data, socket = location / "data", location / "socket"
         socket.mkdir()
         env.update(PGHOST=str(socket), PGPORT="5432", PGUSER="postgres", PGDATABASE="rendprop")
-        run(["initdb", "-D", str(data), "-U", "postgres", "-A", "trust", "--no-instructions"], env)
+        run(["initdb", "-D", str(data), "-U", "postgres", "-A", "trust", "--encoding=UTF8", "--no-instructions"], env)
         started = False
         try:
             try:
