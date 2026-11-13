@@ -1,5 +1,5 @@
 import { libraryAccess, libraryAccessFromDirectory, listingLibraryScope } from "../_shared/library-access.ts";
-import { ensureAcceptedPhotoPublication } from "../_shared/photo-publication.ts";
+import { ensureAcceptedPhotoPublication, type PublicationClient, type PublicationIO } from "../_shared/photo-publication.ts";
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 import { applyVerifiedMonthlyCredits } from "../_shared/apple-monthly-credits.ts";
 import { servingMode } from "../_shared/funded-serving.ts";
@@ -1041,7 +1041,8 @@ async function handleComplianceOrg(
 // for the SAME listing, so "View original" can never be pointed at somebody
 // else's object.
 
-async function handleCompliancePatch(req: Request, userId: string, id: string | undefined): Promise<Response> {
+export async function handleCompliancePatch(req: Request, userId: string, id: string | undefined,
+  publicationDeps?: { client: PublicationClient; io: PublicationIO }): Promise<Response> {
   assert(id && UUID_RE.test(id), 400, "PATCH /me/compliance/:id requires the provenance record's UUID");
   id = id.toLowerCase();
   const db = userClient(req);
@@ -1072,8 +1073,11 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
     assert(row && row.id === id && typeof row.listing_id === "string" && UUID_RE.test(row.listing_id) &&
       typeof row.org_id === "string" && UUID_RE.test(row.org_id) &&
       ["photo_edit","virtual_stage","declutter"].includes(row.kind) &&
-      typeof row.altered_key === "string" && row.altered_key.startsWith(`ai-router/${row.org_id}/photo-evidence/`) &&
+      typeof row.altered_key === "string" &&
       row.qc && row.qc.publishable === true && row.qc.action === "accept",404,"Disclosure record not found.");
+    const originalPointer = row.altered_key.startsWith(`ai-router/${row.org_id}/photo-evidence/`);
+    const savedPointer = row.altered_key.startsWith(`renders/${row.org_id}/${row.listing_id}/`);
+    assert(originalPointer || savedPointer,404,"Disclosure record not found.");
     const scope = await listingLibraryScope(admin,userId,row.listing_id,true);
     const selected = preferredOrg(req);
     assert((selected === undefined || selected === scope.org_id || selected === scope.library_org_id) && row.org_id === scope.org_id,404,"Disclosure record not found.");
@@ -1082,13 +1086,46 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
     assert(evidence.data?.length === 1 && evidence.data[0].actor_id === userId && evidence.data[0].org_id === scope.org_id &&
       evidence.data[0].library_org_id === scope.library_org_id && evidence.data[0].listing_id === row.listing_id &&
       evidence.data[0].provenance_id === id && evidence.data[0].state === "accept" && evidence.data[0].purpose === "prospective" &&
-      evidence.data[0].output?.key === row.altered_key && row.qc.evidence_id === evidence.data[0].id,404,"Disclosure record not found.");
+      (!originalPointer || evidence.data[0].output?.key === row.altered_key) && row.qc.evidence_id === evidence.data[0].id,404,"Disclosure record not found.");
     const check = await admin.from("photo_quality_checks").select("id,evidence_id,state,automatic").eq("evidence_id",evidence.data[0].id).eq("automatic",true).limit(2);
     assert(!check.error,503,"Disclosure check could not be verified.");
     // The edit is accepted media from the moment it is delivered (owner
     // decision 12 Nov 2026); its advisory check may still be open. The check
     // row must still be this edit's own automatic check.
     assert(check.data?.length === 1 && check.data[0].id === row.qc.check_id,404,"Disclosure record not found.");
+    if (savedPointer) {
+      // The first attachment went through set_provenance_media, whose role
+      // gate excludes marketing. Keep that gate on this read-only recovery.
+      assert(["owner","admin","agent"].includes(scope.role),403,"Your role does not permit editing AI provenance.");
+      // A prior PATCH may have attached the exact uploaded output, then a
+      // separate Studio gallery request failed before publication. A retry
+      // uploads a fresh asset. Keep the already attached source pointer and
+      // let the publication RPCs decide whether a target was already reserved.
+      const output = evidence.data[0].output;
+      assert(typeof output?.sha256 === "string" && /^[a-f0-9]{64}$/.test(output.sha256) &&
+        Number.isSafeInteger(output.bytes) && output.bytes > 0,404,"Disclosure record not found.");
+      const saved = await admin.from("capture_assets")
+        .select("id,listing_id,kind,bucket,uploaded,storage_key,sha256,bytes,content_type")
+        .eq("id",alteredAsset).maybeSingle();
+      assert(!saved.error,503,"Disclosure media identity could not be verified.");
+      assert(saved.data?.id === alteredAsset && saved.data.listing_id === row.listing_id &&
+        saved.data.kind === "photo" && saved.data.bucket === "renders" && saved.data.uploaded === true &&
+        typeof saved.data.storage_key === "string" &&
+        saved.data.storage_key.startsWith(`renders/${row.org_id}/${row.listing_id}/`) &&
+        !saved.data.storage_key.slice(`renders/${row.org_id}/${row.listing_id}/`.length).includes("/") &&
+        saved.data.sha256 === output.sha256 &&
+        saved.data.bytes === output.bytes && saved.data.content_type === output.mime,
+        404,"Disclosure record not found.");
+      const publication = await ensureAcceptedPhotoPublication(publicationDeps?.client ?? admin,
+        {orgId:scope.org_id,libraryOrgId:scope.library_org_id,listingId:row.listing_id},userId,alteredAsset,
+        {provenanceID:id,expected:{sha256:output.sha256,bytes:output.bytes},signal:req.signal},publicationDeps?.io);
+      assert(publication && publication.sourceProvenanceID === id && publication.listingID === row.listing_id &&
+        publication.outputAssetID === alteredAsset,503,"The saved photo disclosure could not be confirmed.");
+      return json({ok:true,source_provenance_id:publication.sourceProvenanceID,
+        provenance:{id:publication.id,listing_id:publication.listingID,kind:publication.kind,disclosure:publication.disclosure},
+        publication:{output_asset_id:publication.outputAssetID,source_asset_id:publication.sourceAssetID}},
+        200,{"cache-control":"private, no-store"});
+    }
     prior = {id:row.id,org_id:row.org_id,listing_id:row.listing_id};
   }
   if (prior.listing_id === null) {

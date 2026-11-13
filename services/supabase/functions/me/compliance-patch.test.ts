@@ -1,4 +1,5 @@
 import { assert, assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { publicationFixture, publicationID } from "../_shared/photo-publication.fixture.ts";
 
 // Exercise the actual PATCH route with an accepted photo proof whose current
 // ai-router candidate key is hidden by the Presenter SELECT policy. The service
@@ -23,8 +24,13 @@ for (const [key, value] of Object.entries({
   SUPABASE_ANON_KEY: "fixture-anon",
 })) Deno.env.set(key, value);
 
+// The shared Supabase client captures these fixture variables at module load.
+// Load the Studio handler only after the fixture environment is installed.
+const { handleListingActions } = await import("../studio/listing-actions.ts");
+
 type Handler = (request: Request) => Promise<Response>;
 let handler!: Handler;
+let directPatch!: typeof import("./index.ts").handleCompliancePatch;
 const serve = Object.getOwnPropertyDescriptor(Deno, "serve")!;
 try {
   Object.defineProperty(Deno, "serve", {
@@ -32,7 +38,7 @@ try {
     writable: true,
     value: (fn: Handler) => { handler = fn; return {}; },
   });
-  await import("./index.ts");
+  directPatch = (await import("./index.ts")).handleCompliancePatch;
 } finally {
   Object.defineProperty(Deno, "serve", serve);
 }
@@ -185,4 +191,182 @@ Deno.test("an accepted edit can attach its exact result while its advisory check
   const foreign = await attempt("foreign-check");
   assertEquals(foreign.status, 404);
   assertEquals(foreign.calls.some((x) => x.endsWith("/set_provenance_media")), false);
+});
+
+type RecoveryMode = "same" | "new" | "marketing" | "wrong-actor" | "wrong-listing" |
+  "wrong-sha" | "wrong-key" | "refused" | "canonical-conflict";
+
+async function savedResultRetry(mode: RecoveryMode) {
+  const f = await publicationFixture({ bound: true });
+  const priorAsset = mode === "same" ? f.asset : publicationID(31);
+  const priorKey = mode === "same" ? f.targetKey : `renders/${f.org}/${f.listing}/gallery-${priorAsset}.jpg`;
+  let pointer = f.outputKey;
+  let firstPatchCount = 0;
+  const calls: string[] = [];
+  const previous = globalThis.fetch;
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+    status, headers: { "content-type": "application/json" },
+  });
+  globalThis.fetch = async (input, init) => {
+    const req = new Request(input, init), url = new URL(req.url);
+    assertEquals(url.hostname, "compliance-patch-fixture.invalid");
+    calls.push(`${req.method} ${url.pathname}`);
+    if (url.pathname === "/rest/v1/media_provenance") {
+      assertEquals(url.searchParams.get("id"), `eq.${f.original}`);
+      const service = req.headers.get("authorization") === "Bearer fixture-service";
+      assertEquals(url.searchParams.get("select"), service ? "id,org_id,listing_id,kind,altered_key,qc" : "id,org_id,listing_id");
+      return json(service ? {
+        id: f.original, org_id: f.org, listing_id: mode === "wrong-listing" ? publicationID(99) : f.listing,
+        kind: "declutter", altered_key: pointer,
+        qc: { publishable: true, action: "accept", evidence_id: f.evidence, check_id: f.check },
+      } : null);
+    }
+    if (url.pathname === "/rest/v1/rpc/listing_library_scope") {
+      const body = await req.json();
+      assertEquals(body.p_actor, f.actor);
+      return json({ actor_id: f.actor, listing_id: f.listing, org_id: f.org, library_org_id: f.library,
+        listing_owner_user_id: f.actor, library_owner_user_id: f.actor,
+        role: mode === "marketing" ? "marketing" : "owner", access_mode: "own", can_read: true, can_write: true,
+        can_manage_subscription: true, billing_org_id: f.org, team_org_id: null });
+    }
+    if (url.pathname === "/rest/v1/photo_edit_evidence") {
+      assertEquals(req.headers.get("authorization"), "Bearer fixture-service");
+      assertEquals(url.searchParams.get("provenance_id"), `eq.${f.original}`);
+      return json([{ id: f.evidence, actor_id: mode === "wrong-actor" ? publicationID(98) : f.actor,
+        org_id: f.org, library_org_id: f.library, listing_id: f.listing, provenance_id: f.original,
+        state: mode === "refused" ? "refuse" : "accept", purpose: "prospective",
+        output: { key: f.outputKey, sha256: f.outputSHA, bytes: f.output.length, mime: "image/jpeg" } }]);
+    }
+    if (url.pathname === "/rest/v1/photo_quality_checks") return json([
+      { id: f.check, evidence_id: f.evidence, state: "checking", automatic: true },
+    ]);
+    if (url.pathname === "/rest/v1/capture_assets") {
+      assertEquals(req.headers.get("authorization"), "Bearer fixture-service");
+      assertEquals(url.searchParams.get("id"), `eq.${f.asset}`);
+      return json({ id: f.asset, listing_id: f.listing, kind: "photo", bucket: "renders", uploaded: true,
+        storage_key: mode === "wrong-key" ? `renders/${f.org}/${publicationID(99)}/wrong.jpg` : f.targetKey,
+        sha256: mode === "wrong-sha" ? "0".repeat(64) : f.outputSHA,
+        bytes: f.output.length, content_type: "image/jpeg" });
+    }
+    if (url.pathname === "/rest/v1/rpc/set_provenance_media") {
+      const body = await req.json();
+      assertEquals(body.p_id, f.original);
+      assertEquals(body.p_altered_asset, priorAsset);
+      firstPatchCount++;
+      pointer = priorKey;
+      return json({ id: f.original, org_id: f.org, listing_id: f.listing, kind: "declutter",
+        label: null, disclosure: "Digitally decluttered; compare the submitted source.",
+        original_key: `renders/${f.org}/${f.listing}/original.jpg`, altered_key: pointer });
+    }
+    if (url.pathname === "/rest/v1/rpc/studio_presenter_media_visibility") {
+      const body = await req.json();
+      return json({ assets: {}, renders: {}, keys: Object.fromEntries(body.p_keys.map((key: string) => [key, false])) });
+    }
+    throw Error(`Unexpected fixture request: ${req.method} ${url.pathname}`);
+  };
+  const request = (asset: string) => new Request(`https://edge.invalid/me/compliance/${f.original}`, {
+    method: "PATCH", headers: { authorization: "Bearer fixture-user", "content-type": "application/json", "x-org-id": f.library },
+    body: JSON.stringify({ altered_asset_id: asset }),
+  });
+  try {
+    if (mode === "same" || mode === "new") {
+      const first = await directPatch(request(priorAsset), f.actor, f.original);
+      assertEquals(first.status, 200);
+      assertEquals(firstPatchCount, 1);
+    } else pointer = priorKey;
+    if (mode === "canonical-conflict") f.state.resolveError = "RP409: This saved photo already has a different canonical publication target";
+    try {
+      const response = await directPatch(request(f.asset), f.actor, f.original, { client: f.client, io: f.io });
+      return { status: response.status, body: await response.json(), calls, state: f.state, firstPatchCount, fixture: f };
+    } catch (error) {
+      if (!error || typeof error !== "object" || !("status" in error)) throw error;
+      return { status: Number(error.status), body: {}, calls, state: f.state, firstPatchCount, fixture: f };
+    }
+  } finally { globalThis.fetch = previous; }
+}
+
+Deno.test("a failed gallery attach can recover the same saved upload or a fresh exact upload without another disclosure mutation", async () => {
+  for (const mode of ["same", "new"] as const) {
+    const result = await savedResultRetry(mode);
+    assertEquals(result.status, 200, mode);
+    assertEquals(result.body.source_provenance_id, publicationID(9));
+    assertEquals((result.body.provenance as Record<string, unknown>).id, publicationID(10));
+    assertEquals(result.state.phase, "prepared");
+    assertEquals(result.firstPatchCount, 1);
+    assertEquals(result.calls.filter((call) => call.endsWith("/set_provenance_media")).length, 1);
+    assertEquals(result.state.calls.map(({ name }) => name).filter((name) => name.startsWith("photo_publication_")), [
+      "photo_publication_target", "photo_publication_resolve", "photo_publication_reserve", "photo_publication_finish",
+    ]);
+  }
+});
+
+Deno.test("a fresh exact retry proceeds from recovered disclosure to the ordinary Studio attachment", async () => {
+  const { status, fixture: f } = await savedResultRetry("new");
+  assertEquals(status, 200);
+  const steps: string[] = [];
+  const scope = { actor_id: f.actor, org_id: f.org, library_org_id: f.library, listing_id: f.listing,
+    listing_owner_user_id: f.actor, library_owner_user_id: f.actor, role: "owner", access_mode: "own",
+    can_read: true, can_write: true, can_manage_subscription: false, billing_org_id: f.org, team_org_id: null };
+  const admin = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      if (name === "listing_library_scope") return { data: scope, error: null };
+      if (name === "studio_attach_photo_from_upload") {
+        steps.push("attach");
+        assertEquals(args, { p_actor: f.actor, p_org: f.org, p_listing: f.listing,
+          p_asset: f.asset, p_caption: "Edited kitchen", p_provenance: f.pub });
+        assertEquals(f.state.phase, "prepared");
+        return { data: { ok: true, created: true, photo: { id: f.asset, listing_id: f.listing } }, error: null };
+      }
+      return await f.client.rpc(name, args);
+    },
+    from: (table: string) => {
+      assertEquals(table, "photo_edit_evidence");
+      const query = {
+        select: (_columns: string) => query,
+        eq: (_key: string, _value: string) => query,
+        limit: (_count: number) => query,
+        then: (resolve: (value: unknown) => void) => {
+          steps.push("evidence");
+          resolve({ data: [{ ...f.state.e, output: { sha256: f.outputSHA, bytes: f.output.length } }], error: null });
+        },
+      };
+      return query;
+    },
+  };
+  const db = { from: (table: string) => {
+    assertEquals(table, "capture_assets");
+    const query = {
+      select: (_columns: string) => query,
+      eq: (_column: string, _value: string) => query,
+      maybeSingle: async () => {
+        steps.push("asset-read");
+        assertEquals(f.state.phase, "prepared");
+        return { data: { id: f.asset, listing_id: f.listing, uploaded: true,
+          bucket: "renders", kind: "photo", content_type: "image/jpeg", storage_key: f.targetKey }, error: null };
+      },
+    };
+    return query;
+  } };
+  const response = await handleListingActions(new Request("https://edge.invalid/functions/v1/studio/photos", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ listing_id: f.listing, asset_id: f.asset, provenance_id: f.original, caption: "Edited kitchen" }),
+  }), { userId: f.actor, orgId: f.org, authorizeListing: async (listing) => assertEquals(listing, f.listing),
+    admin, db, publicationIO: f.io });
+  assertEquals(response?.status, 201);
+  assertEquals(steps, ["evidence", "asset-read", "attach"]);
+  assertEquals(f.state.claims, 1);
+  assertEquals(f.state.writes, 1);
+});
+
+Deno.test("saved-output recovery refuses role, identity, key, SHA, evidence and canonical-target conflicts", async () => {
+  for (const [mode, status] of [
+    ["marketing", 403], ["wrong-actor", 404], ["wrong-listing", 404], ["wrong-sha", 404],
+    ["wrong-key", 404], ["refused", 404], ["canonical-conflict", 409],
+  ] as const) {
+    const result = await savedResultRetry(mode);
+    assertEquals(result.status, status, mode);
+    assertEquals(result.firstPatchCount, 0, mode);
+    assertEquals(result.state.phase, null, mode);
+    assertEquals(result.calls.some((call) => call.endsWith("/set_provenance_media")), false, mode);
+  }
 });
