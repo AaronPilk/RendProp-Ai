@@ -18,6 +18,10 @@ class Fixture {
   anonymous = false;
   pausedSeat = false;
   failureTable: string | null = null;
+  roster: {user_id: string; org_id: string; role: string}[] | null = null;
+  rosterProfiles: {id: string; name: string; email: string}[] = [];
+  failProfileUser: string | null = null;
+  profileReads: {target: string; targetBytes: number; ids: string[]; ok: boolean}[] = [];
   queueResults: unknown[] = [{ ok: true, queued: true, id: invite }];
   queueCalls = 0;
   writes: string[] = [];
@@ -33,14 +37,18 @@ class Fixture {
     if (url.pathname.startsWith("/rest/v1/rpc/")) {
       if (table === "bump_rate") return json(true);
       if (table === "active_org_for_user") return json(org);
-      if (table === "org_seats_used") return json(this.pausedSeat ? 5 : 1);
-      if (table === "org_seats_allowed") return json(this.pausedSeat ? 3 : 2);
+      if (table === "org_seats_used") return json(this.pausedSeat ? 5 : this.roster?.length ?? 1);
+      if (table === "org_seats_allowed") return json(this.pausedSeat ? 3 : this.roster?.length ?? 2);
       const body = await req.json();
       if (this.failedRPC === table) return json({message:"fixture unavailable"},503);
       if (table === "workspace_directory") return json({actor_id:user,own_org_id:this.pausedSeat ? personal : org,billing_org_id:this.pausedSeat ? personal : org,can_switch_agent_libraries:false,active_org_id:this.pausedSeat ? personal : org,workspaces:[{id:this.pausedSeat ? personal : org,name:"Fixture Team",role:"owner",access_mode:"own",library_owner_user_id:user,billing_org_id:this.pausedSeat ? personal : org,can_read:true,can_write:true}]});
       if (table === "library_access") return json({actor_id:user,org_id:this.pausedSeat ? personal : org,library_owner_user_id:user,role:this.role,access_mode:"own",can_read:true,can_write:this.role!=="marketing",can_manage_subscription:!this.testingContext,billing_org_id:this.pausedSeat ? personal : org,team_org_id:null});
       if (table === "paused_team_org") { assertEquals(body,{p_actor:user}); return json(this.pausedSeat ? org : null); }
-      if (table === "team_seat_status") { assertEquals(body,{p_org:org}); return json([{user_id:user,seat_active:!this.pausedSeat}]); }
+      if (table === "team_seat_status") {
+        assertEquals(body,{p_org:org});
+        return json(this.roster?.map(member => ({user_id:member.user_id,seat_active:true})) ??
+          [{user_id:user,seat_active:!this.pausedSeat}]);
+      }
       if (table === "org_has_internal_testing_grant") return json(this.masterTesting);
       if (table === "private_internal_testing_host_mode") return json(this.masterTesting ? {configured:true,active:true,access_mode:"private_testing"} : null);
       if (table === "private_internal_testing_context") {
@@ -81,10 +89,35 @@ class Fixture {
     if (table === "memberships") {
       if (url.searchParams.get("select") === "role") return row({role:this.role});
       if (this.failureTable === table) return json({message:"unavailable"},503);
+      if (this.roster) {
+        assertEquals(url.searchParams.get("org_id"),"eq."+org);
+        const actorFilter = url.searchParams.get("user_id");
+        assert(actorFilter === null || actorFilter === "eq."+user);
+        return json(this.roster.filter(member => actorFilter === null || member.user_id === user));
+      }
       return json([{user_id:user,org_id:org,role:this.role}]);
     }
     if (this.failureTable === table) return json({message:"unavailable"},503);
-    if (table === "profiles") return json([{id:user,name:"Fixture Manager",email:"manager@fixture.invalid"}]);
+    if (table === "profiles") {
+      if (!this.roster) return json([{id:user,name:"Fixture Manager",email:"manager@fixture.invalid"}]);
+      // Enforce a realistic gateway request-target limit on the actual URL
+      // serialized by supabase-js, not on a duplicated chunk-size constant.
+      const target = url.pathname + url.search;
+      const targetBytes = new TextEncoder().encode(target).byteLength;
+      const filter = url.searchParams.get("id");
+      assertMatch(filter ?? "", /^in\.\([a-f0-9,-]+\)$/);
+      const ids = filter!.slice(4,-1).split(",");
+      assertEquals(new Set(ids).size,ids.length);
+      const known = new Map(this.rosterProfiles.map(profile => [profile.id,profile]));
+      assert(ids.every(id => known.has(id)),"Profile lookup must stay inside the fixture's exact roster");
+      const ok = targetBytes <= 8192 && !ids.includes(this.failProfileUser ?? "");
+      this.profileReads.push({target,targetBytes,ids,ok});
+      if (targetBytes > 8192) return json({message:"fixture request target exceeds 8KiB"},414);
+      if (!ok) return json({message:"later fixture profile chunk unavailable"},503);
+      // PostgREST need not return the same order as the membership rows.
+      // Reversal catches an implementation that zips rows instead of joining ids.
+      return json([...ids].reverse().map(id => known.get(id)!));
+    }
     if (table === "org_invites") return json([]);
     if (table === "orgs") return row({name:"Fixture Team",plan:"team"});
     this.unexpected.push(table); throw new Error("Unexpected table");
@@ -189,4 +222,54 @@ Deno.test("sponsored private workspace reports Team benefits without becoming a 
 
 Deno.test("ordinary anonymous owner can still read its own workspace without private-host authority",async()=>fixture(async f=>{
  f.anonymous=true;f.failedRPC="private_internal_testing_host_mode";const response=await f.request("",{},"GET");const body=await response.json();assertEquals(response.status,200);assertEquals(body.access_mode,"private_libraries");assertEquals(body.members.length,1);assertEquals(f.writes,[]);
+}));
+
+
+function configureFirmRoster(f: Fixture) {
+  const members = Array.from({length:500},(_,index) => ({
+    user_id:index === 0 ? user : `d0148500-0000-4000-8000-${String(index).padStart(12,"0")}`,
+    org_id:org,
+    role:index === 0 ? "owner" : index % 7 === 0 ? "marketing" : "agent",
+  }));
+  const profiles = members.map((member,index) => ({id:member.user_id,
+    name:`Fixture member ${index}`,email:`member-${index}@fixture.invalid`}));
+  f.roster = members; f.rosterProfiles = profiles;
+  return {members,profiles};
+}
+
+Deno.test("500-member team read preserves every profile mapping within gateway request-target bounds",async()=>fixture(async f=>{
+  const {members,profiles} = configureFirmRoster(f);
+  const response = await f.request("",{},"GET");
+  assertEquals(response.status,200);
+  const body = await response.json();
+  assertEquals(body.actor_id,user);assertEquals(body.org_id,org);assertEquals(body.content_org_id,org);
+  assertEquals(body.can_manage,true);assertEquals(body.invites,[]);
+  assertEquals(body.seats,{used:500,allowed:500,paused:0});
+  assertEquals(body.members,members.map((member,index) => ({
+    user_id:member.user_id,role:member.role,name:profiles[index]!.name,email:profiles[index]!.email,
+    is_you:member.user_id === user,seat_active:true,
+  })),"All 500 ids, roles, names and emails must survive the real handler's merge");
+  assertEquals(new Set(body.members.map((member:Row) => member.user_id)).size,500);
+  assert(f.profileReads.length > 0);
+  assert(f.profileReads.every(read => read.ok && read.targetBytes <= 8192),
+    "Every serialized profile request target must fit the gateway, including URL encoding");
+  assertEquals([...new Set(f.profileReads.flatMap(read => read.ids))].sort(),
+    members.map(member => member.user_id).sort(),"No profile may be omitted or looked up outside the roster");
+  assertEquals(f.writes,[]);assertEquals(f.queueCalls,0);
+}));
+
+Deno.test("later profile chunk failure refuses the whole 500-member team read without a partial roster",async()=>fixture(async f=>{
+  const {members} = configureFirmRoster(f);
+  f.failProfileUser = members.at(-1)!.user_id;
+  const response = await f.request("",{},"GET");
+  assertEquals(response.status,503);
+  const body = await response.json();
+  assert(!("members" in body),"Successful earlier chunks cannot become a partial-success roster");
+  const failedIndex = f.profileReads.findIndex(read => read.ids.includes(f.failProfileUser!));
+  assert(failedIndex > 0 && f.profileReads.slice(0,failedIndex).some(read => read.ok && read.ids.length > 0),
+    "The control must reach a later chunk after an earlier chunk actually returned profiles");
+  assertEquals(f.profileReads[failedIndex]!.ok,false);
+  assert(f.profileReads.every(read => read.targetBytes <= 8192),
+    "The intended later-chunk failure must not be an unrelated oversized-URL refusal");
+  assertEquals(f.writes,[]);assertEquals(f.queueCalls,0);
 }));

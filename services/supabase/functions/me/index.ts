@@ -395,6 +395,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   assert(!billingRes.error && billingRes.data?.id === servingOrgId,503,"Team billing state could not be verified.");
   const purchaseRes = settled(first[1]) ?? billingRes;
   assert(!purchaseRes.error && purchaseRes.data?.id === purchaseOrgId,503,"Subscription billing state could not be verified.");
+  const purchaseOrg = purchaseRes.data;
   const profileRes = settled(first[2]);
   const orgRes = settled(first[3]);
   const libraryUsage = settled(first[4]);
@@ -424,11 +425,11 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const standardPriceRead = (async () => {
     const ready = { checkout: false, sandbox: false };
     if (!billingAccessKnown || !(canManageSubscription && purchaseOrgId === orgId && await standardPriceSigningReady())) return ready;
-    if (standardPriceContext(userId, directory, orgId, billingAccessKnown, entitlement.plan, purchaseRes.data.plan_source ?? null)) {
+    if (standardPriceContext(userId, directory, orgId, billingAccessKnown, entitlement.plan, purchaseOrg.plan_source ?? null)) {
       try { ready.checkout = await noActiveAppleChain(admin, userId, orgId); }
       catch { ready.checkout = false; }
     } else if (entitlement.plan === "pro" &&
-      standardPriceOwnerContext(userId, directory, orgId, billingAccessKnown, purchaseRes.data.plan_source ?? null)) {
+      standardPriceOwnerContext(userId, directory, orgId, billingAccessKnown, purchaseOrg.plan_source ?? null)) {
       try { ready.sandbox = await noActiveAppleChain(admin, userId, orgId) &&
         await sandboxStandardPriceAuthority(admin, userId, orgId); }
       catch { ready.sandbox = false; }

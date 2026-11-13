@@ -344,7 +344,7 @@ Deno.test("actual staging refuses1K fallback while preserving the surgical promp
   // One automatic retry, on the SAME prepared 2K route: never the 1K fallback.
   const response=await f.run(request);assertEquals(response.status,200,await response.text());
   assertEquals(f.state.submits,2);assertEquals(f.state.holds,2);assertEquals(f.state.helperDispatch,0);assertEquals(f.state.charges,1,"one customer charge for one delivered image");
-  assertEquals(f.state.holdArguments.map(a=>[a.p_stage,a.p_provider,a.p_model]),[["photo.stage:0","gemini","gemini-3.1-flash-image"],["photo.stage:1","gemini","gemini-3.1-flash-image"]]);
+  assertEquals(f.state.holdArguments.map((a:Record<string,unknown>)=>[a.p_stage,a.p_provider,a.p_model]),[["photo.stage:0","gemini","gemini-3.1-flash-image"],["photo.stage:1","gemini","gemini-3.1-flash-image"]]);
   assertEquals(f.state.costs.length,1);assertEquals(f.state.costs[0].meta.stage,"photo.stage:1");assertEquals(f.state.costs[0].meta.automatic_retry,true);assertEquals(f.state.inputs[1].extra.photo_quality_2k,true);
   assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
   assert(f.state.prompts[0].includes("EMPTY OR FURNISHED"));assert(f.state.prompts[0].includes("WHAT STAYS."));
@@ -394,7 +394,7 @@ Deno.test("actual custom handler cannot quietly fallback to1K after its prepared
   {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.custom",unit:"output_image",unit_cents:6.7},
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.custom",unit:"output_image",unit_cents:4}];
   const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,200,await response.text());
-  assertEquals(f.state.submits,2,"one automatic retry on the same 2K route");assertEquals(f.state.holds,2);assertEquals(f.state.holdArguments.every(a=>a.p_provider==="gemini"&&a.p_model==="gemini-3.1-flash-image"),true,"never the 1K fallback");assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assertEquals(f.state.inputs[1].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
+  assertEquals(f.state.submits,2,"one automatic retry on the same 2K route");assertEquals(f.state.holds,2);assertEquals(f.state.holdArguments.every((a:Record<string,unknown>)=>a.p_provider==="gemini"&&a.p_model==="gemini-3.1-flash-image"),true,"never the 1K fallback");assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assertEquals(f.state.inputs[1].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
  }finally{f.close();}
 });
 Deno.test("legacy photo polisher never refuses a request for its wording and still refuses a rewrite that invents a repaint",async()=>{

@@ -39,7 +39,7 @@ async function adapter(kind: Kind): Promise<() => Promise<unknown>> {
   return module.run;
 }
 
-async function exercise(kind: Kind, transport: (init: RequestInit) => Promise<Response>, run?:()=>Promise<unknown>) {
+async function exercise(kind: Kind, transport: (init: RequestInit) => Promise<Response>, run?:()=>Promise<unknown>, onPrepared?:()=>void) {
   const priorFetch = globalThis.fetch;
   const names=["GEMINI_API_KEY","HIGGSFIELD_API_KEY_ID","HIGGSFIELD_API_KEY_SECRET"];
   const prior=names.map(n=>Deno.env.get(n));names.forEach(n=>Deno.env.set(n,"synthetic-fixture-only"));
@@ -56,6 +56,7 @@ async function exercise(kind: Kind, transport: (init: RequestInit) => Promise<Re
   resetServingModeCache();
   try {
     const attempt=run??await adapter(kind);
+    onPrepared?.();
     let error:unknown,result:unknown;
     try {result=await fundedAttempt(context,"fixture.submit",{provider:steps[kind],model:"fixture-model"},{},{cents:1,version:"synthetic-tariff"},attempt);} catch(e){error=e;}
     return {error,result,calls,finishes};
@@ -74,6 +75,8 @@ for (const kind of ["voice","helper","chapters"] as const) {
       }) as typeof setTimeout;
     }else AbortSignal.timeout=(ms:number)=>{budgets.push(ms);return nativeTimeout(20);};
     let watchdog:ReturnType<typeof setTimeout>|undefined;let flight:ReturnType<typeof exercise>|undefined;
+    let startWatchdog!:()=>void;
+    const watchdogReached=new Promise<null>(resolve=>{startWatchdog=()=>{watchdog=setTimeout(()=>resolve(null),150);};});
     try {
       const work=flight=exercise(kind,async(init)=>{
         if(phase==="headers")return await new Promise<Response>((_resolve,reject)=>{
@@ -84,14 +87,20 @@ for (const kind of ["voice","helper","chapters"] as const) {
           const stop=()=>{aborts++;controller.error(init.signal?.reason??Error("fixture cleanup"));};release.push(stop);
           init.signal?.addEventListener("abort",stop,{once:true});
         }}),{headers:{"content-type":"application/json"}});
-      });
-      const outcome=await Promise.race([work,new Promise<null>(resolve=>{watchdog=setTimeout(()=>resolve(null),150);})]);
+      },undefined,startWatchdog);
+      // Source reads and dynamic adapter compilation are setup, not provider
+      // response time. The synthetic environment is already installed above.
+      const outcome=await Promise.race([work,watchdogReached]);
       assert(outcome!==null,`${kind} stalled ${phase} must settle before fixture watchdog`);
       assert(outcome.error);assertEquals(outcome.calls,1);assertEquals(outcome.finishes.map(x=>x.p_state),["uncertain"]);
       assertEquals(aborts,1);
       if(kind==="chapters")assert(budgets.length===1&&budgets[0]>=89_000&&budgets[0]<=90_000,"actual absolute timer retains its90s ceiling");
       else assertEquals(budgets,[kind==="helper"?30_000:90_000]);
-    }finally{AbortSignal.timeout=nativeTimeout;globalThis.setTimeout=nativeTimer;if(watchdog)clearTimeout(watchdog);if(aborts===0)release.forEach(stop=>stop());await flight;}
+    }finally{
+      if(watchdog)clearTimeout(watchdog);
+      try{try{if(aborts===0)release.forEach(stop=>stop());}finally{await flight;}}
+      finally{AbortSignal.timeout=nativeTimeout;globalThis.setTimeout=nativeTimer;}
+    }
   });
   Deno.test(`${kind}: actual submit refusal releases only a validated no-receipt response`,async()=>{
     const refusal=await exercise(kind,async()=>Response.json({error:"synthetic refusal"},{status:422}));

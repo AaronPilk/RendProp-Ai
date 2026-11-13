@@ -50,7 +50,7 @@ assert 'purchases.heldTrialOffer(for: product)' in block(paywall, '@ViewBuilder 
 assert purchase.index('validateHeldTrialPurchase(') < purchase.index('validateCurrentHeldTrialPurchase(') < purchase.index('try await product.purchase(')
 assert purchase.count('await trialRegionSupported(') == 2
 assert check.index('await trialRegionSupported(') < check.index('validateHeldTrialPurchase(')
-assert 'discardUnpurchased' not in check and 'automatically released or restarted' in check
+assert 'discardUnpurchased' not in check and 'preparedTrialReservation = nil; preparedTrialSnapshot = nil' in check
 assert purchase.count('if !retainTrialBinding, createdBinding, let binding = preparedBinding') == 5
 assert purchase.index('verifiedHeldTrialForDispatch = true') > purchase.index('validateCurrentHeldTrialPurchase(')
 assert purchase.index('guard PurchaseDispatchAdmission.allows(') < purchase.index('try await product.purchase(')

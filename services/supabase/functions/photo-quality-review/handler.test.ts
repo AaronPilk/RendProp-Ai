@@ -86,10 +86,10 @@ async function fixture(){
 }
 Deno.test("normal actor's exact owned paid pair is copied once into private calibration; no generation or credit charge",async()=>{
  const f=await fixture();try{
-  const first=await f.run();assertEquals(first.status,409);assertEquals(first.body.code,"photo_quality_pending");assertEquals(first.body.check_id,check);assertEquals(first.body.image_b64,undefined);assertEquals(f.state.puts,2);assertEquals(f.state.starts,1);
+  const first=await f.run();assertEquals(first.status,409);assertEquals(first.body.code,"photo_quality_pending");assertEquals(first.body.check_id,check);assertEquals(first.body.image_b64,undefined);assertEquals(f.state.puts,2);assertEquals(f.state.starts,3,"Unacknowledged CPU wake is bounded to three attempts of this same check");
   assertEquals(f.state.lastBegin.p_input.bytes,source.length);assertEquals(f.state.lastBegin.p_output.bytes,candidate.length);
   assertEquals([...f.objects.values()].at(-2)?.bytes,source);assertEquals([...f.objects.values()].at(-1)?.bytes,candidate);
-  const second=await f.run();assertEquals(second.status,409);assertEquals(f.state.puts,2,"Replay never copies new evidence or creates a new check");assertEquals(f.state.calibrationCalls,2);
+  const second=await f.run();assertEquals(second.status,409);assertEquals(f.state.puts,2,"Replay never copies new evidence or creates a new check");assertEquals(f.state.calibrationCalls,2);assertEquals(f.state.starts,6,"Explicit replay can wake the same saved check three more times without generation");
   assertEquals(JSON.stringify(pointer),oldPointer,"Old result pointer/provenance stays byte-identical");assert(!f.state.rpcs.some(n=>n.startsWith("serving_")||n.includes("register")||n==="photo_quality_begin"));
   assertEquals(first.headers.get("cache-control"),"no-store");assertEquals(first.headers.get("access-control-allow-methods"),"GET, POST, OPTIONS");
  }finally{f.close();}

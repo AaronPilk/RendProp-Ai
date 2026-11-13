@@ -543,10 +543,16 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
     /// every write to /me discards both (see `MeReadCoalescer`).
     private func sharedMeRead() async throws -> Data {
         guard let key = await MeReadCoalescer.currentKey() else {
-            return try await execute(makeRequest(url: url(["me"])))
+            throw CloudSyncError.identityChanged
         }
         return try await MeReadCoalescer.shared.data(key: key, reuseWithin: MeReadCoalescer.reuseInterval) { [self] in
-            try await self.execute(self.makeRequest(url: self.url(["me"])))
+            // This task can start after the caller's MainActor hop. Bind the
+            // request to the same account, session and library as its cache key.
+            guard MeReadCoalescer.currentKey() == key else { throw CloudSyncError.identityChanged }
+            let request = self.makeRequest(url: self.url(["me"]))
+            return try await self.execute(request, beforeSend: {
+                guard MeReadCoalescer.currentKey() == key else { throw CloudSyncError.identityChanged }
+            })
         }
     }
 
@@ -3195,21 +3201,29 @@ final class LiveAPIClient: PhotoDeclutterAssessmentAPI, PhotoSavedEditAPI, APICl
     /// already in flight for the same key).
     func data(key: String, reuseWithin: TimeInterval,
               fetch: @escaping @MainActor () async throws -> Data) async throws -> Data {
+        guard key == Self.currentKey() else { throw CloudSyncError.identityChanged }
         if reuseWithin > 0, let last, last.key == key, Date().timeIntervalSince(last.at) < reuseWithin {
             return last.data
         }
         // Join a request already in flight. If it fails, ask again ourselves:
         // another caller's failure is not this caller's answer.
+        let joiningGeneration = generation
         if let running, running.key == key, let joined = try? await running.task.value {
+            guard key == Self.currentKey(), generation == joiningGeneration else { throw CloudSyncError.identityChanged }
             return joined
         }
+        guard key == Self.currentKey(), generation == joiningGeneration else { throw CloudSyncError.identityChanged }
         let started = generation
-        let task = Task { @MainActor in try await fetch() }
+        let task = Task { @MainActor in
+            guard key == Self.currentKey(), generation == started else { throw CloudSyncError.identityChanged }
+            return try await fetch()
+        }
         running = (key, task)
         do {
             let data = try await task.value
             if running?.task == task { running = nil }
-            if generation == started { last = (key, Date(), data) }
+            guard key == Self.currentKey(), generation == started else { throw CloudSyncError.identityChanged }
+            last = (key, Date(), data)
             return data
         } catch {
             if running?.task == task { running = nil }

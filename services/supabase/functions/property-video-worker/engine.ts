@@ -13,7 +13,7 @@ import{presignGet}from'../_shared/providers/common.ts';
 import{headObject,R2_BUCKET_RENDERS}from'../_shared/r2.ts';
 import{rpc,bucket,bytesFrom,base64,ownedHead}from'../property-video-jobs/runtime.ts';
 import type{WorkerAction,ComposeAction}from'../property-video-jobs/contracts.ts';
-import{temporalReport,temporalRequired,temporalRoute,temporalTask}from'./temporal.ts';
+import{temporalReport,temporalRequired,temporalRoute,temporalTask,type TemporalReport}from'./temporal.ts';
 const seconds=(n:number)=>new Date(Date.now()+n*1000).toISOString();
 export async function scope(job:string,lease:string,attempt?:string){
  const ctx=await rpc('property_video_job_worker_scope',{p_job:job,p_lease:lease,p_attempt:attempt??null});
@@ -142,7 +142,7 @@ export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;asse
  // verdict no longer decides anything: a failed, missing or malformed report
  // never pauses, fails or re-extracts the shot, never buys a generation and
  // never substitutes a still photo. The clip is used as it is.
- if(temporalRequired(j.quality_profile)){const report=temporalReport(raw.temporal);let verdict:{pass:boolean;reasons:string[]}|null=null;
+ if(temporalRequired(j.quality_profile)){const report=temporalReport(raw.temporal);let verdict:TemporalReport['verdict']|null=null;
   if(report){
    // The stored record is the one reported (first measurement of this attempt under this limit version; SQL returns it on a repeat).
    try{verdict=temporalReport(await rpc('property_video_job_temporal',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_clip_sha256:raw.clip_sha256,p_report:report}))?.verdict??null;}

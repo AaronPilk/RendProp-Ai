@@ -138,6 +138,8 @@ jobs:
         run: python3 apps/ios/tests/run-workspace-allowance-display.py --out "$RUNNER_TEMP/rendprop-testing-allowance"
       - name: Verified trial counters and disabled offers preserve billing dates
         run: python3 apps/ios/tests/run-native-trial.py --out "$RUNNER_TEMP/rendprop-native-trial"
+      - name: Shared account reads retain their account, session and library across actor hops
+        run: python3 apps/ios/tests/run-me-read-coalescer.py --evidence-dir "$RUNNER_TEMP/rendprop-me-read-coalescer"
       - name: Configured photo admissions and separate AI balance remain workspace bound
         run: python3 apps/ios/tests/run-serving-photo-package.py --out "$RUNNER_TEMP/rendprop-native-photo-package"
       - name: Retain photo package decoding and compiled refusal evidence

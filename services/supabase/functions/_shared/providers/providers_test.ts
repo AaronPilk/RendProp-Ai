@@ -509,16 +509,20 @@ Deno.test("chain: an nsfw refusal is rethrown, never shopped to another vendor",
   assertEquals((err as HttpError).code, "unsupported_edit");
 });
 
-Deno.test("chain: an exhausted multi-step chain is one 503 naming the task", async () => {
+Deno.test("chain: an exhausted multi-step chain is one 503 with plain retry advice", async () => {
   const steps = [step({ route_id: "a" }), step({ route_id: "b" })];
+  const tried: string[] = [];
   const err = await assertRejects(() =>
-    runChain("video.reel_clip", steps, () => {
+    runChain("video.reel_clip", steps, (s) => {
+      tried.push(s.route_id);
       throw new ProviderError("fal", "upstream", "fal HTTP 502");
     })
   );
   assert(err instanceof HttpError);
   assertEquals((err as HttpError).status, 503);
-  assertStringIncludes((err as HttpError).message, "All providers for video.reel_clip are unavailable right now.");
+  assertEquals((err as HttpError).code, "upstream");
+  assertEquals((err as HttpError).message, "The AI service is not responding right now, so this was not made. Try again in a few minutes.");
+  assertEquals(tried, ["a", "b"]);
 });
 
 Deno.test("chain: a chain of ONE retains status/code and excludes the provider's raw body", async () => {

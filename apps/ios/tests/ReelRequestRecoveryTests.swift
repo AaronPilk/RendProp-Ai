@@ -285,6 +285,7 @@ final class ClosedVideoProtocol:URLProtocol {
   clip.rejectsDrift=true
   let failedCheckClip:URL
   do { failedCheckClip=try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0) } catch { preconditionFailure("a failed advisory check must not hold a finished clip") }
+  check(PendingReelRequest.load(ctx) != nil,"temporary successful download keeps request")
   check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"a failed advisory check sends no generation retry and leaves the receipt to its caller")
   check(failedCheckClip.lastPathComponent=="clip-0.mp4" && FileManager.default.fileExists(atPath:failedCheckClip.path),"a failed advisory check still returns the AI clip")
   try FileManager.default.removeItem(at:failedCheckClip)

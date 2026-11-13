@@ -189,7 +189,7 @@ enum MovingPhotoClock {
         await execute(lost)
         lost.model.api.loseSubmit = false; await execute(lost)
         check(lost.model.api.posts == 1 && lost.model.api.polls == 0 && lost.animatedClip == nil, "lost submission reply cannot dispatch a second paid request")
-        check(lost.aiFailure?.message.contains("reply was not received") == true, "unconfirmed submission is shown honestly and retained")
+        check(lost.aiFailure?.message.contains("did not hear back") == true && lost.aiFailure?.message.contains("No new video will be started") == true, "unconfirmed submission is shown honestly and retained")
 
         lost.model.api.lookupPending = false; await execute(lost)
         check(lost.model.api.posts == 1 && lost.model.api.lookups == 2 && lost.animatedClip != nil, "authorized operation lookup recovers lost202 without another paid request")

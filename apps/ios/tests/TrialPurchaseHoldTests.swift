@@ -152,8 +152,11 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
         check(photoOnlyHold.checked(actor: actor, org: org, product: sku) == photoOnlyHold,
               "Current zero-cap, five-photo reservation was rejected")
         check(makeHold(actor: actor, org: org, product: sku, photos: 6, photoOnly: true)
+              .checked(actor: actor, org: org, product: sku) != nil,
+              "Server-configured per-user photo allowance was rejected")
+        check(makeHold(actor: actor, org: org, product: sku, photos: 21, photoOnly: true)
               .checked(actor: actor, org: org, product: sku) == nil,
-              "Current held trial silently expanded beyond five photo edits")
+              "Oversized photo-only allowance was accepted")
         for cap in [5, 6, 20] {
             let recorded = makeHold(actor: actor, org: org, product: sku, photos: cap)
             check(recorded.checked(actor: actor, org: org, product: sku) == recorded,
