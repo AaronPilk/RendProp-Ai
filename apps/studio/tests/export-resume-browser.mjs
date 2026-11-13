@@ -31,10 +31,76 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
+const MAX_RECORDER_REQUESTS = 1024;
+const MAX_REJECTED_BLOB_BYTES = 4 * 1024 * 1024;
 const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/ci-failure-annotation.mjs", ...["export", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
 const receipt = { sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
+function requestTimingFacts(rows) {
+  const requests = Array.isArray(rows) ? rows.slice(0, MAX_RECORDER_REQUESTS)
+    .filter(row => Number.isFinite(row?.at) && Number.isFinite(row?.doneAt)) : [];
+  let maxGapMs = 0, minIn500Ms = null, windowStart = 0;
+  for (let index = 0; index < requests.length; index++) {
+    if (index) maxGapMs = Math.max(maxGapMs, requests[index].at - requests[index - 1].at);
+    while (requests[windowStart].at < requests[index].at - 500) windowStart++;
+    if (requests[index].at - requests[0].at >= 500)
+      minIn500Ms = Math.min(minIn500Ms ?? Infinity, index - windowStart + 1);
+  }
+  return {observedRows: requests.length, maxGapMs, minIn500Ms,
+    nativeThrowCount: requests.filter(row => row.threw === true).length};
+}
+async function retainRejectedRecorderBlob(page, snapshot) {
+  if (snapshot?.blobCount !== 1) return {status: "product-blob-not-reached"};
+  if (snapshot.blobOverCap || !Number.isSafeInteger(snapshot.blobSize) ||
+      snapshot.blobSize < 1 || snapshot.blobSize > MAX_REJECTED_BLOB_BYTES)
+    return {status: "private-byte-cap", declaredBytes: snapshot.blobSize};
+  // Only after the export has settled: this is the exact stopped product Blob
+  // captured by the single post-construction hook, never a replacement Blob.
+  const base64 = await page.evaluate(async () => {
+    const blob = window.fixture.cadenceEvidence?.blob;
+    if (!blob || blob.size > 4194304) return null;
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 8192)
+      binary += String.fromCharCode(...bytes.subarray(index, index + 8192));
+    return btoa(binary);
+  });
+  if (typeof base64 !== "string" || base64.length > Math.ceil(MAX_REJECTED_BLOB_BYTES / 3) * 4 + 4)
+    return {status: "private-byte-read-unavailable"};
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length !== snapshot.blobSize || bytes.length > MAX_REJECTED_BLOB_BYTES)
+    return {status: "private-byte-length-mismatch", declaredBytes: snapshot.blobSize, decodedBytes: bytes.length};
+  const output = join(artifacts, "fixed-original.rejected-diagnostic.mp4");
+  await writeFile(output, bytes, {flag: "wx", mode: 0o600});
+  const retained = {status: "retained", path: output, bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex")};
+  try {
+    const parsed = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_packets",
+      "-show_streams", "-show_entries", "stream=time_base:packet=pts,duration,pts_time,duration_time",
+      "-of", "json", output], {encoding: "utf8", timeout: 10000, maxBuffer: 2 * 1024 * 1024}));
+    if (!Array.isArray(parsed.packets) || parsed.packets.length > 7200)
+      return {...retained, packetProbe: {status: "unavailable-packet-count"}};
+    const number = value => (typeof value === "number" ||
+      (typeof value === "string" && value.trim() !== "")) && Number.isFinite(Number(value))
+      ? Number(value) : null;
+    const packets = parsed.packets.map(packet => ({pts: number(packet.pts), duration: number(packet.duration),
+      ptsSeconds: number(packet.pts_time), durationSeconds: number(packet.duration_time)}));
+    const positive = packets.filter(packet => packet.durationSeconds > 0 && Number.isFinite(packet.ptsSeconds))
+      .sort((a, b) => a.ptsSeconds - b.ptsSeconds);
+    const failedIndex = snapshot.encodedFailureIndex;
+    let failedWindow = null;
+    if (Number.isInteger(failedIndex) && failedIndex >= 0 && failedIndex < positive.length) {
+      const endSeconds = positive[failedIndex].ptsSeconds, startSeconds = endSeconds - .5;
+      failedWindow = {startSeconds, endSeconds,
+        samples: positive.filter(packet => packet.ptsSeconds >= startSeconds && packet.ptsSeconds <= endSeconds).length};
+    }
+    return {...retained, packetProbe: {status: "observed", timeBase: parsed.streams?.[0]?.time_base ?? null,
+      packetCount: packets.length, positiveDurationCount: positive.length, failedWindow, packets}};
+  } catch (error) {
+    return {...retained, packetProbe: {status: "unavailable", errorClass: typeof error?.name === "string" ? error.name.slice(0, 40) : "Error"}};
+  }
+}
 try {
   await writeFile(join(artifacts, "fixture.html"), '<!doctype html><html><head><meta charset="utf-8"></head><body><input id="sources" type="file" multiple><input id="voice" type="file"><button id="run">Export</button><a id="download" download="export.mp4" hidden>Download</a><script type="module" src="./fixture.ts"></script></body></html>');
   await writeFile(join(artifacts, "fixture.ts"), `
@@ -42,7 +108,7 @@ import {exportLocalVideo,exportFormats} from ${JSON.stringify(join(root, "src/ed
 import {inspectFile} from ${JSON.stringify(join(root, "src/editor/media.ts"))};
 import {validateDraft} from ${JSON.stringify(join(root, "src/editor/model.ts"))};
 let sources=[],voice,narrated=false,url,exportController,decodeIndex=0;
-const fixture=window.fixture={ready:false,error:null,result:null,trace:[],exporting:false,decodeDelays:[],revision:1,configure:(value,photoClockControl=false)=>{narrated=value;fixture.photoClockControl=photoClockControl;},cancel:()=>exportController?.abort(new Error("Fixture export cancelled")),
+const fixture=window.fixture={ready:false,error:null,result:null,trace:[],exporting:false,decodeDelays:[],revision:1,cadenceDiagnosticEnabled:false,cadenceEvidence:null,configure:(value,photoClockControl=false)=>{narrated=value;fixture.photoClockControl=photoClockControl;},cancel:()=>exportController?.abort(new Error("Fixture export cancelled")),
   delayDecode:async(signal,kind)=>{
     const index=decodeIndex++,delay=fixture.decodeDelays[index]??0;
     log("decode.start",{index,kind,delay});
@@ -73,6 +139,75 @@ fixture.requestExportFrame=callback=>{
 };
 const NativeRecorder=MediaRecorder;
 function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...extra});}
+// Only the first synthetic fixed-original attempt enables this scalar recorder
+// observation. The original track and native method remain the product inputs.
+function noteCadenceError(diagnostic){try{diagnostic.hookErrors++;}catch{}}
+function noteRecorderData(event,recorder){
+  const diagnostic=fixture.cadenceEvidence;if(!diagnostic)return;
+  try{
+    if(diagnostic.dataEvents.length>=32){diagnostic.dataOverflow=true;return;}
+    diagnostic.dataEvents.push({at:performance.now(),bytes:event.data.size,state:recorder.state});
+  }catch{noteCadenceError(diagnostic);}
+}
+function noteNativeRequest(diagnostic,before,after,index,threw){
+  try{
+    const row=diagnostic.requestCount++;
+    if(row>=1024){diagnostic.requestOverflow=true;return;}
+    diagnostic.requestAt[row]=before;diagnostic.requestDoneAt[row]=after;
+    diagnostic.requestClip[row]=Number.isInteger(index)?index:-1;
+    diagnostic.requestThrew[row]=threw?1:0;
+  }catch{noteCadenceError(diagnostic);}
+}
+const nativeCaptureStream=HTMLCanvasElement.prototype.captureStream;
+HTMLCanvasElement.prototype.captureStream=function(...args){
+  const stream=Reflect.apply(nativeCaptureStream,this,args);
+  const diagnostic=fixture.cadenceEvidence;if(!diagnostic)return stream;
+  try{
+    diagnostic.captureStreamCount++;
+    if(diagnostic.captureStreamCount!==1||args[0]!==0){noteCadenceError(diagnostic);return stream;}
+    const track=stream.getVideoTracks()[0],nativeRequest=track?.requestFrame;
+    if(typeof nativeRequest!=="function"){noteCadenceError(diagnostic);return stream;}
+    Object.defineProperty(track,"requestFrame",{configurable:true,writable:true,value:function(...requestArgs){
+      let before=NaN;
+      try{before=performance.now();}catch{noteCadenceError(diagnostic);}
+      let result;
+      try{result=Reflect.apply(nativeRequest,this,requestArgs);}
+      catch(error){
+        try{noteNativeRequest(diagnostic,before,performance.now(),fixture.frameClipIndex,true);}
+        catch{noteCadenceError(diagnostic);}
+        throw error;
+      }
+      try{noteNativeRequest(diagnostic,before,performance.now(),fixture.frameClipIndex,false);}
+      catch{noteCadenceError(diagnostic);}
+      return result;
+    }});
+    diagnostic.hookInstalled=true;
+  }catch{noteCadenceError(diagnostic);}
+  return stream;
+};
+fixture.onProductBlob=blob=>{
+  const diagnostic=fixture.cadenceEvidence;if(!diagnostic)return;
+  try{
+    diagnostic.blobCount++;diagnostic.blobAt=performance.now();diagnostic.blobSize=blob.size;
+    diagnostic.blobIsMp4=blob.type.startsWith("video/mp4");
+    if(diagnostic.blobCount!==1){noteCadenceError(diagnostic);return;}
+    if(blob.size>4194304){diagnostic.blobOverCap=true;return;}
+    diagnostic.blob=blob;
+  }catch{noteCadenceError(diagnostic);}
+};
+fixture.snapshotCadence=()=>{
+  const diagnostic=fixture.cadenceEvidence;if(!diagnostic)return null;
+  const requests=[];
+  for(let index=0;index<Math.min(diagnostic.requestCount,1024);index++)requests.push({
+    at:diagnostic.requestAt[index],doneAt:diagnostic.requestDoneAt[index],
+    clipIndex:diagnostic.requestClip[index],threw:diagnostic.requestThrew[index]===1});
+  return {hookInstalled:diagnostic.hookInstalled,hookErrors:diagnostic.hookErrors,
+    captureStreamCount:diagnostic.captureStreamCount,
+    requestCount:diagnostic.requestCount,requestOverflow:diagnostic.requestOverflow,requests,
+    dataEvents:diagnostic.dataEvents.slice(0,32),dataOverflow:diagnostic.dataOverflow,
+    blobCount:diagnostic.blobCount,blobAt:diagnostic.blobAt,blobSize:diagnostic.blobSize,
+    blobIsMp4:diagnostic.blobIsMp4,blobOverCap:diagnostic.blobOverCap};
+};
 // Read-only diagnostics: no extra timers, clock substitution or audio resume.
 // Keep only the preceding read/wait; the existing trace retains each snapshot.
 fixture.clockDiagnostics=(index,audio,phase)=>{
@@ -122,7 +257,8 @@ function observeVideo(video){
 }
 window.MediaRecorder=class extends NativeRecorder {
   constructor(...args){super(...args);fixture.tracks.push(...args[0].getTracks());for(const event of ["start","resume","pause","stop"])
-    super.addEventListener(event,()=>log(event+".native",{state:this.state}));}
+    super.addEventListener(event,()=>log(event+".native",{state:this.state}));
+    if(fixture.cadenceEvidence)super.addEventListener("dataavailable",event=>noteRecorderData(event,this));}
   start(...args){log("start.call",{state:this.state});const result=super.start(...args);log("start.return",{state:this.state});return result;}
   resume(...args){log("resume.call",{state:this.state});const result=super.resume(...args);log("resume.return",{state:this.state});return result;}
   pause(...args){log("pause.call",{state:this.state,sourceTime:fixture.playingMedia?.currentTime});return super.pause(...args);}
@@ -138,6 +274,7 @@ document.querySelector("#sources").onchange=async event=>{fixture.ready=false;tr
 document.querySelector("#voice").onchange=event=>{voice=event.target.files[0];};
 document.querySelector("#run").onclick=async()=>{
   fixture.error=null;fixture.errorName=null;fixture.errorCause=null;fixture.result=null;fixture.trace=[];fixture.previousClockRead=undefined;fixture.clockWait=undefined;fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
+  fixture.cadenceEvidence=fixture.cadenceDiagnosticEnabled?{requestAt:new Float64Array(1024),requestDoneAt:new Float64Array(1024),requestClip:new Int16Array(1024),requestThrew:new Uint8Array(1024),requestCount:0,requestOverflow:false,hookInstalled:false,hookErrors:0,captureStreamCount:0,dataEvents:[],dataOverflow:false,blob:null,blobCount:0,blobAt:null,blobSize:null,blobIsMp4:false,blobOverCap:false}:null;
   if(url)URL.revokeObjectURL(url);
   try{
     const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:fixture.muteStaleLookahead?"muted":"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?(fixture.photoClockControl?2:4):.5,speed:index===1?(fixture.photoClockControl?1:2):1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
@@ -181,24 +318,35 @@ document.querySelector("#run").onclick=async()=>{
     assert(code.includes(handoff));
     return code.replace(handoff, "      if (index > 0) { lookahead = prepare(clip); await lookahead.settled; }\n" + handoff);
   } };
+  let buildingVariant;
+  const transformedExportHashes = {};
   const clockObservationPlugin = { name: "export-clock-observation", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;
+    const inputSha256 = createHash("sha256").update(code).digest("hex");
+    assert.equal(inputSha256, sourceHashes["src/editor/export.ts"], "Observation must consume the pinned production exporter");
     const seam = "const start = originalWallStart ?? performance.now();";
     assert(code.includes(seam));
     const schedule = "const frame = requestAnimationFrame(done);";
     assert(code.includes(schedule), "Cadence fault must intercept only the actual export-frame animation branch");
     const audioLoss = "audio.currentTime - mediaClockStart - Math.max(0, video.currentTime - mediaTimeStart) / (clip.speed ?? 1)";
     const refusal = "            refuseStall();";
+    const productBlob = "const blob = new Blob(chunks, { type: mime });";
     assert.equal(code.split(audioLoss).length - 1, 1, "Observe the exact existing original-audio loss calculation once");
     assert.equal(code.split(refusal).length - 1, 1, "Identify only the original-audio refusal call site");
+    assert.equal(code.split(productBlob).length - 1, 1, "Observe exactly the stopped product Blob once");
     code = code.replace(audioLoss, "(window as any).fixture.originalAudioLoss(audio.currentTime, mediaClockStart, video.currentTime, mediaTimeStart, (clip.speed ?? 1), {index, elapsed, duration, ended:video.ended, limit:MAX_ORIGINAL_AUDIO_LOSS_SECONDS})")
       .replace(refusal, '            (window as any).fixture.trace.push({event:"original.audio.refusal",kind:"original_audio_stall",at:performance.now()});\n' + refusal);
     const clockWait = "const now = await nextExportFrame(renderSignal, (duration - elapsedAtWait) * 1000);";
     assert.equal(code.split(clockWait).length - 1, 1, "Observe only the existing export-frame wait without changing it");
-    return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index,diagnostics:(window as any).fixture.clockDiagnostics(index,audio,"start")}); if(index===1 && (window as any).fixture.interruptAudio) setTimeout(()=>{const sound=(window as any).fixture.audio; sound.suspend().then(()=>setTimeout(()=>{if(sound.state!=="closed")sound.resume();},180));},250);')
+    const transformed = code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index,diagnostics:(window as any).fixture.clockDiagnostics(index,audio,"start")}); if(index===1 && (window as any).fixture.interruptAudio) setTimeout(()=>{const sound=(window as any).fixture.audio; sound.suspend().then(()=>setTimeout(()=>{if(sound.state!=="closed")sound.resume();},180));},250);')
       .replace(clockWait, 'if(index===1 && (window as any).fixture.captureGapMs && !(window as any).fixture.captureGapInjected) { (window as any).fixture.captureGapInjected=true; (window as any).fixture.trace.push({event:"capture.gap.injected",at:performance.now(),index,milliseconds:(window as any).fixture.captureGapMs}); await new Promise(resolve=>setTimeout(resolve,(window as any).fixture.captureGapMs)); } if(index===1 && (window as any).fixture.sparseCaptureMs) { (window as any).fixture.trace.push({event:"capture.sparse.injected",at:performance.now(),index,milliseconds:(window as any).fixture.sparseCaptureMs}); await new Promise(resolve=>setTimeout(resolve,(window as any).fixture.sparseCaptureMs)); } (window as any).fixture.observeClockWait(index, (duration - elapsedAtWait) * 1000); ' + clockWait)
       .replace('recordingClock.read((now - start)', '(window as any).fixture.trace.push({event:"clip.clock.read",at:performance.now(),index,wall:(now-start)/1000,timeline:elapsed,audio:audio?.currentTime,media:video?.currentTime,diagnostics:(window as any).fixture.clockDiagnostics(index,audio,"read")}); recordingClock.read((now - start)')
-      .replace(schedule, "const frame = (window as any).fixture.requestExportFrame(done);");
+      .replace(schedule, "const frame = (window as any).fixture.requestExportFrame(done);")
+      .replace(productBlob, productBlob + ' try { (window as any).fixture.onProductBlob(blob); } catch {}');
+    assert(buildingVariant && !transformedExportHashes[buildingVariant], "One audited exporter transform per variant");
+    transformedExportHashes[buildingVariant] = {inputSha256, observationStageSha256: createHash("sha256").update(transformed).digest("hex"),
+      productBlobHookCount: transformed.split("fixture.onProductBlob(blob)").length - 1};
+    return transformed;
   } };
   const oldFrameClockPlugin = { name: "negative-control-animation-only-clock", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;
@@ -226,7 +374,13 @@ document.querySelector("#run").onclick=async()=>{
     assert(code.includes(seam), "Cadence control must remove only the frame interval ceiling");
     return code.replace(seam, "remainingMs");
   } };
-  for (const variant of variants) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", plugins: [clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
+  for (const variant of variants) {
+    buildingVariant = variant;
+    await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", plugins: [clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
+  }
+  buildingVariant = undefined;
+  assert.deepEqual(Object.keys(transformedExportHashes).sort(), [...variants].sort());
+  receipt.transformedExportHashes = transformedExportHashes;
   server = createServer(async (request, response) => {
     const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`);
     if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end();
@@ -304,7 +458,7 @@ document.querySelector("#run").onclick=async()=>{
     for (const narrated of variant === "fixed" ? [false, true] : [true, false]) {
       const attemptName = `${variant}-${narrated ? "narrated" : "original"}`;
       const {context, page} = await openFixture(variant, attemptName);
-      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant });
+      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated, variant === "clock-baseline"); window.fixture.cadenceDiagnosticEnabled = variant === "fixed" && !narrated; window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant });
       // Optional evidence only: expensive native tracing and scheduling
       // observers require --diagnostics. Product clock traces and all export
       // acceptance assertions remain active in both modes.
@@ -329,6 +483,38 @@ document.querySelector("#run").onclick=async()=>{
           tracks: window.fixture.tracks.map(track => track.readyState) }));
         attempt = { ...attempt, variant, narrated, audioOutput: await verifyTestAudioOutput(page, audioOutput), diagnostics: observers.facts,
           schedulingProbe: observers.facts.schedulingProbe ?? {status: "disabled"}, ...(observers.facts.nativeTrace ? {nativeTrace: observers.facts.nativeTrace} : {}) };
+        if (variant === "fixed" && !narrated) {
+          try {
+            const snapshot = await page.evaluate(() => window.fixture.snapshotCadence());
+            const recorderCalls = (Array.isArray(attempt.trace) ? attempt.trace : [])
+              .filter(row => ["start.call", "start.return", "start.native", "resume.call", "resume.return",
+                "resume.native", "pause.call", "pause.native", "stop.call", "stop.native"].includes(row?.event))
+              .slice(0, 32).map(row => ({event: row.event, at: row.at, state: row.state}));
+            attempt.recorderCadence = {...snapshot, recorderCalls,
+              requestTimingScope: "whole-attempt-including-native-pauses",
+              requestFacts: requestTimingFacts(snapshot?.requests)};
+            if (attempt.error) {
+              try {
+                attempt.recorderCadence.rejectedBlob = await retainRejectedRecorderBlob(page,
+                  {...snapshot, encodedFailureIndex: attempt.errorCause?.frameIndex});
+              } catch (error) {
+                attempt.recorderCadence.rejectedBlob = {status: "retention-unavailable",
+                  errorClass: typeof error?.name === "string" ? error.name.slice(0, 40) : "Error"};
+              }
+            }
+            attempt.recorderCadence.complete = snapshot?.hookInstalled === true && snapshot.hookErrors === 0 &&
+              snapshot.captureStreamCount === 1 &&
+              snapshot.requestOverflow === false && snapshot.dataOverflow === false && snapshot.blobCount === 1 &&
+              snapshot.requestCount > 0 && snapshot.dataEvents.length > 0 &&
+              recorderCalls.some(row => row.event === "start.call") &&
+              recorderCalls.some(row => row.event === "stop.call") &&
+              attempt.recorderCadence.requestFacts.observedRows === snapshot.requestCount &&
+              (!attempt.error || attempt.recorderCadence.rejectedBlob?.packetProbe?.status === "observed");
+          } catch (error) {
+            attempt.recorderCadence = {status: "observation-unavailable", complete: false,
+              errorClass: typeof error?.name === "string" ? error.name.slice(0, 40) : "Error"};
+          }
+        }
         receipt.attempts.push(attempt); await persist();
       }
       if (variant === "baseline" && attempt.error) {
@@ -597,7 +783,14 @@ finally {
         errorName: typeof attempt.errorName === "string" ? attempt.errorName.slice(0, 60) : null,
         errorCause: numeric(attempt.errorCause, ["gapMilliseconds", "maxGapMilliseconds",
           "maxTransitionGapMilliseconds", "transitionMilliseconds", "framesCaptured", "minFrames",
-          "windowMilliseconds", "maxLossSeconds"]),
+          "windowMilliseconds", "maxLossSeconds", "frameIndex", "frameCount", "observed", "limit"]),
+        recorderCadence: attempt.recorderCadence ? {
+          complete: attempt.recorderCadence.complete === true,
+          ...numeric(attempt.recorderCadence, ["captureStreamCount", "requestCount", "hookErrors", "blobCount", "blobSize"]),
+          ...numeric(attempt.recorderCadence.requestFacts, ["observedRows", "maxGapMs", "minIn500Ms", "nativeThrowCount"]),
+          ...numeric(attempt.recorderCadence.rejectedBlob?.packetProbe, ["packetCount", "positiveDurationCount"]),
+          ...numeric(attempt.recorderCadence.rejectedBlob?.packetProbe?.failedWindow, ["startSeconds", "endSeconds", "samples"]),
+        } : null,
         traceTail: (Array.isArray(attempt.trace) ? attempt.trace : [])
           .filter(value => events.has(value?.event)).slice(-16)
           .map(value => ({event: value.event, ...numeric(value, ["at", "index", "wall", "timeline",

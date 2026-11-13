@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Closed-fixture checks for the CI setup retries (no simulator, no network).
 
-Covers tools/ci/warm-simulator.py and tools/ci/apt-retry.sh: transient setup
+Covers simulator warm-up, clip-frame SDK discovery, and apt retry: transient setup
 faults are retried a fixed number of times, exhausted retries fail and are
 labelled as infrastructure, and nothing malformed or unverified is accepted.
 """
+import ast
 import importlib.util
 import json
 import os
@@ -18,6 +19,16 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('warm_simulator', ROOT / 'tools/ci/warm-simulator.py')
 warm_simulator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(warm_simulator)
+
+# Extract the pure setup helper without importing the AVFoundation harness,
+# whose module intentionally runs the actual simulator proof at top level.
+clip_source = ROOT / 'apps/ios/tests/run-clip-frames.py'
+clip_tree = ast.parse(clip_source.read_text())
+clip_helper = next(node for node in clip_tree.body
+                   if isinstance(node, ast.FunctionDef) and node.name == 'discover_sdk')
+clip_namespace = {'subprocess': subprocess}
+exec(compile(ast.Module(body=[clip_helper], type_ignores=[]), str(clip_source), 'exec'), clip_namespace)
+discover_sdk = clip_namespace['discover_sdk']
 
 UDID = '11111111-2222-3333-4444-555555555555'
 
@@ -89,6 +100,48 @@ class WarmSimulator(unittest.TestCase):
     def test_image_without_an_iphone_kernel_fails(self):
         result, _, _, _ = self.run_warm([Done(0, inventory(kind='iPad-Pro'))])
         self.assertIsInstance(result, warm_simulator.InfrastructureMiss)
+
+
+class ClipFramesSDKDiscovery(unittest.TestCase):
+    def test_first_timeout_retries_once_with_separate_bounded_deadline(self):
+        calls, attempts = [], []
+        def run(name, argv, deadline):
+            calls.append((name, tuple(argv), deadline))
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(argv, deadline, output=b'first partial output')
+            return Done(stdout='/Applications/Xcode.app/SDKs/iPhoneSimulator.sdk\n')
+        with tempfile.TemporaryDirectory() as folder:
+            sdk = discover_sdk(run, Path(folder), attempts)
+            self.assertEqual((Path(folder) / 'sdk-timeout.log').read_text(), 'first partial output')
+        self.assertEqual(sdk, '/Applications/Xcode.app/SDKs/iPhoneSimulator.sdk')
+        self.assertEqual([(name, deadline) for name, _, deadline in calls], [('sdk', 30), ('sdk-retry', 90)])
+        self.assertEqual(attempts, [{'name': 'sdk', 'deadlineSeconds': 30, 'timedOut': True},
+                                    {'name': 'sdk-retry', 'deadlineSeconds': 90, 'exitCode': 0}])
+
+    def test_non_timeout_refusal_is_terminal(self):
+        calls, attempts = [], []
+        def run(name, argv, deadline):
+            calls.append(name)
+            raise AssertionError('xcrun returned nonzero')
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(AssertionError, 'nonzero'):
+                discover_sdk(run, Path(folder), attempts)
+        self.assertEqual(calls, ['sdk'])
+        self.assertEqual(attempts, [])
+
+    def test_second_timeout_is_terminal_and_recorded(self):
+        calls, attempts = [], []
+        def run(name, argv, deadline):
+            calls.append((name, deadline))
+            raise subprocess.TimeoutExpired(argv, deadline, stderr=b'partial setup diagnostic')
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                discover_sdk(run, Path(folder), attempts)
+            self.assertEqual((Path(folder) / 'sdk-timeout.log').read_text(), 'partial setup diagnostic')
+            self.assertEqual((Path(folder) / 'sdk-retry-timeout.log').read_text(), 'partial setup diagnostic')
+        self.assertEqual(calls, [('sdk', 30), ('sdk-retry', 90)])
+        self.assertEqual(attempts, [{'name': 'sdk', 'deadlineSeconds': 30, 'timedOut': True},
+                                    {'name': 'sdk-retry', 'deadlineSeconds': 90, 'timedOut': True}])
 
 
 class AptRetry(unittest.TestCase):

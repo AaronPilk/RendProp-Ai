@@ -1450,7 +1450,10 @@ jobs:
           /usr/bin/codesign --verify --deep --strict --ignore-resources "$browser_app"
           test "$("$VERIFIED_BROWSER" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
           printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$VERIFIED_BROWSER" >> "$GITHUB_ENV"
-          printf '/opt/homebrew/bin\n' >> "$GITHUB_PATH"
+          # Preserve setup-node precedence and require the already verified media paths.
+          test "$(command -v ffmpeg)" = /opt/homebrew/bin/ffmpeg
+          test "$(command -v ffprobe)" = /opt/homebrew/bin/ffprobe
+          test "$(node -p 'process.version.split(".")[0]')" = v22
           /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffmpeg
           /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffprobe
           /opt/homebrew/bin/ffmpeg -version
@@ -1729,7 +1732,10 @@ jobs:
           /usr/bin/codesign --verify --deep --strict --ignore-resources "$browser_app"
           test "$("$VERIFIED_BROWSER" --version | sed 's/[[:space:]]*$//')" = "Google Chrome for Testing 153.0.8010.12"
           printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$VERIFIED_BROWSER" >> "$GITHUB_ENV"
-          printf '/opt/homebrew/bin\n' >> "$GITHUB_PATH"
+          # Preserve setup-node precedence and require the already verified media paths.
+          test "$(command -v ffmpeg)" = /opt/homebrew/bin/ffmpeg
+          test "$(command -v ffprobe)" = /opt/homebrew/bin/ffprobe
+          test "$(node -p 'process.version.split(".")[0]')" = v22
           /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffmpeg
           /usr/bin/codesign --verify --strict /opt/homebrew/bin/ffprobe
           /opt/homebrew/bin/ffmpeg -version
@@ -1781,7 +1787,8 @@ jobs:
           assert len(outputs) == 1 and outputs[0].name == 'baseline-narrated.mp4'
           assert Path(run['output']).resolve() == outputs[0].resolve()
           expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
-                              'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs'}
+                              'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs',
+                              'tests/ci-failure-annotation.mjs'}
           expected_sources.update(f'src/editor/{name}.ts' for name in
                                   ('export', 'recording-clock', 'mp4-cadence', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
           assert set(receipt['sourceHashes']) == expected_sources

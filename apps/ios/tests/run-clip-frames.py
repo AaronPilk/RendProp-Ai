@@ -55,9 +55,25 @@ def command(name, argv, timeout, check=True):
         assert result.returncode == 0, name + ': ' + result.stdout + result.stderr
     return result
 
+def discover_sdk(run, output, attempts):
+    argv = ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path']
+    for name, deadline in (('sdk', 30), ('sdk-retry', 90)):
+        try:
+            result = run(name, argv, deadline)
+            attempts.append({'name': name, 'deadlineSeconds': deadline, 'exitCode': result.returncode})
+            return result.stdout.strip()
+        except subprocess.TimeoutExpired as error:
+            attempts.append({'name': name, 'deadlineSeconds': deadline, 'timedOut': True})
+            def decoded(value):
+                return value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+            (output / (name + '-timeout.log')).write_text(decoded(error.stdout) + decoded(error.stderr))
+            if name == 'sdk-retry':
+                raise
+
 try:
     receipt['fixture_provenance'] = provenance
-    sdk = command('sdk', ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], 30).stdout.strip()
+    receipt['sdk_discovery_attempts'] = []
+    sdk = discover_sdk(command, out, receipt['sdk_discovery_attempts'])
     inventory = json.loads(command('simulators', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 120).stdout)['devices']
     devices = [d for runtime, rows in inventory.items() if 'iOS' in runtime for d in rows
                if d['isAvailable'] and d.get('deviceTypeIdentifier', '').startswith('com.apple.CoreSimulator.SimDeviceType.iPhone-')]

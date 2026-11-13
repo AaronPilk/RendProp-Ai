@@ -16,7 +16,7 @@ import { emitFailureAnnotation } from "./ci-failure-annotation.mjs";
 const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
 assert.equal(args.length, 0, "Unknown cloud editor test option");
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
-const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs","tests/ci-failure-annotation.mjs",...['export','recording-clock','mp4-cadence','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
+const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs","tests/ci-failure-annotation.mjs","src/editor/VideoEditor.tsx","src/features/sync/CloudEditor.tsx","src/data/documents.ts",...['export','recording-clock','mp4-cadence','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
 const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
 const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), audioOutput, runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
@@ -321,6 +321,12 @@ try {
   assert.equal((await second.evaluate(() => window.cloudFixture.snapshot())).tickets,applied.tickets);
   receipt.checks.push("Saved native phone recipe restores every linked photo, aspect, title, caption style and transitions with explicit review and no generation");
   await second.getByLabel("Add photos or videos",{exact:true}).setInputFiles(agentVideo);
+  // inspectFile completes native metadata (15s) and, if needed, first data
+  // (another15s) before appending a clip. Only then test the separate CAS save.
+  const agentClip=second.getByRole("button",{name:/^Select clip 3: agent-green\.mp4,/});
+  await expect(agentClip).toBeVisible({timeout:2*15_000});
+  await expect(agentClip).not.toHaveAccessibleName(/original file missing/);
+  await expect(second.getByText("Checking media…",{exact:true})).toHaveCount(0);
   await expect.poll(async () => (await second.evaluate(() => window.cloudFixture.snapshot())).documents["edit:20000000-0000-4000-8000-000000000003"]?.payload.sources?.length).toBe(3);
   await second.evaluate(() => window.cloudFixture.requestAgentPlan());
   await second.getByRole("button",{name:"Replace edit with agent plan",exact:true}).click();
