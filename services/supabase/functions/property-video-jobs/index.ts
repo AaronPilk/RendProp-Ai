@@ -22,6 +22,7 @@ import{jobInput,audioInput,uuid}from'./input.ts';
 import{admissionJobInput}from'./variety.ts';
 import{ownedHead,rpc,reply,cpuRecoverable,qualityResumeAvailable,deliveryResumeAvailable,composeResumeAvailable,sourceReadResumeProof,terminalTemporalResumeBlocked,TERMINAL_TEMPORAL_ATTENTION}from'./runtime.ts';
 import{preflightSourceReadRecovery}from'./source-read-recovery.ts';
+import{photoMotionPreflightBudget,photoMotionRequestCurrent,preflightPhotoMotionSource}from'./photo-motion-preflight.ts';
 // AI processor permission. v1 is the original permission (legacy/FAL work and its frozen
 // recovery). v2 names the published processor disclosure revision the user accepted; a
 // native-4K Kie video needs the current one. These are fast, clear refusals only:
@@ -78,8 +79,10 @@ async function route(req:Request):Promise<Response>{if(req.method==='OPTIONS')re
   assert(!preferredOrg(req)||preferredOrg(req)===body.expected_org_id,409,'The selected listing library changed.');
   await assertNotDeleting(user.id);
   await contentOrgForUser(user.id,body.expected_org_id,body.listing_id,true);
-  for(const s of body.sources){const ref=await rpc('property_photo_reference',{p_actor:user.id,p_listing:body.listing_id,p_asset:s.photo_asset_id,p_provenance:s.photo_provenance_id??null});assert(ref.sha256===s.source_sha256&&ref.bytes===s.source_bytes,409,'The selected full master changed.');await ownedHead(ref);}
+  const pixelBudget=photoMotionPreflightBudget();
+  for(const s of body.sources){photoMotionRequestCurrent(req.signal);const ref=await rpc('property_photo_reference',{p_actor:user.id,p_listing:body.listing_id,p_asset:s.photo_asset_id,p_provenance:s.photo_provenance_id??null});assert(ref.sha256===s.source_sha256&&ref.bytes===s.source_bytes,409,'The selected full master changed.');await ownedHead(ref);await preflightPhotoMotionSource(ref,body.aspect,pixelBudget,req.signal);}
   if(body.opening){const org=await contentOrgForUser(user.id,body.expected_org_id,body.listing_id,true);const library=await rpc('listing_library_scope',{p_actor:user.id,p_listing:body.listing_id});assert(library&&library.org_id===org&&library.can_write===true,404,'The aerial opening property library is unavailable.');const saved=await rpc('property_video_aerial_opening_scope',{p_ref:body.opening,p_actor:user.id,p_org:org,p_selected_library:library.library_org_id,p_listing:body.listing_id,p_aspect:body.aspect});await ownedHead(saved.media);}
+  photoMotionRequestCurrent(req.signal);
   return json(await rpc('credit_photo_motion_review_quote',{p_actor:user.id,p_manifest:body}),200,{'cache-control':'no-store'});
  }
  // New explicit mode has no supplier consent/planner/quote/grant. The old branch below is retained.
@@ -89,8 +92,10 @@ async function route(req:Request):Promise<Response>{if(req.method==='OPTIONS')re
   const old=await operationJob(user.id,body.listing_id,body.expected_org_id,body.operation_id);
   if(old.job){const replay=await rpc('property_video_job_admit_photo_motion',{p_actor:user.id,p_manifest:body});assert(replay.accepted===true&&replay.job,409,'The saved Photo motion operation changed.');return json(await reply(replay.job),202,{'cache-control':'no-store'});}
   if(old.operation_closed)return json({error:old.message,code:'capacity_refused',operation_closed:true,operation_id:body.operation_id,listing_id:body.listing_id,selected_library_org_id:body.expected_org_id},402,{'cache-control':'no-store'});
-  for(const s of body.sources){const ref=await rpc('property_photo_reference',{p_actor:user.id,p_listing:body.listing_id,p_asset:s.photo_asset_id,p_provenance:s.photo_provenance_id??null});assert(ref.sha256===s.source_sha256&&ref.bytes===s.source_bytes,409,'The selected full master changed.');await ownedHead(ref);}
+  const pixelBudget=photoMotionPreflightBudget();
+  for(const s of body.sources){photoMotionRequestCurrent(req.signal);const ref=await rpc('property_photo_reference',{p_actor:user.id,p_listing:body.listing_id,p_asset:s.photo_asset_id,p_provenance:s.photo_provenance_id??null});assert(ref.sha256===s.source_sha256&&ref.bytes===s.source_bytes,409,'The selected full master changed.');await ownedHead(ref);await preflightPhotoMotionSource(ref,body.aspect,pixelBudget,req.signal);}
   if(body.opening){const org=await contentOrgForUser(user.id,body.expected_org_id,body.listing_id,true);const library=await rpc('listing_library_scope',{p_actor:user.id,p_listing:body.listing_id});assert(library&&library.org_id===org&&library.can_write===true,404,'The aerial opening property library is unavailable.');const saved=await rpc('property_video_aerial_opening_scope',{p_ref:body.opening,p_actor:user.id,p_org:org,p_selected_library:library.library_org_id,p_listing:body.listing_id,p_aspect:body.aspect});await ownedHead(saved.media);}
+  photoMotionRequestCurrent(req.signal);
   const creditQuote=await rpc('credit_photo_motion_review_quote',{p_actor:user.id,p_manifest:body});
   const displayed=req.headers.get('x-rendprop-photo-motion-quote');
   if(creditQuote.mode==='credits'){
@@ -99,6 +104,7 @@ async function route(req:Request):Promise<Response>{if(req.method==='OPTIONS')re
   }else if(displayed)return json({error:'The Photo motion payment route changed. Review before creating.',code:'credit_quote_changed',operation_closed:false,admission_attempted:false,operation_id:body.operation_id,listing_id:body.listing_id,selected_library_org_id:body.expected_org_id},409,{'cache-control':'no-store'});
   else if(creditQuote.affordable===false)return json({error:'Your current plan cannot make this video right now. Choose fewer photos or review your plan and credits.',code:'plan_capacity',operation_closed:false,admission_attempted:false,operation_id:body.operation_id,listing_id:body.listing_id,selected_library_org_id:body.expected_org_id},402,{'cache-control':'no-store'});
   let admitted;
+  photoMotionRequestCurrent(req.signal);
   try { admitted=await rpc('property_video_job_admit_photo_motion_quoted',{
     p_actor:user.id,p_manifest:body,p_quote_sha256:displayed,
   }); } catch(error) {
