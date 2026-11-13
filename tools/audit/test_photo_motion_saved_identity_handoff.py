@@ -257,14 +257,15 @@ def run_current_adoption(env, socket, args):
     def known_busy_refusal(result):
         # Exact PostgreSQL55P03 on only our two relation fences or config rows.
         # No timeout, deadlock, arbitrary nonzero or unrelated55P03 is accepted.
-        match = re.search(r'ERROR:\s+55P03:\s+(could not obtain lock on relation "(?:property_video_jobs|property_video_aerial_openings)"|could not obtain lock on row in relation "app_config")(?:\r?\n|$)',result.stderr)
-        return match.group(1) if result.returncode!=0 and match else None
+        match = re.search(r'ERROR:\s+55P03:\s+(could not obtain lock on relation "(?:public\.)?(?:property_video_jobs|property_video_aerial_openings)"|could not obtain lock on row in relation "(?:public\.)?app_config")(?:\r?\n|$)',result.stderr)
+        return match.group(1).replace('relation "public.', 'relation "') if result.returncode!=0 and match else None
     def clone(name, template):
         run(['createdb','-h',str(socket),'-U','postgres','--template='+template,name],env)
     def unchanged_refusal(database, marker, *, busy=False):
         before = (catalog_snapshot(env,database),data_snapshot(env,database))
         refused = candidate_result(database)
-        if refused.returncode==0 or marker not in refused.stderr or (busy and not known_busy_refusal(refused)):
+        matches = known_busy_refusal(refused)==marker if busy else marker in refused.stderr
+        if refused.returncode==0 or not matches:
             raise AssertionError('Adoption refusal did not reach expected guard: '+refused.stderr[-2000:])
         if before != (catalog_snapshot(env,database),data_snapshot(env,database)):
             raise AssertionError('Refused adoption changed catalog/config/data')

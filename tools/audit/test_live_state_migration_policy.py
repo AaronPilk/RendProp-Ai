@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Fail closed when an exact live-state adoption is mistaken for fresh schema SQL."""
 
+import ast
 from pathlib import Path
 import re
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 from run_database_regression import (
     GUARDED_ONE_SHOT_MIGRATIONS,
@@ -58,6 +60,77 @@ class LiveStateMigrationPolicyTests(unittest.TestCase):
         for source in (path for path in self.paths if path.name in EXPECTED_LIVE_STATE_ADOPTIONS):
             with self.subTest(migration=source.name), self.assertRaisesRegex(RuntimeError, "Classified live-state migrations missing"):
                 partition_fresh_migrations(path for path in self.paths if path != source)
+
+    def test_actual_adoption_classifier_accepts_only_exact_known_busy_errors(self):
+        # Compile the actual pure helper without running its owned-PG phase.
+        source = ROOT / "tools/audit/test_photo_motion_saved_identity_handoff.py"
+        helpers = [node for node in ast.walk(ast.parse(source.read_text()))
+                   if isinstance(node, ast.FunctionDef) and node.name == "known_busy_refusal"]
+        self.assertEqual(len(helpers), 1)
+        program = ast.fix_missing_locations(ast.Module(body=helpers, type_ignores=[]))
+        namespace = {"re": re}
+        exec(compile(program, str(source), "exec"), namespace)
+        classify = namespace["known_busy_refusal"]
+        for target in ("property_video_jobs", "property_video_aerial_openings", "app_config"):
+            message = ('could not obtain lock on row in relation "' if target == "app_config"
+                       else 'could not obtain lock on relation "')
+            for prefix in ("", "public."):
+                error = message + prefix + target + '"'
+                stderr = "psql:/owned/adoption.sql:108: ERROR:  55P03: " + error + "\nCONTEXT: owned lock fixture\n"
+                with self.subTest(target=target, prefix=prefix):
+                    self.assertEqual(classify(SimpleNamespace(returncode=3, stderr=stderr)),
+                                     message + target + '"')
+        for state, message, code in (
+            ("55P03", 'could not obtain lock on relation "private.property_video_jobs"', 3),
+            ("55P03", 'could not obtain lock on relation "public.other_table"', 3),
+            ("55P03", 'could not obtain lock on row in relation "private.app_config"', 3),
+            ("55P03", 'could not obtain lock on relation "app_config"', 3),
+            ("40P01", 'could not obtain lock on relation "public.property_video_jobs"', 3),
+            ("55P03", "canceling statement due to lock timeout", 3),
+            ("57014", "canceling statement due to statement timeout", 3),
+            ("P0001", "unrelated exception", 3),
+            ("55P03", 'could not obtain lock on relation "public.property_video_jobs"', 0),
+        ):
+            with self.subTest(state=state, message=message, code=code):
+                self.assertIsNone(classify(SimpleNamespace(returncode=code,
+                    stderr="ERROR:  " + state + ": " + message + "\n")))
+
+    def test_actual_adoption_refusal_matches_normalized_known_busy_target(self):
+        source = ROOT / "tools/audit/test_photo_motion_saved_identity_handoff.py"
+        helpers = [node for node in ast.walk(ast.parse(source.read_text()))
+                   if isinstance(node, ast.FunctionDef)
+                   and node.name in {"known_busy_refusal", "unchanged_refusal"}]
+        self.assertEqual(len(helpers), 2)
+        namespace = {"re": re, "env": {}, "phase_checks": [], "refusal_evidence": [],
+                     "catalog_snapshot": lambda env, database: {"unchanged_catalog": True},
+                     "data_snapshot": lambda env, database: {"unchanged_data": True}}
+        program = ast.fix_missing_locations(ast.Module(body=helpers, type_ignores=[]))
+        exec(compile(program, str(source), "exec"), namespace)
+        marker = 'could not obtain lock on relation "property_video_aerial_openings"'
+        for target in ("property_video_aerial_openings", "public.property_video_aerial_openings"):
+            result = SimpleNamespace(returncode=3, stderr=
+                'ERROR:  55P03: could not obtain lock on relation "' + target + '"\n')
+            namespace["candidate_result"] = lambda database: result
+            namespace["unchanged_refusal"]("synthetic", marker, busy=True)
+        self.assertEqual(namespace["phase_checks"], [marker, marker])
+        for state, target, code in (
+            ("55P03", "public.property_video_jobs", 3),
+            ("55P03", "private.property_video_aerial_openings", 3),
+            ("40P01", "public.property_video_aerial_openings", 3),
+            ("55P03", "public.property_video_aerial_openings", 0),
+        ):
+            result = SimpleNamespace(returncode=code, stderr='ERROR:  ' + state +
+                ': could not obtain lock on relation "' + target + '"\n')
+            namespace["candidate_result"] = lambda database: result
+            with self.subTest(state=state, target=target, code=code), self.assertRaisesRegex(
+                    AssertionError, "did not reach expected guard"):
+                namespace["unchanged_refusal"]("synthetic", marker, busy=True)
+        # Nonbusy guards retain their original exact marker-in-stderr contract.
+        result = SimpleNamespace(returncode=3, stderr="ERROR: expected predecessor marker\n")
+        namespace["candidate_result"] = lambda database: result
+        namespace["unchanged_refusal"]("synthetic", "expected predecessor marker")
+        with self.assertRaisesRegex(AssertionError, "did not reach expected guard"):
+            namespace["unchanged_refusal"]("synthetic", "other predecessor marker")
 
     def test_photo_publication_is_once_per_fresh_database(self):
         name = "20261020212328_accepted_photo_publication_host_compatible.sql"
