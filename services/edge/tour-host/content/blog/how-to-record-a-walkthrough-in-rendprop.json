@@ -1,0 +1,44 @@
+{
+  "slug": "how-to-record-a-walkthrough-in-rendprop",
+  "title": "How to record a walkthrough in Rendprop",
+  "description": "Record a handheld walkthrough in the app with live pacing cues on the 0.5x wide lens. Uploads resume if the signal drops; viewers can watch or scroll it.",
+  "category": "howto",
+  "keywords": [
+    "record walkthrough rendprop",
+    "handheld property walkthrough iphone",
+    "rendprop pacing cues",
+    "0.5x lens walkthrough video",
+    "scrollable walkthrough property page"
+  ],
+  "tldr": "Open the listing, start recording the walkthrough in the app, and follow the live pacing cues on screen: slow down, level out, hold the turn. The app uses the wide 0.5x lens by default, and the upload resumes if your connection drops. A recorded walkthrough is optional and separate from the photo-based video; viewers can watch it or scroll through it once it is published.",
+  "html": "<p>Open the listing, start recording the walkthrough, and walk the home slowly while following the cues on screen: slow down, level out, hold the turn. Rendprop uses the wide 0.5x lens by default so rooms read as rooms, and if the connection drops mid-upload the upload resumes rather than starting over. The walkthrough is optional and separate from the photo-based listing video; once published, viewers can watch it or scroll through it on the property page.</p><h2>What a walkthrough is and is not</h2><p>It is handheld footage of you walking through the home with the phone. It is not drone footage and it is not the photo-based video, which Rendprop builds from your stills with planned scene order and camera motion. The two do different jobs. The photo video is the polished tour; the walkthrough is the honest one, where a buyer sees how the kitchen connects to the family room and how long the hallway really is. The <a href=\"/blog/recorded-walkthrough-versus-photo-video-when-to-film-the-home-yourself\">walkthrough-versus-photo-video post</a> is about when each is worth making.</p><h2>Before you press record</h2><ul><li>Walk the route once without the phone. Front door, main living space, kitchen, bedrooms, baths, yard, back to the door. Decide where you will turn.</li><li>Lights on in every room, blinds open, doors open along the route.</li><li>Clear the floor along the path. You will be watching the screen, not your feet.</li><li>Clean the lens. The 0.5x wide lens shows fingerprints as haze.</li><li>Phone in both hands, elbows against your ribs. That is the whole stabiliser.</li></ul><h2>Recording, step by step</h2><ol><li>Open the listing from Home and choose to record the walkthrough.</li><li>Stand at the starting point, hold the phone level at chest height, and start recording. The app is on the wide 0.5x lens by default; leave it there.</li><li>Walk at about half your normal pace. Watch the cues: when the screen says slow down, slow down; when it says level out, bring the horizon flat; when it says hold the turn, stop walking and turn in place slowly.</li><li>Pause at the doorway of each room for a breath before you enter. The pause gives a scrolling viewer a place to stop.</li><li>Finish at a natural end: the back garden, the view, the front door from inside.</li><li>Stop recording and let the upload run. If the signal drops in a basement or a lift, the upload resumes when the connection returns rather than starting over.</li></ol><h3>What to check before you publish it</h3><p>Watch it back on the phone and check four things: the horizon is level in the long shots, no turn blurred, there is no stretch of floor or ceiling where you forgot the phone, and you did not walk past a mirror, because you are in it. If one room is bad, record the walkthrough again; it is a few minutes and it is the version that will live on the page.</p><h2>A worked example: a 3-bed in a cul-de-sac in six minutes</h2><p>An agent has a Saturday open house and wants a walkthrough on the page by Friday. Thursday at 10am, with the sun on the back of the house, she walks the route once, opens all the doors, and starts recording at the front step. In through the door, pause, left into the living room, hold the turn as the cue says, through to the kitchen, slow down along the island, out to the deck, back in, down the hall with a pause at each bedroom door, the primary bath, and finish at the front door looking back down the hall. Four minutes of footage.</p><p>She plays it back in the car. One turn into the second bedroom was fast. She goes back in and records the whole thing again, slower on that turn, because a second take is cheaper than a wobbly room. The upload starts on the seller's wifi and finishes on cellular on the way back; it resumed without her doing anything. Friday the walkthrough is on the page alongside the photo video, and the Saturday visitors who scrolled it already know the layout when they arrive.</p><h2>Walkthrough mistakes the cues cannot save you from</h2><ul><li><strong>Walking at talking pace.</strong> Half speed. Slower than feels right.</li><li><strong>Pointing the phone at the floor on the stairs.</strong> Keep it level; the stairs will still read as stairs.</li><li><strong>Narrating.</strong> Keep the walkthrough silent and let the photo video carry the voice. A buyer scrolling does not hear you anyway.</li><li><strong>Filming in portrait with the phone tilted.</strong> Hold it the way you want it watched and keep it steady.</li><li><strong>Giving up on a dropped upload.</strong> The upload resumes when the connection returns; let it finish before you record again.</li></ul><h2>How viewers use it on the page</h2><p>On the published property page a walkthrough can be watched like a video or scrolled through, so a buyer can move at their own pace and stop in the kitchen. It sits alongside the photo-based listing video, which plays on request. The <a href=\"/features#listing-site\">listing site section</a> describes the page; the <a href=\"/blog/filming-a-handheld-walkthrough-that-viewers-can-scroll\">scrollable walkthrough post</a> goes deeper on filming for the scroll.</p><p>Next step: walk your current listing once with the doors open and the lights on, then open the listing, start the walkthrough, and follow the cues. Play it back before you leave the driveway.</p>",
+  "faq": [
+    {
+      "q": "What are the pacing cues?",
+      "a": "Live prompts on screen while you record: slow down, level out, hold the turn. Follow them literally; they exist because walking pace and a tilted horizon are the two things that ruin handheld footage."
+    },
+    {
+      "q": "Which lens does the walkthrough use?",
+      "a": "The wide 0.5x lens by default, so rooms read as rooms. Clean it before you start; fingerprints show as haze on the wide lens."
+    },
+    {
+      "q": "What happens if I lose signal during the upload?",
+      "a": "The upload resumes when the connection comes back. Let it finish; you do not need to record again."
+    },
+    {
+      "q": "Is the walkthrough the same as the listing video?",
+      "a": "No. The walkthrough is handheld footage you record; the listing video is built from your photos with planned scene order and camera motion. A walkthrough is optional and separate, and neither is drone footage."
+    },
+    {
+      "q": "How do viewers watch it?",
+      "a": "On the published property page they can play it like a video or scroll through it at their own pace. A buyer can stop in the kitchen and look around, which is the point of filming it slowly."
+    }
+  ],
+  "related": [
+    "filming-a-handheld-walkthrough-that-viewers-can-scroll",
+    "recorded-walkthrough-versus-photo-video-when-to-film-the-home-yourself",
+    "how-to-create-a-landscape-listing-video-in-rendprop",
+    "what-is-on-a-rendprop-property-page"
+  ],
+  "published": "2026-10-28"
+}

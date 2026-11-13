@@ -1,0 +1,40 @@
+{
+  "slug": "should-a-listing-video-have-music",
+  "title": "Should a listing video have music",
+  "description": "Usually yes, kept low under the voiceover. Social reels nearly always want it; the page video can go either way. The wrong track does more harm than none.",
+  "category": "questions",
+  "keywords": [
+    "should listing video have music",
+    "music for real estate video",
+    "background music listing reel",
+    "how loud should music be in property video",
+    "music licensing real estate video"
+  ],
+  "tldr": "Usually yes, kept low and under the voiceover. A social reel without music feels unfinished, and a quiet instrumental bed makes a photo-based video feel like a piece rather than a slideshow. On the property page the video can go either way. The track that does harm is the one that is too loud, has lyrics, or sets a mood the home cannot deliver.",
+  "html": "<p>Usually yes, kept low and under the voiceover. A social reel without music feels unfinished, and a quiet instrumental bed makes a photo-based video feel like a piece rather than a slideshow. On the property page, where a buyer has chosen to press play and may be in an office, the video can go either way. The track that does harm is the one that is too loud, has lyrics, or sets a mood the home cannot deliver at the showing.</p><h2>What music does for a listing video</h2><p>It covers the silence between voiceover lines. It sets a pace, which matters when the visual is a sequence of stills with slow motion on them. And it signals the register of the home: a light acoustic track says family home on a quiet street; a slow piano says something larger and more expensive.</p><p>What it does not do is sell the home. Nobody books a showing because of the track. So the music should be the thing you notice least. If a viewer can hum it afterwards, it was too present.</p><h2>How loud, in practice</h2><p>With a voiceover, the music should sit well under the voice at every point, including the pauses. A quick test: play the video on your phone speaker in a kitchen with the tap running. If you can follow the voice without straining and still sense the music, the balance is about right. If the music disappears entirely, bring it up a touch; if the voice fights it, bring it down.</p><p>Without a voiceover, music carries the pacing alone and can sit higher, but captions then have to do all the informational work. Most viewers on social are on mute anyway, which is a reason the voiceover plus captions plus quiet music combination is the safe default.</p><h2>A worked example: three homes, three choices</h2><p>A two-bed starter condo in a 1990s building: a light, mid-tempo acoustic track, no lyrics, low under a 30-second voiceover. It says approachable and keeps the reel moving.</p><p>A five-bed on an acre with a pool: slow, sparse piano or strings, lower still, under a 45-second voiceover that leaves more room for the pictures. Pace matches price. A fast pop track here would make the home feel like a rental ad.</p><p>A rental two-bed near the university: no music on the property page version, because tenants watch it for facts and the page video plays on request. The social version gets a soft electronic bed, low, because a silent reel reads as broken on a feed.</p><h2>Where music goes wrong</h2><ul><li><strong>Too loud.</strong> The most common fault. The agent mixed it with headphones and it sounded cinematic; on a phone speaker it buries the voice.</li><li><strong>Lyrics.</strong> Words in the track compete with words in the voiceover and with the captions. Instrumental only.</li><li><strong>Trending audio with unclear rights.</strong> A clip that is fine inside one platform's own library may not be licensed for a video you also post on your website, in the MLS and in an email. Use music you have the right to use everywhere the video will go, and check the current rules of each platform.</li><li><strong>Mood mismatch.</strong> Dramatic orchestral swells on a townhouse. Upbeat ukulele on an estate. The track makes a promise the showing has to keep.</li><li><strong>A hard start.</strong> Music that begins at full volume on frame one makes people reach for the mute. Let it come in under the first line.</li><li><strong>The same track on every listing.</strong> Your followers notice before you do. Keep three or four tracks in rotation by price band.</li></ul><p>The post on <a href=\"/blog/music-on-a-listing-video-yes-no-and-how-loud\">music on a listing video: yes, no and how loud</a> goes further into mixing, and <a href=\"/blog/should-a-listing-video-have-a-voiceover\">should a listing video have a voiceover</a> covers the other half of the soundtrack.</p><h2>How this works in Rendprop</h2><p>In Rendprop's video step, music is optional. You can record a voiceover or have an AI voice read your script, and captions are added word by word so the video works with the sound off. The finished video exports in 16:9 for the property page and 9:16 for social, and on the property website it plays on request rather than autoplaying, so a buyer chooses when to hear it. See the <a href=\"/features#reels\">video features</a> for what the video step includes.</p><h2>A quick test on your last video</h2><p>Take the last listing video you posted and play it on your phone speaker, not headphones, in a room with some background noise. If the voice is clear and the music is a presence rather than a performance, leave it. If not, remix it before the next listing, and make the quieter balance your default.</p>",
+  "faq": [
+    {
+      "q": "Should the music be louder on social than on the property page?",
+      "a": "Slightly, because social viewers expect a soundtrack and a silent reel reads as broken. It should still sit under the voiceover at every point. On the property page, where the buyer presses play deliberately, music can be lower or absent."
+    },
+    {
+      "q": "Can I use a trending song on my listing reel?",
+      "a": "Only if you have the right to use it everywhere the video will go. Music available inside one platform's library may not be licensed for your website, the MLS or an email. Check each platform's current rules and prefer music you are licensed to use across channels."
+    },
+    {
+      "q": "What kind of music works for a listing video?",
+      "a": "Instrumental, mid or slow tempo, without a strong hook. Match the pace to the price band: lighter and quicker for starter homes, slower and sparser for larger ones. If you can hum it after one viewing, it is too prominent."
+    },
+    {
+      "q": "Is it better to have no music at all?",
+      "a": "Sometimes, for a property page video watched for facts or a rental listing. On a social feed a video with no sound at all tends to be scrolled past. A quiet bed under a voiceover with captions is the safest default."
+    }
+  ],
+  "related": [
+    "music-on-a-listing-video-yes-no-and-how-loud",
+    "should-a-listing-video-have-a-voiceover",
+    "word-by-word-captions-why-listing-reels-need-them",
+    "reviewing-a-listing-video-before-you-post-it-a-checklist"
+  ],
+  "published": "2026-10-28"
+}

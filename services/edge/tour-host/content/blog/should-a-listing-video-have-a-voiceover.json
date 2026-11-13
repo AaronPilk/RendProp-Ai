@@ -1,0 +1,40 @@
+{
+  "slug": "should-a-listing-video-have-a-voiceover",
+  "title": "Should a listing video have a voiceover",
+  "description": "Yes for most listings. A voiceover carries the facts and reasons pictures cannot, and with captions it works on mute. Skip it only for a pure visual piece.",
+  "category": "questions",
+  "keywords": [
+    "should listing video have voiceover",
+    "voiceover for real estate video",
+    "narration listing video",
+    "AI voice listing video",
+    "listing video script"
+  ],
+  "tldr": "Yes, for most listings. A voiceover carries the facts and the reasons that the pictures cannot: the price, the beds and baths, what was renovated, why this street. With word-by-word captions it still works for the majority who watch on mute, and it makes the video unmistakably yours. Skip it only for a short, purely visual piece where the home does the talking.",
+  "html": "<p>Yes, for most listings. A voiceover carries the facts and the reasons the pictures cannot: the price, the beds and baths, what was renovated last year, why this street. With word-by-word captions it still works for the majority who watch on mute, and it makes the video unmistakably yours rather than a generic reel. Skip it only for a short, purely visual piece on a home where the images need no help.</p><h2>What a voiceover adds that captions alone do not</h2><p>Captions can state facts. A voice can rank them. “The kitchen was redone in 2024, and that is the reason to see this house” is a sentence a buyer hears differently from a caption reading “Kitchen renovated 2024.” The voice tells the buyer what matters, in what order, and it does it in the tone you would use at the door.</p><p>It also keeps the video honest. Writing 35 seconds of plain speech about a home forces you to decide what is true and worth saying. The reel with no script is the one that ends up leaning on music and transitions.</p><h2>Your voice or an AI voice</h2><p>Your own voice is the stronger choice when the video is going to people who know you or will meet you: your database, your social followers, the seller. It is you, and that is the point. The bar is low: a quiet room, a phone held at a normal distance, two takes.</p><p>An AI voice reading your script is the practical choice when you have four listings in a week, when your recording space is a car, or when the video is going somewhere unbranded where your voice adds nothing. The script is still yours; only the reading changes. Whichever you use, say so if a buyer asks, and keep the facts identical to the page. The post on <a href=\"/blog/ai-voice-or-your-voice-which-to-use-on-a-listing-video\">AI voice or your voice</a> works through the choice in more detail.</p><h2>A worked example: 35 seconds on a three-bed</h2><p>Here is a script for a three-bed on a corner lot, written to be spoken, not read.</p><p><em>“This is a three-bedroom on the corner of Birch and Fourth, listed at four twenty-five. The kitchen was gutted and redone last spring, so the thing you are looking at now is the thing you get. Two full baths, a fenced garden that faces south, and a garage that actually fits a car. It is a ten-minute walk to the primary school and four to the bus. Open house Saturday eleven to one, or send a date through the link and I'll meet you there.”</em></p><p>Eighty-four words, about 35 seconds at a conversational pace. Facts, one reason to care, one logistical detail, one way to act. No adjectives doing the work nouns should do.</p><h2>What goes wrong with voiceovers</h2><ul><li><strong>Reading the MLS description.</strong> “Boasting an abundance of natural light” is unbearable out loud. Write it the way you would say it.</li><li><strong>Too long.</strong> Ninety seconds of narration over fourteen photos means six seconds on each and a viewer who left at twenty. Thirty to forty-five seconds for social; under ninety for the page.</li><li><strong>Facts that drift from the page.</strong> The voice says three baths, the page says two and a half. Read the script against the details before recording.</li><li><strong>The price in the audio when the price is about to move.</strong> If a reduction is likely, keep the price in the caption and on the page so the video survives the change, unless you can re-export quickly.</li><li><strong>No captions.</strong> Most social viewers are on mute. A voiceover without captions is a silent video for them.</li><li><strong>Your name in the unbranded version.</strong> If the same video serves the MLS link, keep the introduction out of the audio or make two cuts.</li></ul><h2>How this works in Rendprop</h2><p>In Rendprop's video step you can record your own voiceover or have an AI voice read your script. Captions are added word by word, music is optional, and the finished video exports in 16:9 and 9:16. The video is then selected for the property website, where it plays on request. See the <a href=\"/features#reels\">video features</a> for the full list, and <a href=\"/blog/writing-a-30-second-voiceover-script-for-a-listing-reel\">writing a 30-second voiceover script</a> for a template you can fill in.</p><h2>Write the 80 words</h2><p>Write the script for your current listing in 80 words or fewer, read it aloud once, and cut anything you would not say to a buyer at the door. Then record it or hand it to an AI voice, and add captions before it goes anywhere.</p>",
+  "faq": [
+    {
+      "q": "How long should a listing video voiceover be?",
+      "a": "Thirty to forty-five seconds for a social reel, which is roughly 70 to 110 spoken words. The property page version can run longer, but under ninety seconds keeps people watching to the call to action."
+    },
+    {
+      "q": "Is an AI voice acceptable on a listing video?",
+      "a": "Yes, when the script is yours and the facts match the listing. It is the practical choice for volume and for unbranded versions. Use your own voice for the audiences who know you, and be straightforward if a buyer asks which it was."
+    },
+    {
+      "q": "Do I still need captions if there is a voiceover?",
+      "a": "Yes. Most social viewers watch with the sound off, so without captions the voiceover reaches only a fraction of them. Word-by-word captions also keep attention on the video during slower scenes."
+    },
+    {
+      "q": "Should the voiceover include the price?",
+      "a": "Usually yes, because buyers want it and it saves a question. If a reduction is likely in the near future, keep it in the caption and on the page instead, or make sure you can re-export the video quickly when it changes."
+    }
+  ],
+  "related": [
+    "ai-voice-or-your-voice-which-to-use-on-a-listing-video",
+    "writing-a-30-second-voiceover-script-for-a-listing-reel",
+    "recording-your-own-voiceover-on-an-iphone-a-quiet-room-is-enough",
+    "should-a-listing-video-have-music"
+  ],
+  "published": "2026-10-28"
+}

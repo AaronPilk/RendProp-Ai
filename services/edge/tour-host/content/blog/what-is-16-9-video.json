@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-16-9-video",
+  "title": "What is 16:9 video",
+  "description": "16:9 video is widescreen video, sixteen units wide by nine tall: the shape of a TV, a laptop and the YouTube player, and the format for a page video.",
+  "category": "glossary",
+  "keywords": [
+    "what is 16:9 video",
+    "16:9 aspect ratio",
+    "widescreen listing video",
+    "landscape video format real estate",
+    "16 by 9 video size"
+  ],
+  "tldr": "16:9 video is widescreen video with an aspect ratio of sixteen units wide to nine tall, the shape of a television, a laptop screen and the YouTube player. It is the format for the listing video on a property page, in the MLS virtual tour field and on YouTube. It is built from landscape photos and suits wide rooms and exteriors; it is not the shape for a phone feed.",
+  "html": "<p>16:9 video is widescreen video with an aspect ratio of sixteen units wide to nine units tall, the shape of a television, a laptop screen and the default YouTube player. A common pixel size is 1920 by 1080. It is the format for the listing video on a property page, in the MLS virtual tour field and on YouTube, and it is built from landscape photos.</p><p>If a buyer is likely to watch on anything they are not holding upright, this is the shape.</p><h2>How the shape serves a home</h2><p>A wide frame is good at wide things: a living room from corner to corner, a kitchen with the island and the range in the same shot, a front elevation with the yard and the trees, a view across a deck. Rooms look like rooms. Camera motion across a wide still, a slow drift from the window to the fireplace, feels natural because there is width to move through.</p><p>It is poor at tall subjects, a stairwell or a single doorway, which is the opposite of the vertical format's strength. That is why a listing video and a social reel are different edits from different photos, not one video in two sizes.</p><h2>Where a widescreen video belongs</h2><ul><li>The property page, where the video sits in a wide player on both desktop and phone.</li><li>The MLS virtual tour field, through an unbranded page. Check your MLS's current rules for what the field accepts.</li><li>YouTube, where 16:9 fills the player and vertical video shows with bars.</li><li>Listing presentations, seller updates and anything shown on a laptop or a TV in the kitchen during an open house.</li></ul><h2>What 16:9 is not</h2><p>16:9 is not the format for Reels, TikTok or Shorts, where the feed is vertical and a widescreen video appears as a thin strip. The nearest confusable thing is <a href=\"/blog/what-is-9-16-video\">9:16</a>, the same frame turned upright. The numbers look similar and mean opposite shapes.</p><p>It is also not 4:3, the older squarer TV shape, and not 2.39:1, the very wide cinema ratio some videographers use for luxury films. 16:9 is the plain widescreen standard that every player and page supports without letterboxing.</p><h2>One shoot, one wide video, three screens</h2><p>A photographer shoots a 4-bed colonial on a Saturday morning and delivers twenty-six landscape photos: front elevation, entry, living room from two corners, kitchen with island, dining, family room, primary suite, two more bedrooms, baths, deck, yard, garage. The agent builds a 16:9 listing video from sixteen of them, records a short voiceover, turns on captions and sets the music low.</p><p>The video goes on the property page, where it plays when a visitor taps it. The unbranded link goes in the MLS virtual tour field. On Sunday the agent uploads the same export to YouTube with the address and the neighbourhood in the title. On Monday she shows the seller the video on a tablet at the kitchen table, full width, no bars. None of this required a second version; the portrait frames from the same shoot became a separate vertical reel.</p><h2>How this works in Rendprop</h2><p>Rendprop builds a landscape video from the landscape photos you add to a listing, with scene order and camera motion planned automatically, a recorded or AI voiceover, word-by-word captions and optional music. Exports come in 16:9 and 9:16. The selected listing video appears on the property website, where it plays on request and does not autoplay, and the unbranded link carries it into the MLS virtual tour field. The <a href=\"/features#reels\">video section</a> has the detail, and <a href=\"/blog/how-to-create-a-landscape-listing-video-in-rendprop\">how to create a landscape video in Rendprop</a> walks through the steps.</p><h2>Where widescreen video goes wrong</h2><p>Posting a 16:9 export to a vertical feed is the common error; it plays small and gets skipped. The second is building the widescreen video from portrait photos, which leaves black bars or stretched images on every scene. The third is a video that is the right shape but the wrong length for the page, ten minutes of every room when four minutes would hold a buyer. Shoot landscape photos for the wide video, keep it tight, and send it to the places that are wide.</p><p>Next step: open your current listing video on a laptop and on a phone held sideways. If it fills both without bars, it is the right shape; now check whether it is the right length.</p>",
+  "faq": [
+    {
+      "q": "What does 16:9 mean?",
+      "a": "It is the aspect ratio: sixteen units of width for every nine units of height. A common size is 1920 pixels wide by 1080 tall. It is the shape of a widescreen television and most laptop screens."
+    },
+    {
+      "q": "Should my listing video on the property page be 16:9?",
+      "a": "Yes. The page's video player is wide on desktop and on a phone turned sideways, and a 16:9 export fills it. It is also the right shape for YouTube and for the MLS virtual tour field through an unbranded page."
+    },
+    {
+      "q": "Can I post a 16:9 listing video on Instagram or TikTok?",
+      "a": "You can, but it will show as a small strip in a vertical feed. Build a separate 9:16 reel from portrait photos for those platforms and keep the 16:9 video for the page and YouTube."
+    },
+    {
+      "q": "What photos do I need for a 16:9 listing video?",
+      "a": "Landscape photos, shot with the phone or camera held sideways. Wide rooms, exteriors and views suit the shape. Portrait photos placed in a widescreen frame leave bars or get stretched."
+    }
+  ],
+  "related": [
+    "what-is-9-16-video",
+    "youtube-for-listings-landscape-video-titles-and-the-description-that-get",
+    "how-to-create-a-landscape-listing-video-in-rendprop",
+    "landscape-or-portrait-shooting-photos-for-listing-video-and-social-video"
+  ],
+  "published": "2026-10-28"
+}

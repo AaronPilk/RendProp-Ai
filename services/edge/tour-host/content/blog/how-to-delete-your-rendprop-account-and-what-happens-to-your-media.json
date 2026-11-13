@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-delete-your-rendprop-account-and-what-happens-to-your-media",
+  "title": "Deleting your Rendprop account: what happens to your media",
+  "description": "Request account deletion from Settings in the app. First save the originals and videos you want to keep and replace any published links still in use.",
+  "category": "howto",
+  "keywords": [
+    "delete rendprop account",
+    "rendprop account deletion request",
+    "what happens to my photos when i delete the app",
+    "cancel rendprop subscription",
+    "remove property website"
+  ],
+  "tldr": "Request account deletion from Settings in the Rendprop app. Treat it as final for everything inside the account: listings, published pages, links and the media in them. You own your photos and videos, so before you send the request, save the originals and exports you want to keep, replace any published links still in use, and handle your subscription through Apple's subscription management.",
+  "html": "<p>Open Settings in the Rendprop app and make an account deletion request. Before you do, assume everything inside the account goes with it: the listings, the published pages and their links, and the versions and videos stored in them. You own your photos and videos, so the right order is save first, replace any links still in use, deal with the subscription through Apple, and then request deletion.</p><p>Deleting the app from your phone is not the same thing and does not delete the account.</p><h2>Three things deletion is not</h2><ul><li><strong>It is not deleting the app.</strong> Removing the app from the phone leaves the account where it is. Reinstall and sign in with Apple and the account is still yours.</li><li><strong>It is not cancelling a subscription.</strong> Subscriptions bought through Apple are managed through Apple's subscription management, which Settings points you to. Cancel there if you want to stop paying; deleting the account does not replace that step.</li><li><strong>It is not a way to \"start over\".</strong> If you want a clean slate, archive the listings you no longer need. Deletion is for leaving.</li></ul><h2>Before you request deletion</h2><ol><li><strong>Save what you own.</strong> You own your photos and videos. Export the videos you want to keep and make sure your untouched originals are somewhere you control, such as your camera roll or your own storage. Photo history inside the app is not a backup once the account is gone.</li><li><strong>List the live links.</strong> Any branded link on a sign, a flyer, a QR code, an email or a social profile, and any unbranded link in an MLS virtual-tour field. Assume all of them stop resolving once the account is deleted, and replace or remove them first.</li><li><strong>Answer the inbox.</strong> Open enquiries, all together, and reply to anything outstanding. Those people do not know you are leaving.</li><li><strong>Tell the people who depend on the pages.</strong> If you are a photographer presenting clients' contact details on listings, warn the agents and give them time to replace the links.</li><li><strong>Handle the subscription.</strong> In Settings, use Apple's subscription management to cancel or let it run out, as you prefer. Restore purchases is also there if the app is not showing a purchase you made.</li><li><strong>Then request deletion from Settings.</strong></li></ol><h3>What to check before you send the request</h3><p>That the exported files open. That no yard sign still points at a page you are about to lose. That you are signed in to the account you mean to delete; two Apple IDs on one phone means two accounts, and deleting the wrong one is not reversible. That any team you belong to knows, if the workspace is one others rely on.</p><h2>A worked example: the agent who is retiring</h2><p>An agent closing her practice in December has nine listings in Rendprop, seven sold and two archived. She opens each sold listing, exports the landscape video for her records, and confirms the originals are already in her photo library. She lists the links: the QR on two flyers still in a drawer (shredded), the branded link in her email signature (removed), the unbranded links in the MLS (listings long closed, nothing to change). She opens the inbox, all together: nothing outstanding.</p><p>In Settings she goes through Apple's subscription management and cancels. Then she makes the account deletion request. Nothing she wanted to keep lived only in the app. The whole exercise took an afternoon, and the only reason it was that easy is that she treated the request as final before she sent it.</p><h2>What goes wrong when people skip the order</h2><ul><li><strong>Deleting first, exporting not at all.</strong> Save the videos and originals before the request, not after.</li><li><strong>Leaving an MLS link pointing at nothing.</strong> Update or clear the virtual-tour field on any still-active listing.</li><li><strong>Assuming deletion cancels billing.</strong> Subscriptions are Apple's; cancel through Apple's subscription management.</li><li><strong>Deleting a team's account.</strong> If the workspace is shared, the listings in it are the team's problem the moment the account goes. Talk first.</li><li><strong>Requesting deletion to fix a problem.</strong> If something is wrong with the app or the account, the <a href=\"/support\">support page</a> is the first stop, not the last resort.</li></ul><h2>Your content, in and out of the app</h2><p>The principle does not change at deletion: you own your photos and videos, and Rendprop does not use your content for its own marketing or AI training without written permission. Keeping your originals in your own library is good practice regardless, and the <a href=\"/blog/why-a-property-marketing-app-should-keep-your-originals\">originals post</a> and the <a href=\"/blog/account-deletion-and-your-listing-media-what-to-expect-from-an-app\">deletion expectations post</a> cover why that matters for any app, not only this one. Settings is also where you compare or change plans; the <a href=\"/blog/checking-current-plan-features-and-included-usage-in-rendprop\">plan post</a> covers that if you are leaving over cost.</p><p>Next step: if you are leaving, export the videos and confirm the originals are in your own library today. Then go through the live links, cancel through Apple, and make the deletion request from Settings only when the list is empty.</p>",
+  "faq": [
+    {
+      "q": "Where do I delete my Rendprop account?",
+      "a": "In Settings in the app, where you make an account deletion request. Deleting the app from your phone does not delete the account."
+    },
+    {
+      "q": "Does deleting the account cancel my subscription?",
+      "a": "No. Subscriptions bought through Apple are managed through Apple's subscription management, which Settings points you to. Cancel there."
+    },
+    {
+      "q": "What should I save before I delete?",
+      "a": "The videos you want to keep and your untouched originals, in your own library or storage. You own your photos and videos; make sure copies exist outside the app before you send the request."
+    },
+    {
+      "q": "What happens to my published property pages?",
+      "a": "Assume every branded and unbranded link stops working once the account is gone. Replace or remove links on signs, flyers, emails and in the MLS before you request deletion."
+    }
+  ],
+  "related": [
+    "account-deletion-and-your-listing-media-what-to-expect-from-an-app",
+    "why-a-property-marketing-app-should-keep-your-originals",
+    "how-rendprop-handles-your-photos-videos-and-ai-processing-permissions",
+    "checking-current-plan-features-and-included-usage-in-rendprop"
+  ],
+  "published": "2026-10-28"
+}

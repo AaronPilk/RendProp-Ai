@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-9-16-video",
+  "title": "What is 9:16 video",
+  "description": "9:16 video is vertical video, nine units wide by sixteen tall, the shape of a phone held upright. It is the format for Reels, TikTok and Shorts.",
+  "category": "glossary",
+  "keywords": [
+    "what is 9:16 video",
+    "9:16 aspect ratio",
+    "vertical video format",
+    "9 by 16 video real estate",
+    "vertical listing video size"
+  ],
+  "tldr": "9:16 video is vertical video with an aspect ratio of nine units wide to sixteen tall, the shape of a phone held upright. It fills the whole screen on Instagram Reels, TikTok and YouTube Shorts and is the format a listing reel is built in. The same home shot in 16:9 and cropped to 9:16 loses the sides of every room, so vertical video is made from portrait photos or vertical footage from the start.",
+  "html": "<p>9:16 video is vertical video with an aspect ratio of nine units wide to sixteen units tall, the shape of a phone held upright. A common pixel size is 1080 by 1920. It fills the whole screen in Instagram Reels, TikTok and YouTube Shorts, which is why a listing reel is built in this shape rather than adapted to it.</p><p>The number is just the ratio of width to height. Turn a 16:9 widescreen frame on its side and you have 9:16.</p><h2>How the shape changes the content</h2><p>A vertical frame is tall and narrow, so it suits things that are tall and narrow: a doorway, a window wall, a staircase, a person. It is poor at things that are wide: a full living room, a long kitchen, the front of a house with its yard. That is why vertical real estate video leans on portrait photos of specific features, tighter crops and more scenes, rather than the sweeping wide frames a landscape video uses.</p><p>Text sits comfortably in the lower middle of a vertical frame, which is where captions go, and the top and bottom edges are often covered by the platform's interface, so the important content stays in the central band.</p><h2>Where vertical video belongs</h2><ul><li>Reels, TikTok and Shorts, where the feed is vertical and a horizontal video shows as a small strip with black bars.</li><li>Stories, where the same tall frame fills the screen and a landscape clip floats in the middle with empty space above and below it.</li><li>Any video a viewer will watch on a phone they are holding upright, which is most social viewing.</li></ul><p>It is the wrong choice for the property page, YouTube's main player, the MLS virtual tour field and anything watched on a laptop or TV, where <a href=\"/blog/what-is-16-9-video\">16:9</a> fills the screen.</p><h2>What 9:16 is not</h2><p>9:16 is not a cropped 16:9. The nearest confusable thing is a landscape video with the sides cut off to fit a vertical frame. That cut removes the edges of every room, the parts that show how big it is, and keeps the slow pacing of a page video. A real 9:16 video is made from portrait photos or vertical footage, framed for the tall shape from the start.</p><p>It is also not 4:5, the slightly-taller-than-square shape used for feed posts on some platforms, and not 1:1 square. Those are feed formats; 9:16 is the full-screen format.</p><h2>Eight portrait frames and a Saturday reel</h2><p>A photographer shoots a 2-bed condo on a Friday. For the landscape photos she frames rooms wide. Then she turns the phone upright and shoots eight more frames chosen for the vertical shape: the floor-to-ceiling window from the doorway, the kitchen island end-on, the hallway to the bedroom, the shower, the balcony rail with the skyline behind it, the building entrance.</p><p>Saturday the agent builds a 9:16 reel from those eight. The window wall opens the video, the balcony closes it, and captions run in the middle band. Nothing was cropped; every frame was composed for the shape. The landscape video for the page, built from the wide set, is a separate export. Same shoot, two shapes, each made on purpose.</p><h2>How this works in Rendprop</h2><p>Rendprop builds a vertical social video from the portrait photos you add to a listing, and a landscape video from the landscape photos. Scene order and camera motion are planned automatically, captions run word by word, a voiceover can be recorded or read by an AI voice, and music is optional. Exports come in 9:16 and 16:9. The branded link from the Share sheet is the one to put in your bio under the reel. See <a href=\"/features#reels\">the reels section</a> and <a href=\"/blog/9-16-or-16-9-picking-the-format-for-instagram-tiktok-youtube-and-the-mls\">picking the format for Instagram, TikTok, YouTube and the MLS</a>.</p><h2>Where vertical video goes wrong</h2><p>Cropping is the big one. The second is placing captions or the price at the very top or bottom, where the platform's own buttons and text cover them. The third is shooting only landscape photos and discovering on posting day that nothing fits the vertical frame. Ask for portrait frames at the shoot, build vertical video from them, and keep text in the middle of the frame.</p><p>Next step: at your next shoot, ask the photographer for eight portrait frames alongside the landscape photos. That single request is the difference between a reel and a cropped video.</p>",
+  "faq": [
+    {
+      "q": "What does 9:16 mean?",
+      "a": "It is the aspect ratio: nine units of width for every sixteen units of height. A common size is 1080 pixels wide by 1920 tall. It is a 16:9 widescreen frame turned on its side."
+    },
+    {
+      "q": "Can I turn my landscape video into 9:16?",
+      "a": "You can crop it, but you will lose the sides of every room and keep pacing that suits a page, not a feed. Build vertical video from portrait photos or vertical footage instead, and keep the landscape video for the page and YouTube."
+    },
+    {
+      "q": "Where should I put text in a 9:16 video?",
+      "a": "In the central band. The top and bottom edges of a vertical video are often covered by the platform's own interface, so captions, the price and the call to action belong in the middle of the frame."
+    },
+    {
+      "q": "Which photos work best for 9:16 video?",
+      "a": "Tall subjects: window walls, doorways, staircases, kitchen islands shot end-on, a balcony rail with the view behind it. Wide rooms photographed upright tend to show floor and ceiling instead of the room."
+    }
+  ],
+  "related": [
+    "what-is-16-9-video",
+    "9-16-or-16-9-picking-the-format-for-instagram-tiktok-youtube-and-the-mls",
+    "what-is-a-social-reel-for-a-listing",
+    "reels-from-vertical-photos-shooting-with-the-format-in-mind"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "why-a-property-marketing-app-should-keep-your-originals",
+  "title": "Why a property marketing app should keep your originals",
+  "description": "An app that overwrites the original when it edits a photo takes away your evidence, your baseline and your way out. What to expect from any app.",
+  "category": "ai-trust",
+  "keywords": [
+    "app keeps original photos",
+    "photo history real estate app",
+    "AI edit overwrites original",
+    "non-destructive photo editing listings",
+    "original photo version history"
+  ],
+  "tldr": "Because the original is the only proof of what the room looked like, the only baseline for reviewing an edit, and the only clean starting point for the next edit. An app that overwrites it when it edits has taken all three away. Expect originals to stay in a history beside every edited version, and move your files if they do not.",
+  "html": "<p>Because the untouched original is the only proof of what the room looked like, the only baseline you can review an edit against, and the only clean starting point for the next edit. An app that overwrites the original when it applies an AI edit has taken all three away in one tap. Expect any app you trust with listing photos to keep the original in a history beside every edited version, and move your work elsewhere if it does not.</p><h2>Three jobs only the original can do</h2><h3>Evidence</h3><p>A buyer says the bathroom in person is nothing like the bathroom online. The seller says the agent made the place look worse than it is. A broker asks what was changed and when. In each case the question is answered by putting the original next to the edit. Without the original, you have an opinion. With it, you have a fact.</p><h3>Baseline</h3><p>You cannot review an edit you cannot compare. Looking at an edited kitchen on its own tells you whether it looks nice. Looking at it beside the original tells you whether the pendant light was there before. The <a href=\"/blog/reviewing-ai-output-against-the-original-a-habit-not-a-step\">review habit post</a> depends entirely on the original being available at the moment of choosing.</p><h3>Starting point</h3><p>Edits compound. If you tidy a room, then stage it, then warm the light, and each step overwrites the last, the third edit is working from an image that already contains two sets of AI guesses. Errors stack. Starting each edit from the original, or from a version you have already reviewed, keeps every edit one step from the truth.</p><h2>A worked example: the kitchen that changed twice</h2><p>An agent edits a kitchen photo on a Monday: tidy the counters. On Wednesday the seller asks for brighter light, so the agent runs a brighten edit on top. On Friday a buyer at the open house asks why the kitchen has a pendant over the island online and a flush ceiling light in person.</p><p>In an app that keeps history, the agent opens the photo, sees the original, the tidy version and the brightened version side by side, finds that the brighten step added the pendant, swaps the published photo for the tidy version and answers the buyer in a minute. In an app that overwrites, the agent has one file, no idea which step added the light, and no clean version to fall back to. The honest answer becomes “I will have to re-shoot it.”</p><h2>What to expect from an app</h2><ul><li><strong>The original is preserved automatically.</strong> Not “you can export a copy first if you remember.” It stays, without you doing anything.</li><li><strong>Each edit is its own version.</strong> Tidy, stage and brighten are three versions, not one file edited three times.</li><li><strong>Each version carries its label.</strong> Staging is marked as staged; other alterations are marked as altered. The label travels with the version.</li><li><strong>You choose which version is used.</strong> The app does not decide for you that the latest edit is the one that goes in the video and on the page.</li><li><strong>The original is reachable from the phone.</strong> Evidence that lives on a desktop at the office is not much use at a Saturday open house.</li></ul><h2>What to do if your current app does not do this</h2><p>Two options. The quick one: before every edit, duplicate the photo and keep the untouched copy in a folder named for the listing. It works, until the day you forget. The better one: use a tool that keeps history by design, and keep your own backup of the originals as well, because no single app should be the only place a seller's photos live. The <a href=\"/blog/photo-provenance-for-real-estate-originals-versions-and-labels\">provenance post</a> describes a simple system for naming and keeping originals, versions and labels together.</p><h2>How this works in Rendprop</h2><p>In Rendprop, every AI edit is a separate version with a disclosure: staging gets the “Virtually staged” label, and every other edit carries an AI-alteration disclosure. The untouched original stays in photo history; you put each edit beside it, and the saved versions you choose are the ones that go into the video and onto the property website. Your photos and videos remain yours. AI can change or invent details, and the original is the only way to tell, so compare before publishing and check your own MLS rules before posting altered images. The <a href=\"/features#photo-studio\">photo studio</a> page describes the versions.</p><p>Next step: open the app you use today, pick an edited photo and try to find its original. If it takes more than ten seconds or it is not there, you have your answer about that app.</p>",
+  "faq": [
+    {
+      "q": "What does it mean for an app to keep originals?",
+      "a": "The untouched photo stays stored and reachable after every edit, each edit is saved as its own version with a label, and you choose which version is published. The original is preserved automatically rather than relying on you to export a copy first."
+    },
+    {
+      "q": "Why not just keep the originals on my own phone or computer?",
+      "a": "Do that as a backup regardless. The problem with relying on it alone is that the original is not beside the edit at the moment you review, and one forgotten duplicate means one listing with no evidence of what was changed."
+    },
+    {
+      "q": "What goes wrong when edits are applied on top of each other?",
+      "a": "Each AI step guesses, and the guesses stack. A brighten edit on top of a tidy edit may add a fixture the tidy edit did not. Starting each edit from the original or a reviewed version keeps every edit one step from the truth."
+    },
+    {
+      "q": "How does Rendprop handle originals?",
+      "a": "Every AI edit is a separate version with a disclosure, the untouched original stays in photo history, and you compare each edit with the original before choosing which saved versions to use. Your photos and videos remain yours."
+    }
+  ],
+  "related": [
+    "why-the-untouched-original-is-the-most-valuable-photo-in-the-set",
+    "photo-provenance-for-real-estate-originals-versions-and-labels",
+    "keeping-original-photos-why-your-photo-history-matters",
+    "reviewing-ai-output-against-the-original-a-habit-not-a-step"
+  ],
+  "published": "2026-10-28"
+}

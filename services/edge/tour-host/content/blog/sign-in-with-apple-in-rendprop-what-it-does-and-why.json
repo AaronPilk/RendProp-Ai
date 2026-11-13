@@ -1,0 +1,40 @@
+{
+  "slug": "sign-in-with-apple-in-rendprop-what-it-does-and-why",
+  "title": "Sign in with Apple in Rendprop: what it does and why",
+  "description": "Sign in with Apple creates your Rendprop account. You can prepare a listing before signing in; publishing needs the account, a connection and a workspace.",
+  "category": "howto",
+  "keywords": [
+    "sign in with apple rendprop",
+    "rendprop account",
+    "do i need an account to use rendprop",
+    "rendprop login",
+    "prepare listing before signing in"
+  ],
+  "tldr": "Sign in with Apple is how a Rendprop account is created; there is no separate username and password to invent. You can start a listing and prepare photos, edits and video before you sign in. Publishing the property website is the step that needs the account, plus a connection and a connected workspace. Use the same Apple ID on the phone and in Studio.",
+  "html": "<p>Sign in with Apple creates your Rendprop account. There is no separate username and password to make up; your Apple ID is the account. You do not need it to start a listing and prepare content locally; you do need it to publish, along with a connection and a connected workspace.</p><p>Use the same Apple ID in the iPhone app and in Studio on the web so you are looking at the same listings in both.</p><h2>What signing in actually gives you</h2><ul><li><strong>An account.</strong> The thing your listings, published pages, links and enquiries belong to.</li><li><strong>Publishing.</strong> A property page has to belong to someone. Signing in is how it belongs to you.</li><li><strong>Continuity.</strong> The same account on the phone and at studio.rendprop.com. The <a href=\"/blog/how-to-use-rendprop-studio-on-the-web-alongside-the-iphone-app\">Studio post</a> covers that split.</li><li><strong>Teams and client details.</strong> Teams exist in Rendprop, and a photographer can present a client's contact details on a listing. Both hang off an account.</li><li><strong>Plan management.</strong> Settings is where you compare or change plans, restore purchases and reach Apple's subscription management; all of it is tied to the signed-in account.</li></ul><h2>When to sign in</h2><p>Before the moment you need to publish, not during it. The clean sequence for a first listing is: download the app, sign in with Apple once while you have a signal, then go and do the work. If you skip the sign-in and start preparing a listing in a basement with no signal, nothing is lost; the content is prepared locally, and you sign in when you are back in range and ready to publish.</p><ol><li>Open Rendprop on an iPhone running iOS 16 or later.</li><li>Choose Sign in with Apple and confirm with Face ID, Touch ID or your passcode as your phone asks.</li><li>That is the account. Go to Home and start a listing.</li><li>When the listing is ready and you have a connection and a connected workspace, publish.</li></ol><h3>What to check before you sign in</h3><p>Which Apple ID you are using. Some people have a personal one and a work one on the same phone. The account that creates the listing is the account that owns the page and receives the enquiries. If you run a team or a photography business, decide which Apple ID is the business before anyone publishes anything. Splitting listings across two accounts by accident is tedious to untangle.</p><h2>A worked example: the agent who started offline</h2><p>An agent downloads Rendprop on Tuesday evening and, without signing in, starts a listing for a 3-bed in a cul-de-sac and adds 20 photos, sorted and in order. On Wednesday morning she wants to publish before the open house post goes out. She signs in with Apple, the account is created, she connects, and she publishes the listing she prepared the night before. The links appear in the Share sheet. Nothing from Tuesday had to be redone.</p><p>Her mistake, had she made one, would have been signing in Wednesday with her personal Apple ID when the brokerage phone uses a work one. She checks which Apple ID the phone is using before she taps, and that is the whole precaution.</p><h2>What Sign in with Apple does not do</h2><p>It does not give Rendprop your photos for its own use. You own your photos and videos, and Rendprop does not use your content for its own marketing or AI training without written permission. Signing in creates an account; it is not a licence. The <a href=\"/blog/how-rendprop-handles-your-photos-videos-and-ai-processing-permissions\">permissions post</a> covers what is and is not sent anywhere and when the app asks first.</p><h2>Where sign-in trips people</h2><ul><li><strong>Two Apple IDs, two accounts.</strong> Pick one for the business and use it everywhere, including Studio.</li><li><strong>Waiting to sign in until the moment of publishing with no signal.</strong> Sign in earlier, while you have a connection.</li><li><strong>Expecting a listing to publish without a connected workspace.</strong> Publishing needs the account, a connection and a connected workspace. Prepare offline; publish online.</li><li><strong>Signing in on a shared phone.</strong> The account on the phone owns whatever gets published from it. Make sure it is your own Apple ID before you build a listing.</li><li><strong>Deleting the account to \"start over\".</strong> Account deletion is a request made in Settings and should be treated as final for everything in the account. The <a href=\"/blog/how-to-delete-your-rendprop-account-and-what-happens-to-your-media\">deletion post</a> explains what to do first.</li></ul><h2>Why Apple and not a form</h2><p>Because an agent at a front door does not want to invent a password. Sign in with Apple uses the account already on the phone, confirms with the phone's own security, and keeps one less credential in the world. For a tool whose whole job is to get a listing live from a driveway, that is the right trade.</p><p>Next step: open Rendprop, check which Apple ID the phone is using, and sign in with Apple while you have a signal. Then start a listing so the account has something in it.</p>",
+  "faq": [
+    {
+      "q": "Do I need to sign in before I start a listing?",
+      "a": "No. You can start a listing and prepare content locally first. Signing in is needed when you publish, together with a connection and a connected workspace."
+    },
+    {
+      "q": "Is there a username and password?",
+      "a": "No. Sign in with Apple creates the account using the Apple ID on your phone, confirmed with Face ID, Touch ID or your passcode."
+    },
+    {
+      "q": "Which Apple ID should a team or photography business use?",
+      "a": "Decide on one business Apple ID before anyone publishes, and use it in the app and in Studio. The account that publishes a listing owns the page and receives the enquiries."
+    },
+    {
+      "q": "Does signing in give Rendprop rights to my photos?",
+      "a": "No. You own your photos and videos. Rendprop does not use your content for its own marketing or AI training without written permission, and optional processing asks for separate permission before photos are sent."
+    }
+  ],
+  "related": [
+    "what-you-need-to-run-rendprop",
+    "how-to-use-rendprop-studio-on-the-web-alongside-the-iphone-app",
+    "how-to-delete-your-rendprop-account-and-what-happens-to-your-media",
+    "teams-in-rendprop-inviting-people-and-what-they-can-see"
+  ],
+  "published": "2026-10-28"
+}

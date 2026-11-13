@@ -159,3 +159,4 @@ Disallow: /property/
 Allow: /
 
 Sitemap: https://rendprop.com/sitemap.xml
+Sitemap: https://rendprop.com/sitemap-blog.xml

@@ -1,0 +1,40 @@
+{
+  "slug": "is-virtual-staging-allowed-in-listing-photos",
+  "title": "Is virtual staging allowed in listing photos",
+  "description": "Often yes, when the photo is labelled and the room is real. Your MLS and brokerage set the rules, so check the current ones before you upload.",
+  "category": "questions",
+  "keywords": [
+    "is virtual staging allowed",
+    "virtual staging MLS rules",
+    "virtually staged photo label",
+    "virtual staging disclosure real estate",
+    "can I virtually stage listing photos"
+  ],
+  "tldr": "Often yes, provided the staged photo is clearly labelled and the room underneath is the real room. The rules come from your MLS and your brokerage and they change, so check the current version before uploading. What gets agents in trouble is not staging; it is unlabelled staging, or staging that quietly changes the room.",
+  "html": "<p>Often yes, provided the staged photo is clearly labelled and the room underneath is the real room. The rules come from your MLS and your brokerage rather than from any app, and they change, so check your MLS's current rules before uploading a staged photo. What gets agents in trouble is not staging. It is unlabelled staging, or staging that quietly changes the room while it adds the sofa.</p><h2>Why staging is treated differently from other edits</h2><p>Furniture is not part of the sale. A buyer who sees a staged living room and then walks into an empty one has lost nothing about the property; they have seen a suggestion of how it could be used. That is why virtual staging has been accepted in a way that removing a power line has not. The power line conveys with the house. The sofa does not.</p><p>The acceptance rests on one condition: the buyer knows. A label on the photo and a note in the listing make the suggestion honest. Without them, the staged photo becomes a claim that the room comes furnished, or at least that it looks like that, and a claim that is false at the showing is the kind of thing that ends up as a complaint.</p><h2>The line that matters: the room has to stay the room</h2><p>A staging edit should add furniture, rugs, lamps and art. It should not change the floor, the walls, the windows, the ceiling height, the fixtures or the view. The practical problem with AI staging is that the model does not always know where that line is. Asked to furnish a bedroom, it may also brighten the carpet, replace a dated light fitting or lose the radiator under the window. Each of those is an alteration of the property hiding inside a staging edit.</p><p>So the check is not “does this look nice.” It is “apart from the furniture, is anything different from the original.” Put the two side by side at full size and look at the edges of the room, the floor, the window frames and the fixtures.</p><h2>A worked example: a vacant four-bed, three rooms staged</h2><p>A four-bed family home is empty after the owners relocate. The agent stages three photos: the living room, the primary bedroom and the dining area, because those are the rooms buyers struggle to size when empty. The kitchen, bathrooms and bedrooms two to four stay as shot.</p><p>Each staged photo is labelled “Virtually staged” on the image. The listing remarks say that three photos are virtually staged and the home is vacant. The property page carries the same note. The original unstaged photos are kept in the listing file and shown to any buyer who asks. The agent checks the MLS's current policy on staged images and follows its placement and wording requirements, then uploads.</p><p>At the first open house two buyers mention the staged photos. Neither is surprised by the empty rooms, because they were told. That is the whole outcome you are after.</p><h2>Where staged photos go wrong</h2><ul><li><strong>No label on the image.</strong> A note buried in the remarks does not survive a screenshot or a text message. The label needs to travel with the photo.</li><li><strong>Staging that changes the room.</strong> New flooring, brighter walls, a missing radiator, a wider window. Compare with the original before use.</li><li><strong>Staging a defect away.</strong> A rug placed exactly over the stain is not staging; it is concealment.</li><li><strong>Staging an occupied home over the owner's furniture.</strong> Replacing real furniture with imaginary furniture is a different claim from furnishing an empty room, and a buyer who visits sees the difference immediately.</li><li><strong>Style that lies about the home.</strong> A starter home staged like a design showroom sets up a showing that disappoints.</li></ul><h2>How this works in Rendprop</h2><p>In Rendprop's photo studio the add-furniture edit creates a separate version labelled “Virtually staged”, and the untouched original stays in photo history. You compare each edited version against the original and choose which saved versions to use on the website and in the video. AI can change or invent details, so that comparison matters as much as the label. Rendprop does not decide what your MLS allows; check your own MLS rules before posting staged images. The <a href=\"/features#photo-studio\">photo studio</a> page covers the edits and the disclosures they carry.</p><p>For the label wording itself and where it goes, see <a href=\"/blog/virtually-staged-the-two-words-that-keep-a-listing-honest\">the two words that keep a listing honest</a>, and for shooting empty rooms so staging reads well, <a href=\"/blog/photographing-a-vacant-home-so-virtual-staging-looks-right\">photographing a vacant home</a>.</p><h2>Before you stage the next vacant listing</h2><p>Before you stage the next vacant listing, read your MLS's current rule on staged images and write down three things: where the label goes, what the remarks must say, and whether the unstaged original has to be included. Then stage only the rooms buyers cannot size on their own.</p>",
+  "faq": [
+    {
+      "q": "Does a virtually staged photo have to be labelled?",
+      "a": "Treat it as required everywhere, because an unlabelled staged photo is the thing that causes complaints. Your MLS's current rules will say where the label goes and what the remarks should say; follow those and keep the label on the image itself."
+    },
+    {
+      "q": "Can I virtually stage an occupied home?",
+      "a": "Replacing the owner's real furniture with imaginary furniture is a stronger claim than furnishing an empty room, and buyers notice at the showing. If the owner's furniture is the problem, decluttering with a disclosure or physical staging is usually the better route."
+    },
+    {
+      "q": "Should I include the unstaged photo as well?",
+      "a": "Keep it in the listing file in every case, and include it in the listing if your MLS asks for it or if the staged version could mislead on its own. Showing both is the simplest way to make the staging honest."
+    },
+    {
+      "q": "Which rooms are worth staging?",
+      "a": "The rooms buyers struggle to size when empty: the living room, the primary bedroom and a dining space. Kitchens and bathrooms rarely need it, and staging every room makes the listing feel like a rendering."
+    }
+  ],
+  "related": [
+    "virtual-staging-rules-what-to-label-and-what-your-mls-expects",
+    "virtually-staged-the-two-words-that-keep-a-listing-honest",
+    "can-i-use-ai-edited-photos-in-the-mls",
+    "photographing-a-vacant-home-so-virtual-staging-looks-right"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-custom-edit-prompt",
+  "title": "What is a custom edit prompt",
+  "description": "A custom edit prompt is a written instruction you give an AI photo tool to make one specific change to a listing photo that no preset covers.",
+  "category": "glossary",
+  "keywords": [
+    "custom edit prompt",
+    "ai photo edit prompt real estate",
+    "custom prompt listing photo",
+    "how to write an edit prompt",
+    "ai prompt for property photo"
+  ],
+  "tldr": "A custom edit prompt is a written instruction, in plain words, that you give an AI photo tool to make one specific change to a listing photo that the presets do not cover: remove the garden hose, turn on the under-cabinet lights, take the car out of the driveway. The tool reads the sentence and produces a new version of the photo. A good prompt names one change, names what must stay the same, and is reviewed against the original afterwards.",
+  "html": "<p>A custom edit prompt is a written instruction, in plain words, that you give an AI photo tool to make one specific change to a listing photo that the presets do not cover: remove the garden hose from the lawn, turn on the under-cabinet lights, take the car out of the driveway. The tool reads the sentence and produces a new version of the photo with that change.</p><p>It is the flexible edit. It is also the one most likely to do more than you asked, which is why the sentence and the review both matter.</p><h2>How a prompt becomes an edit</h2><p>You select a photo and type the instruction. The tool interprets the words, identifies the part of the image they refer to, and regenerates that part, sometimes with knock-on changes nearby. The output is saved as a separate version with a disclosure, and the original stays untouched. Some tools can propose an instruction for you based on what they see in the photo, or rewrite your wording so the instruction is clearer before it runs.</p><p>The prompt is a request, not a command. The same words can produce different results on different attempts, and the tool may interpret remove the hose as tidy the lawn. Comparing the result against the original is part of the edit, not an afterthought.</p><h2>When to write one</h2><ul><li>A single stray item: the hose, the bin, the car, the extension cord, the one picture frame on the floor.</li><li>A lighting change the presets do not offer: lamps on, pendant lights on, blinds appearing open.</li><li>A tweak to a preset's result: the twilight is good but the porch light should be warmer.</li></ul><p>It is the wrong tool for anything that changes the property: new flooring, a different front door colour, a wall removed. Those are alterations a buyer cannot undo at the showing, and a prompt makes them too easy to ask for.</p><h2>What a prompt is not</h2><p>A custom prompt is not a preset. Blue sky, twilight, green lawn, tidy the room and add furniture are packaged edits with predictable scope; a prompt is open-ended. It is not a search query, and it is not a conversation with the tool. It is also not a substitute for reshooting a bad photo; a prompt can remove a hose, but it cannot make a blurry kitchen sharp or a tilted horizon level without inventing content.</p><p>The nearest confusable thing is the tidy the room preset. Both remove things. The preset decides what counts as clutter; the prompt lets you name the one item. Use the preset when the counter is a mess and the prompt when the counter is fine except for the toaster.</p><h2>A hatchback, a hose and two attempts</h2><p>A photographer shoots a 3-bed ranch on a Thursday afternoon. The front exterior is good except for the seller's silver hatchback in the driveway and a coiled hose by the tap. She writes: Remove the silver car from the driveway and the green hose by the outdoor tap. Keep the driveway surface, the lawn, the shrubs, the house and the sky exactly as they are.</p><p>The first attempt removes the car and the hose and also fills in the driveway with a smoother surface than the real one. She compares it against the original, sees the difference in texture, rejects it, and runs the prompt again. The second attempt keeps the driveway's cracks. She selects that version, labelled as AI-altered, for the gallery and the main photo. The agent has a clean exterior and an honest driveway.</p><h2>How this works in Rendprop</h2><p>A custom prompt is one of the optional AI edits in Rendprop's photo studio, next to blue sky, twilight, green lawn, tidy the room and add furniture. Suggest proposes edits for a photo, and Improve my prompt sharpens your wording before the edit runs. Every edit is a separate version with an AI-alteration disclosure, and the untouched original stays in photo history. AI can change or invent details, so compare the result against your original before publishing, and check your own MLS rules before posting altered images. See <a href=\"/features#photo-studio\">the photo studio</a> and <a href=\"/blog/how-to-use-suggest-and-improve-my-prompt-in-rendprops-photo-studio\">how to use Suggest and Improve my prompt</a>.</p><h2>Where prompts go wrong</h2><p>Vague wording: make it look better invites the tool to change anything. Stacked requests: remove the car, fix the lawn and add a wreath in one sentence gives three chances for drift. No boundary: a prompt that names the change but not what must stay is a prompt that will change more. And no review: a thumbnail looks fine until the full-size comparison shows a window that moved. One change per prompt, a sentence about what stays, and a full-size comparison every time.</p><p>Next step: take one exterior photo from your current listing with a single distracting object in it, write a two-sentence prompt that names the object and names what must stay, and compare the result at full size before you use it.</p>",
+  "faq": [
+    {
+      "q": "What makes a good custom edit prompt?",
+      "a": "One named change, a sentence about what must stay the same, and plain words. Remove the hose by the tap; keep the lawn, the house and the sky as they are. Vague requests like make it look better invite the tool to change things you did not ask about."
+    },
+    {
+      "q": "Can a custom prompt change things I did not ask for?",
+      "a": "Yes. AI can change or invent details near the edit, such as a driveway surface or a window frame. That is why the result is saved as a separate version and why you compare it against the original at full size before using it."
+    },
+    {
+      "q": "Should I use a custom prompt to change flooring or paint?",
+      "a": "No. That alters the property rather than the photo's distractions, and a buyer cannot undo it at the showing. Keep prompts to movable items and lighting, and check your own MLS rules before posting any altered image."
+    },
+    {
+      "q": "What does Improve my prompt do?",
+      "a": "In Rendprop's photo studio it sharpens the wording of your instruction before the edit runs, so the tool gets a clearer request. Suggest, by contrast, proposes edits for a photo you have not written anything for yet."
+    }
+  ],
+  "related": [
+    "writing-a-custom-edit-prompt-for-a-property-photo",
+    "custom-ai-prompts-guardrails-that-keep-edits-inside-the-room",
+    "how-to-use-suggest-and-improve-my-prompt-in-rendprops-photo-studio",
+    "what-is-a-saved-photo-version"
+  ],
+  "published": "2026-10-28"
+}

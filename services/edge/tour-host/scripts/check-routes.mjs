@@ -447,7 +447,8 @@ async function main() {
   expect((await get(worker, "/studio/unknown")).status === 404,
     "[/studio/unknown] does not redirect unrelated paths");
   const studioLink = '<a href="https://studio.rendprop.com/">Studio</a>';
-  for (const page of ["index", "features", "pricing", "compare", "support"]) {
+  for (const page of ["index", "features", "pricing", "compare", "support",
+    "listing-video-from-photos", "single-property-website", "real-estate-photo-editing-app"]) {
     const html = readFileSync(join(ROOT, "public", `${page}.html`), "utf8");
     const nav = html.match(/<div class="nav-menu" id="navMenu">([\s\S]*?)<\/div>/)?.[1] || "";
     const footer = html.match(/<nav class="foot-links" aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] || "";
@@ -585,7 +586,10 @@ async function main() {
     expect(sm.body.includes('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'), "[/sitemap.xml] want a urlset");
 
     const locs = [...sm.body.matchAll(/<loc>([^<]*)<\/loc>/g)].map((m) => m[1]);
-    expect(locs.length >= 9, `[/sitemap.xml] want at least the pages the old static file had, got ${locs.length}`);
+    // Eleven: the seven marketing/legal pages, the three product pages added
+    // 2026-11-12 and the demo tour. The noindex demo portfolio is no longer
+    // submitted (rule 2 below now covers /a/ too).
+    expect(locs.length >= 11, `[/sitemap.xml] want at least the eleven site pages, got ${locs.length}`);
     for (const must of [
       "https://rendprop.com/",
       "https://rendprop.com/features",
@@ -594,11 +598,21 @@ async function main() {
       "https://rendprop.com/support",
       "https://rendprop.com/terms",
       "https://rendprop.com/privacy",
+      "https://rendprop.com/listing-video-from-photos",
+      "https://rendprop.com/single-property-website",
+      "https://rendprop.com/real-estate-photo-editing-app",
       "https://rendprop.com/f/estate-demo",
-      // New: the demo agent's portfolio. Rendprop's own content, and the one
-      // /a/ page that existed and was never offered to a crawler.
-      "https://rendprop.com/a/meridian",
     ]) expect(locs.includes(must), `[/sitemap.xml] missing ${must}`);
+
+    // A listed marketing page must exist. These are static files the assets
+    // binding serves at their clean path (public/pricing.html -> /pricing);
+    // /terms and /privacy are Worker-rendered and /f/ is a tour.
+    for (const loc of locs) {
+      const path = loc.slice("https://rendprop.com".length);
+      if (path === "/terms" || path === "/privacy" || /^\/[fa]\//.test(path)) continue;
+      const file = path === "/" ? "index.html" : `${path.slice(1)}.html`;
+      expect(existsSync(join(ROOT, "public", file)), `[/sitemap.xml] ${loc} is listed but public/${file} does not exist`);
+    }
 
     // RULE 1 — never an unbranded URL. /u/ is noindex by construction and /f/
     // is its canonical; asking a crawler to index it would be the one thing
@@ -614,7 +628,7 @@ async function main() {
     // the sitemap must actually render WITHOUT a noindex tag; a sitemap entry
     // is a request to index, and a page we tell the crawler to drop must not
     // be in one. This fetches each listed tour through the real handler.
-    for (const loc of locs.filter((l) => /\/f\//.test(l))) {
+    for (const loc of locs.filter((l) => /\/(f|a)\//.test(l))) {
       const page = await get(worker, loc.replace("https://rendprop.com", ""));
       expect(page.status === 200, `[/sitemap.xml] listed tour ${loc} must render, got ${page.status}`);
       expect(!page.h("x-robots-tag"), `[/sitemap.xml] listed tour ${loc} must not be noindex (header)`);
@@ -662,7 +676,7 @@ async function main() {
     "[/terms] §6 must identify Apple as the purchase-term authority");
   expect(!/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
     "[/terms] must not promise the superseded monthly-only launch line-up");
-  expect(terms.body.includes("Effective October 27, 2026"), "[/terms] proposed notice revision date");
+  expect(terms.body.includes("Effective October 29, 2026"), "[/terms] proposed notice revision date");
   ok("terms separate Rendprop usage details from Apple purchase terms");
 
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────

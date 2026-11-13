@@ -1,0 +1,39 @@
+{
+  "slug": "teams-for-photography-businesses-who-sees-which-listings",
+  "title": "Teams for photography businesses: who sees which listings",
+  "description": "How a media company with more than one shooter should organise listings so the right people can work on them and client details stay attached.",
+  "category": "photographers",
+  "keywords": [
+    "photography team workspace",
+    "real estate media company team",
+    "multiple photographers one account",
+    "who sees listings team app",
+    "media company listing organisation"
+  ],
+  "tldr": "Run one workspace for the business, not one account per shooter. Listings live in the workspace so anyone on the team can pick up a shoot's photos, finish the edits and publish, and the agent's contact details stay attached to the listing rather than to whoever shot it. Decide who publishes and who reviews before you add people.",
+  "html": "<p>A photography business with more than one shooter should run one workspace for the business, with listings inside it, rather than a separate account per person. That way a listing started by Saturday's shooter can be finished by Sunday's editor and published by whoever is at the desk, and the agent's contact details, the enquiries and the two links stay attached to the listing rather than to one phone. Who sees what is then a question of who is in the team, and that is a decision you make before you invite anyone.</p><p>The alternative, each shooter on their own account, works until the first time a client's listing is on a phone that is at a wedding.</p><h2>What the team needs to share</h2><p>Think about what actually moves between people in a media company on a busy week:</p><ul><li><strong>The listing itself.</strong> The photos, the AI edit versions and their originals, the video, the details and the published page.</li><li><strong>The client's contact details.</strong> Which agent the page presents, and whether their email is verified for enquiry forwarding.</li><li><strong>The enquiries.</strong> If a lead arrives in the inbox before forwarding is set up, someone has to see it.</li><li><strong>The links.</strong> The branded and unbranded addresses that have already been sent to the agent and pasted into the MLS.</li></ul><p>If any of those lives on one person's account, that person is a bottleneck. In a shared workspace they are part of the listing.</p><h2>A worked week</h2><p>A three-person outfit: two shooters, one person who edits and handles delivery from the office. Saturday, shooter one does three listings and shooter two does four. Each starts the listing in the shared workspace from the driveway, adds photos in the car, runs the AI edits the agent asked for. Sunday morning the office person opens each listing on the web Studio at studio.rendprop.com, compares every edit with its original, builds the videos, checks the details and the contact card, publishes and sends the seven agents their two links. Monday a buyer enquires on one of them before the agent has verified their email; the enquiry is in the shared inbox, the office person forwards it and chases the verification. Nobody waited for anyone's phone. The <a href=\"/blog/four-shoots-on-saturday-a-delivery-workflow-for-busy-photographers\">four shoots on Saturday post</a> covers the shooter's side of that day.</p><h2>Decide roles before you add people</h2><p>The app handles who is in the team. The business has to handle who does what. Three roles are enough for most companies:</p><ol><li><strong>Shooters</strong> start listings, add photos, run edits, and record voiceovers. They do not publish.</li><li><strong>A reviewer</strong> compares every AI edit against its original, watches every video through, and checks the contact card. This is the person who catches an invented window before an agent does.</li><li><strong>A publisher</strong> publishes and sends links. Often the same person as the reviewer. Rarely the shooter who is already at the next property.</li></ol><p>Write it down. The point of the roles is that a listing is not published without a review by someone other than the person who made the edits.</p><h2>Setting up the team in Rendprop</h2><p>Sign in with Apple creates an account, and teams exist so that more than one person can work in the same workspace. Listings, the inbox, and Settings are in the app; publishing needs a connection and a connected workspace. Check the current team options in the app or on the <a href=\"/features\">features page</a> for what is available at the time you set up, and the <a href=\"/blog/teams-in-rendprop-inviting-people-and-what-they-can-see\">teams how-to</a> for the steps. Decide the roles above first, then invite people to match them.</p><h2>Client details stay with the listing</h2><p>A photographer can present a client's contact details on a listing, so the page shows the agent's name and number rather than the shooter's. In a team that matters more, because the shooter and the publisher are different people. Collect the agent's details at booking, put them on the listing before the shoot, and the page is right whoever publishes it. Enquiry forwarding to the agent needs their email verified, which the office person tracks per client. The <a href=\"/blog/presenting-the-agents-contact-details-on-a-listing-you-shot\">contact details post</a> goes through it.</p><h2>What goes wrong in team setups</h2><ul><li><strong>Listings on personal accounts.</strong> The shooter leaves, the listings go with them, the agent's links still point at them. Keep client work in the business workspace.</li><li><strong>Everyone publishes.</strong> Then nobody reviews. One or two publishers, named.</li><li><strong>Nobody owns the inbox.</strong> An enquiry that arrives before forwarding is set up sits there. Give one person the job of checking it daily.</li><li><strong>Mixing your portfolio listings with client listings.</strong> Keep them clearly separated so a shooter does not present the business's details on an agent's page.</li><li><strong>Adding people before agreeing the review step.</strong> The team works because of the review, not because of the sharing.</li></ul><p>Next step: write the three roles on one line each, name the people, and move client listings into one shared workspace before the next busy weekend.</p>",
+  "faq": [
+    {
+      "q": "Should each photographer have their own Rendprop account?",
+      "a": "Each person signs in with their own Apple ID, but client listings should live in one workspace for the business so anyone on the team can finish and publish them. Check the current team options in the app for how workspaces and members are set up."
+    },
+    {
+      "q": "Who should publish a listing in a team?",
+      "a": "One or two named people who were not the ones running the edits. The value of a team is that someone else compares each AI edit with its original and watches the video through before the page goes live."
+    },
+    {
+      "q": "What happens to enquiries in a team workspace?",
+      "a": "They land in the inbox for that listing and in the view of all listings together. With the agent's details presented and their email verified, they are forwarded to the agent. Give one person the job of checking the inbox for anything that did not forward."
+    },
+    {
+      "q": "Can I work on a listing from the desktop while a shooter is out?",
+      "a": "Yes. The web Studio at studio.rendprop.com gives continuity between the phone and the desktop, so the office can review and publish listings the shooters started on site."
+    }
+  ],
+  "related": [
+    "teams-in-rendprop-inviting-people-and-what-they-can-see",
+    "four-shoots-on-saturday-a-delivery-workflow-for-busy-photographers",
+    "growing-a-real-estate-media-business-one-link-at-a-time"
+  ],
+  "published": "2026-10-28"
+}

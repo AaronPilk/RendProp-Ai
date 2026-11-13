@@ -1,0 +1,39 @@
+{
+  "slug": "four-shoots-on-saturday-a-delivery-workflow-for-busy-photographers",
+  "title": "Four shoots on Saturday: a delivery workflow for photographers",
+  "description": "A delivery workflow for a photographer with four listings in a day: what to do on site, in the car and at the desk so every agent has links by Sunday.",
+  "category": "photographers",
+  "keywords": [
+    "real estate photographer workflow",
+    "delivering multiple listings same day",
+    "busy photographer delivery process",
+    "photo shoot delivery workflow",
+    "listing delivery checklist"
+  ],
+  "tldr": "Four shoots in a day works when each listing is started on the phone before you leave the driveway, edits and video are reviewed in the gaps between shoots, and publishing happens in one sitting at the end. The rule is: nothing waits for the desk that can be done in the car.",
+  "html": "<p>Four shoots on a Saturday is deliverable by Sunday if you split the work into three places: on site, in the car, and at the desk. On site you shoot and start the listing. In the car you add photos, review edits and build the video. At the desk you publish all four and send the links. The rule that makes it work is that nothing waits for the desk that could have been done in the car.</p><p>Most photographers do the opposite. Shoot all day, dump cards at night, and face four untouched sets at nine in the evening. That is how Sunday delivery becomes Tuesday delivery.</p><h2>The day, hour by hour</h2><p>Say the bookings are 9:00, 11:00, 13:30 and 15:30, each a standard home, each agent expecting photos, a video and a property page.</p><ol><li><strong>8:40, first driveway.</strong> Before you get out, start a listing in Rendprop for this address. Type in the details the agent sent: price, beds, baths, square feet. Set it to present the agent's contact details. Two minutes.</li><li><strong>9:00 to 10:15, shoot one.</strong> Normal shot list plus one establishing frame per room and the doorway transitions, so the set cuts together for video.</li><li><strong>10:20, parked outside shoot one.</strong> Add the landscape photos to the listing. If the agent asked for blue sky on the exterior or a tidy on the living room, run those edits in the photo studio now. Do not review them yet. Drive.</li><li><strong>10:50, second driveway.</strong> Start listing two. Details in. Then while you wait for the agent to open up, open listing one and compare each AI edit with the original. Keep the ones that are faithful, discard the rest. Move to the video step and create the video.</li><li><strong>11:00 to 12:15, shoot two.</strong></li><li><strong>12:20 to 13:20, lunch in the car.</strong> Photos into listing two, edits run. Review listing one's video all the way through. Record the voiceover for it if the agent wanted your voice, or type the script for an AI voice. Then review listing two's edits.</li><li><strong>13:30 to 14:45, shoot three.</strong> Start listing three before going in.</li><li><strong>14:50, parked.</strong> Photos into three. Video for two. Edits for three run.</li><li><strong>15:30 to 16:45, shoot four.</strong> Start listing four before going in.</li><li><strong>16:50, parked.</strong> Photos into four. Review three's edits and build its video. Run four's edits.</li></ol><p>By the time you are home, listings one and two are ready to publish, three needs its video reviewed, and four needs edits reviewed and a video built. That is under an hour at the desk, not four.</p><h2>What the desk session looks like</h2><p>At the desk, open each listing in turn. Review the remaining videos. For each, go to the website step, check the main photo is the one you want at the top of the page, check the details, and publish. Open the Share sheet and send each agent two links: the branded one for their marketing and the unbranded one for the MLS. Four messages, four agents, done. If you prefer a bigger screen for the review, the web Studio at studio.rendprop.com gives you the same listings on the desktop. The <a href=\"/blog/editing-on-the-phone-between-shoots\">editing on the phone post</a> goes deeper on which tasks suit the car and which suit the desk.</p><h2>Why starting the listing in the driveway matters</h2><p>Three reasons. First, the details go in while the agent's message is fresh and the address is in front of you, so the four listings do not get muddled at night. Second, the listing exists as a container the moment the photos are shot, so adding them is a thirty-second task rather than a decision. Third, you can prepare content locally before signing in; only publishing needs a connection and a connected workspace, so a patchy signal at a rural property does not stall you.</p><h2>Where the day falls apart</h2><ul><li><strong>Reviewing AI edits at midnight.</strong> Tired eyes miss an invented window or a changed floor. Review edits in daylight, in the car, one listing behind the one you just shot.</li><li><strong>Building all four videos last.</strong> A video needs a full watch. Four full watches in the last hour of the day is where corners get cut. Build each one in the gap after the next shoot.</li><li><strong>Not asking for details at booking.</strong> If the price is missing, the page publishes without it and you are chasing agents on Sunday morning.</li><li><strong>Publishing before checking the contact card.</strong> Four agents means four sets of details. Confirm each page carries the right name and number before the links go out.</li></ul><h2>The agent's side of this</h2><p>Each agent gets two links by Sunday and a page with the gallery, the video, the details and their contact card already live. They paste the unbranded link into the MLS on Monday and the branded link into their email. You have sent no files. The <a href=\"/features#listing-site\">property website page</a> shows what they receive, and the <a href=\"/blog/fast-turnarounds-without-cutting-corners-where-the-time-actually-goes\">fast turnarounds post</a> covers how to keep this pace without the quality slipping.</p><p>Next step: on your next multi-shoot day, start each listing in the driveway before you get out of the car, and see how much of the evening you get back.</p>",
+  "faq": [
+    {
+      "q": "Do I need a connection at every property?",
+      "a": "No. You can start a listing, add photos and prepare content locally before signing in. Publishing needs a connection and a connected workspace, so do that at the desk or anywhere with signal."
+    },
+    {
+      "q": "Is it safe to review AI edits on a phone screen?",
+      "a": "Yes, if you compare each edit with its original side by side and do it in good light. The original stays in photo history. If something looks doubtful on the phone, check it again on the web Studio before publishing."
+    },
+    {
+      "q": "What if an agent wants changes after I publish?",
+      "a": "Make the change in the listing and publish it again. The branded and unbranded links belong to the listing, so anything the agent has already pasted into the MLS or an email keeps pointing at it."
+    },
+    {
+      "q": "How long does the desk session take for four listings?",
+      "a": "That depends on how much you cleared in the car. If each listing arrives home with photos added, edits reviewed and the video built, the desk work is a final review, a details check and publishing, which is a short session rather than an evening."
+    }
+  ],
+  "related": [
+    "editing-on-the-phone-between-shoots",
+    "fast-turnarounds-without-cutting-corners-where-the-time-actually-goes",
+    "turning-a-saturday-of-listing-photos-into-mondays-social-schedule"
+  ],
+  "published": "2026-10-28"
+}

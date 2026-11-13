@@ -1,0 +1,44 @@
+{
+  "slug": "what-is-on-a-rendprop-property-page",
+  "title": "What is on a Rendprop property page",
+  "description": "A Rendprop property page shows the main photo, the details you typed, the gallery, the video on request, a contact card and an enquiry form.",
+  "category": "howto",
+  "keywords": [
+    "rendprop property page",
+    "what does a rendprop listing page include",
+    "single property website sections",
+    "property page enquiry form",
+    "listing page contact card"
+  ],
+  "tldr": "A published Rendprop property page shows the selected main photo, the details typed into the app (price, beds, baths and square feet for a home; hours, menu, capacity or membership for a business), the gallery, the selected listing video that plays on request, a contact card and an enquiry form that asks for the date the visitor wants. Sections appear when filled in and hide when empty. Buyers open it in a browser; there is nothing to design or host.",
+  "html": "<p>A Rendprop property page has six parts: the main photo you selected, the details you typed in the app, the gallery, the listing video you selected (which plays on request and does not autoplay), a contact card, and an enquiry form that asks for the date the visitor wants. If a recorded walkthrough was published, viewers can watch or scroll it too.</p><p>Sections appear when you fill them in and hide when they are empty. A buyer opens it in a browser on any phone; there is nothing for you to design or host.</p><h2>The six parts, top to bottom</h2><h3>The main photo</h3><p>One photo, chosen in the website step. It is the first thing on the page. Usually the front exterior or the room that sells the home. If you used an AI-edited version, it carries its disclosure like any other version.</p><h3>The details</h3><p>Typed into the app, shown on the page. A home shows price, beds, baths and square feet. For a listing created in a business mode: hours, menu, capacity or membership, depending on the mode. Leave a detail empty and it does not show, which is better than a placeholder.</p><h3>The gallery</h3><p>The photos and versions you chose to use. Buyers scroll it fast, so the order and the count matter; the <a href=\"/blog/the-listing-page-gallery-how-many-photos-and-in-what-order\">gallery post</a> covers both. Edited versions show with their disclosure; staging is labelled \"Virtually staged\".</p><h3>The video</h3><p>The listing video you selected in the website step, built from your photos in the video step. It plays when the visitor taps it and does not autoplay, so nobody gets sound at full volume in a waiting room. If you recorded a walkthrough, that is separate; viewers can watch it or scroll through it.</p><h3>The contact card</h3><p>Name, business and number, one tap to reach you. On the branded link (rendprop.com/f/ plus the slug) it is shown. On the unbranded link (rendprop.com/u/ plus the slug) there is no name, no contact details and no Rendprop branding, which is what the MLS virtual-tour field usually wants; check your own MLS rules. A photographer can present a client's contact details here instead of their own.</p><h3>The enquiry form</h3><p>A visitor fills it in and tells you the date they want. The enquiry lands in the inbox in the app, under the listing and in the view of all enquiries together. If a photographer presents a client's details, enquiries are forwarded to the client once the client's email is verified.</p><h2>What is not on the page</h2><ul><li>Nothing you did not fill in. Empty sections hide.</li><li>No autoplaying video.</li><li>No Rendprop branding on the unbranded link.</li><li>No design work and no hosting to arrange; the page is photos, video, details, contact and the form, and Rendprop serves it.</li></ul><h2>A worked example: what a buyer sees on Saturday morning</h2><p>A buyer gets a text from a friend: \"This one is near you.\" She taps the link. The front of a 3-bed in a cul-de-sac with a blue sky, the price, three beds, two baths, square feet. She scrolls the gallery in eight seconds: kitchen, living room, yard, primary. She taps the video and watches forty seconds with the sound on, because she chose to. She scrolls down to the contact card and sees the agent's name and number. Below it, the form asks what date she wants; she types Sunday at two and sends it.</p><p>The agent sees the enquiry in the inbox under that listing within the hour, replies with the address and a confirmation for Sunday at two, and the showing is booked. Everything the buyer needed was on one page, in the order she needed it, with no app to install. The <a href=\"/blog/a-property-page-that-works-on-a-phone-what-buyers-tap-first\">phone-first post</a> is about that sequence.</p><h2>What makes a page weaker than it should be</h2><ul><li><strong>A main photo that is not the best photo.</strong> It is the first impression. Choose it on purpose.</li><li><strong>Placeholder details.</strong> \"TBD\" in a price field. Leave it empty until it is final; the section hides.</li><li><strong>A gallery of forty photos in shoot order.</strong> Choose and order them.</li><li><strong>The wrong video selected.</strong> If you built two, select the one you reviewed.</li><li><strong>An uncompared AI edit in the gallery.</strong> Compare against the original before publishing, and check your own MLS rules before posting altered images.</li><li><strong>A contact card with a number nobody answers.</strong> Use the cell you pick up.</li></ul><h2>Seeing one before you build one</h2><p>The <a href=\"/f/estate-demo\">demo listing</a> is a live page with all six parts. Open it on your phone and tap through it like the Saturday buyer above. The <a href=\"/features#listing-site\">listing site section</a> describes the page in product terms, and the two links are explained alongside it.</p><p>Next step: open your most recent published page on your phone and check it against the six parts. If a section is missing because it is empty, fill it in; if one is weaker than the others, fix that one first.</p>",
+  "faq": [
+    {
+      "q": "What does a Rendprop property page include?",
+      "a": "The selected main photo, the details typed into the app, the gallery, the selected listing video that plays on request, a contact card and an enquiry form that asks for the date the visitor wants. A published walkthrough, if any, can be watched or scrolled."
+    },
+    {
+      "q": "Do buyers need the app to see the page?",
+      "a": "No. The page opens in a browser on any phone or computer. Only you need the app, to build and publish it."
+    },
+    {
+      "q": "What happens to sections I leave empty?",
+      "a": "They hide. A listing without a video has no video section; a listing without a final price shows no price until you add one. Nothing shows a placeholder."
+    },
+    {
+      "q": "Does the video play automatically?",
+      "a": "No. The selected listing video plays on request when the visitor taps it."
+    },
+    {
+      "q": "What is different on the unbranded link?",
+      "a": "The unbranded link shows the same property with no name, no contact details and no Rendprop branding. It is made for the MLS virtual-tour field; check your own MLS rules."
+    }
+  ],
+  "related": [
+    "what-a-single-property-website-should-include",
+    "what-the-rendprop-demo-listing-shows-you",
+    "how-to-publish-a-property-website-in-rendprop",
+    "a-property-page-that-works-on-a-phone-what-buyers-tap-first"
+  ],
+  "published": "2026-10-28"
+}

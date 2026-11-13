@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-find-your-unbranded-mls-link-in-rendprop",
+  "title": "How to find your unbranded MLS link in Rendprop",
+  "description": "After publishing, open the Share sheet and copy the unbranded link (rendprop.com/u/…): no name, no contact details, no branding, for the MLS tour field.",
+  "category": "howto",
+  "keywords": [
+    "unbranded mls link rendprop",
+    "rendprop.com/u link",
+    "unbranded virtual tour link",
+    "mls virtual tour field link",
+    "rendprop share sheet"
+  ],
+  "tldr": "Publish the listing, open the Share sheet, and copy the unbranded link. It looks like rendprop.com/u/ followed by the listing's slug and shows the property with no name, no contact details and no Rendprop branding, which is what the MLS virtual-tour field is for; check your own MLS rules. The branded link (rendprop.com/f/ plus the same slug) is the one for everywhere else.",
+  "html": "<p>Publish the listing, open the Share sheet, and copy the unbranded link. It has the form rendprop.com/u/ followed by the listing's slug, and shows the property with no name, no contact details and no Rendprop branding. That is the link for the MLS virtual-tour field.</p><p>The branded link, rendprop.com/f/ followed by the same slug, sits next to it in the same Share sheet and is the one for buyers, sellers, texts and social.</p><h2>Why there are two links at all</h2><p>An MLS virtual-tour field is generally not the place for your own marketing, because the tour gets syndicated and shown by other agents, and a normal property page with your contact card on it is the wrong thing to put there. That is why every published Rendprop listing gets two addresses to the same property: a branded page for your own marketing and an unbranded page for the MLS. What your MLS allows in that field is for its current rules to say. The <a href=\"/features#two-links\">two links section</a> describes them, and the <a href=\"/blog/unbranded-virtual-tour-links-what-mls-rules-usually-require\">MLS rules post</a> covers what the field usually expects. Check your own MLS rules; they vary.</p><h2>Finding and copying the unbranded link</h2><ol><li>Open the listing from Home. The listing has to be published; an unpublished listing has no links yet.</li><li>Open the Share sheet.</li><li>Choose the unbranded link and copy it. It starts rendprop.com/u/.</li><li>Paste it into the MLS virtual-tour field (the field name varies by MLS; it may be called virtual tour, unbranded tour, or similar).</li><li>Save the MLS entry and open the link from the MLS listing the way another agent would, to confirm it resolves and shows no branding.</li></ol><h3>What to check before you paste it</h3><ul><li>The link begins with /u/, not /f/. The /f/ link carries your contact card.</li><li>The page it opens shows the right property, the right main photo and the right price.</li><li>The video on the page is the one you reviewed, and it plays on request rather than autoplaying.</li><li>Any edited photos in the gallery carry their disclosure, and you have checked your own MLS rules on altered images.</li></ul><h2>A worked example: Tuesday night MLS entry</h2><p>An agent publishes a 3-bed in a cul-de-sac at 8pm on Tuesday. From the Share sheet she copies both links into a note so she has them to hand. At her desk she fills in the MLS: photos, remarks, and in the virtual-tour field the rendprop.com/u/ link. She saves and opens the listing from the MLS as if she were a co-op agent. The page shows the home, the gallery and the video, with no name, no number, no branding. Good.</p><p>Then she pastes the /f/ link into the Saturday open house post and the text to the seller, because those are the places her name should be. Two links, two jobs, one listing. The <a href=\"/blog/branded-and-unbranded-listing-links-why-you-need-both\">branded and unbranded post</a> goes through the division in more detail.</p><h2>What the unbranded page shows and hides</h2><p>Shows the property: the main photo, the details, the gallery and the selected listing video on request. Hides you: no name, no contact details, no Rendprop branding. Open the live link once after publishing so you know exactly what a co-op agent gets, and compare it with the branded link on your own phone.</p><h2>Where this goes wrong</h2><ul><li><strong>Pasting the branded link into the MLS.</strong> Easy to do when both are on the clipboard. Look for /u/ before you save.</li><li><strong>Sending the unbranded link to a buyer.</strong> They get a page with no way to reach you except the form. Buyers get /f/.</li><li><strong>Looking for the link before publishing.</strong> The links exist once the listing is published. Publish first.</li><li><strong>Assuming every MLS accepts any link.</strong> Some have specific requirements for the field. Check your own MLS rules and the field's help text.</li><li><strong>Forgetting to re-check after a change.</strong> If you update the price or mark the listing sold, open the MLS link again and see what it shows.</li></ul><h2>If the link is not where you expect</h2><p>Confirm the listing is published and that you are signed in to the account that owns it. If it is published and you still cannot find the Share sheet, the <a href=\"/support\">support page</a> is the place to ask.</p><p>Next step: open your most recent published listing, copy the rendprop.com/u/ link from the Share sheet, and put it in the MLS virtual-tour field tonight. Then open the MLS listing and check it as a co-op agent would.</p>",
+  "faq": [
+    {
+      "q": "What does the unbranded link look like?",
+      "a": "rendprop.com/u/ followed by the listing's slug. The branded link is rendprop.com/f/ followed by the same slug. Both point at the same listing."
+    },
+    {
+      "q": "Is the unbranded page a different listing?",
+      "a": "No. Both links point at the same listing and the same slug; the unbranded one simply shows the property with no name, no contact details and no Rendprop branding. Open each once after publishing so you know what each audience sees."
+    },
+    {
+      "q": "Can I get the link before I publish?",
+      "a": "No. The branded and unbranded links are created when the listing is published. Publish, then open the Share sheet."
+    },
+    {
+      "q": "Will the MLS accept the link?",
+      "a": "The unbranded page is made for the virtual-tour field: no name, no contact details, no branding. MLS rules vary, so check your own MLS rules and the field's requirements before you rely on it."
+    }
+  ],
+  "related": [
+    "unbranded-virtual-tour-links-what-mls-rules-usually-require",
+    "branded-and-unbranded-listing-links-why-you-need-both",
+    "putting-a-property-website-link-in-your-mls-listing-the-right-way",
+    "how-to-share-a-rendprop-listing-link"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "why-every-ai-photo-edit-should-carry-a-disclosure",
+  "title": "Why every AI photo edit should carry a disclosure",
+  "description": "The buyer will see the real house, the board may ask, the seller may be asked, and a label costs nothing. Sky swaps need it as much as staging.",
+  "category": "photos",
+  "keywords": [
+    "AI photo edit disclosure",
+    "disclose edited listing photos",
+    "label AI altered photos real estate",
+    "why disclose virtual staging",
+    "AI altered photo label"
+  ],
+  "tldr": "Every AI edit should carry a disclosure because the buyer will see the real house, the board may ask, the seller may be asked, and a label costs nothing. A sky swap, a green lawn, a cleared counter and a staged room are all alterations. The label is what lets you use the edit at all.",
+  "html": "<p>Every AI edit should carry a disclosure because the buyer will see the real house, the board may ask, the seller may be asked, and a label costs nothing. A sky swap, a green lawn, a cleared counter and a staged room are all alterations, and the person looking at the photo has the right to know which parts of it they can rely on. The label is not an apology for the edit. It is the thing that lets you use the edit at all.</p><h2>The label is for four people</h2><p><strong>The buyer.</strong> They are deciding whether to spend a Saturday on a showing. A label tells them the sky was swapped and the sofa is not there, so they book the showing knowing what to expect and do not feel tricked when they arrive. A buyer who feels tricked once is suspicious of every photo from that agent after.</p><p><strong>The seller.</strong> If a buyer asks the seller at the open house whether the photos were edited, the seller should be able to say yes, the sky and the staging, and it says so on the listing. Sellers do not enjoy being put in the position of defending a photo they did not take.</p><p><strong>The board.</strong> MLS rules on altered images vary and change. Whatever yours says, a labelled edit with the original kept is the easiest position to defend, and an unlabelled one is a complaint waiting for a reason.</p><p><strong>You, later.</strong> If a transaction goes wrong and the photos come up, a consistent record of what was edited and how it was labelled is the difference between a short email and a long one.</p><h2>Why every edit and not just staging</h2><p>Staging is the obvious case, because the buyer walks into an empty room. But a buyer who saw a blue sky and arrives in drizzle shrugs. A buyer who saw a green lawn and arrives to straw frowns. A buyer who saw a clear counter and arrives to clutter wonders what else was cleared. The edits that seem too small to label are the ones where the gap between photo and house is discovered without warning, and without warning is what makes a buyer distrust.</p><p>Labelling everything also removes a judgement call. If the rule is that every AI edit carries a disclosure, there is no debate about whether this particular sky swap is too minor to mention. It is labelled because it is an edit.</p><h2>What a disclosure needs to say</h2><ul><li>That the image was altered, in words a buyer understands: AI-altered, Virtually staged, sky replaced</li><li>For staging specifically, the words Virtually staged, because that phrase is the one people recognise</li><li>Where the original can be seen, if the gallery includes it</li><li>For the listing as a whole, a line in the remarks that some photos are altered or staged</li></ul><p>It does not need to explain the tool, the model or the prompt. Buyers do not care how. They care what.</p><h2>A worked example: two listings on the same street</h2><p>Two agents list similar 3-beds a week apart. Both use a twilight exterior and two staged interiors. Agent A labels nothing. Agent B labels the staged frames Virtually staged, puts the originals beside them, and adds a line to the remarks.</p><p>A buyer tours both. At A's house they walk into an empty living room, pause, and say nothing. At B's house they walk into the same empty room and say, right, this is the one that was staged. Same room, same edit. One buyer is recalibrating what they were told. The other is confirming it. B's listing gets the second showing.</p><h2>The objections, and why they do not hold</h2><p><strong>It makes the photos look less good.</strong> A small label on a well-edited photo does not reduce its effect on a scroll. An unlabelled edit discovered at the showing reduces its effect to zero and takes the rest of the set with it.</p><p><strong>Nobody reads the label.</strong> The buyer who complains does. The board does. The label is for the moment it is needed, not for the scroll.</p><p><strong>The edit is too minor.</strong> Then it costs nothing to label. If it is too minor to label, it was too minor to make.</p><h2>How Rendprop labels edits</h2><p>Every AI edit in Rendprop's <a href=\"/features#photo-studio\">photo studio</a> is a separate version with a disclosure attached. Staging from the add furniture edit is labelled Virtually staged, and other edits carry an AI-alteration disclosure. The untouched original stays in the photo history so it can sit beside the edit in the gallery. The label travels with the version, so when you choose which saved versions the listing uses, the choice is already disclosed. What remains yours is the comparison, because AI can change or invent details and a label does not catch an invented window, and the MLS wording, which you check against your board's current rules.</p><h2>Make it the default, not the decision</h2><p>Decide once that every edit is labelled, and stop deciding per photo. For what the label should say on social posts, <a href=\"/blog/ai-disclosures-on-social-posts-a-short-line-that-saves-a-long-argument\">AI disclosures on social posts</a> has the wording. For what the edit should not change in the first place, <a href=\"/blog/photo-edits-buyers-notice-five-changes-that-cause-trouble-at-the-showing\">five photo edits buyers notice at the showing</a>, and <a href=\"/blog/ai-edited-listing-photos-what-to-disclose-and-where\">AI-edited listing photos: what to disclose and where</a> covers placement.</p>",
+  "faq": [
+    {
+      "q": "Does a sky replacement really need a disclosure?",
+      "a": "Yes. It is an alteration, whatever your board's wording says about it. It also costs nothing to label, and labelling every edit removes the judgement call about which edits are too small to mention. The buyer who arrives in drizzle shrugs when they were told and frowns when they were not."
+    },
+    {
+      "q": "What should an AI edit disclosure say?",
+      "a": "That the image was altered, in plain words: AI-altered, Virtually staged, sky replaced. Staging should use the words Virtually staged because that is the phrase people recognise. It does not need to name the tool or describe the prompt."
+    },
+    {
+      "q": "Where does the disclosure go?",
+      "a": "On the image, in the remarks for the listing as a whole, and ideally with the original beside the edit in the gallery, with the exact placement set by your board's current rules. Rendprop attaches the label to the edited version; the remarks wording is yours to check against your board's current rules."
+    },
+    {
+      "q": "Does a label protect me if the edit changed the room?",
+      "a": "Only partly. A label says the photo was altered. It does not tell the buyer a fixture was removed or a wall was moved. Compare every edit against the original before publishing, because a disclosure does not catch an invented detail."
+    }
+  ],
+  "related": [
+    "ai-edited-listing-photos-what-to-disclose-and-where",
+    "virtually-staged-the-two-words-that-keep-a-listing-honest",
+    "how-rendprop-labels-ai-edited-photos-and-videos",
+    "photo-edits-buyers-notice-five-changes-that-cause-trouble-at-the-showing"
+  ],
+  "published": "2026-10-28"
+}

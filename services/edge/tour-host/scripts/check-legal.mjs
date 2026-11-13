@@ -20,7 +20,8 @@ function provider(name, inputs) {
   expect(matches.length === 1, `${name}: exactly one provider row`);
   for (const input of inputs) expect(matches.length === 1 && matches[0].includes(input), `${name}: ${input}`);
 }
-expect(t.includes("account-based workspace") && t.includes("sign in with Apple") && t.includes("The app is the source of truth"), "Terms state the account requirement and where current plan terms appear");
+expect(t.includes("account-based workspace") && t.includes("sign in with Apple") && t.includes("email address and password of an existing Rendprop account") && t.includes("The app is the source of truth"), "Terms state the account requirement, both sign-in methods and where current plan terms appear");
+expect(p.includes("email address and password of an") && p.includes("one-way hash"), "Privacy discloses email sign-in and password hashing");
 expect(p.includes("Account details") && p.includes("older guest session"), "Privacy covers the account identity and legacy guest sessions");
 expect(p.includes("scripts or transcript excerpts") && p.includes("personal information"), "AI inventory covers text and potentially identifying content");
 provider("Google Gemini", ["Selected photos or video", "text inputs"]);
@@ -49,11 +50,20 @@ for (const [label, html] of [["Privacy", privacy], ["Terms", terms]]) {
   expect(html.includes("#7c3aed") && html.includes("#9b6dff"), `${label}: existing light/dark brand accents`);
   expect(html.includes('<html lang="en">') && html.includes('name="viewport"'), `${label}: language and mobile viewport`);
   expect(html.includes('href="/support"') && html.includes('mailto:aaron@pilk.ai'), `${label}: support and contact preserved`);
-  expect(html.includes("Effective October 27, 2026"), `${label}: proposed notice revision date`);
+  // Privacy changed on 2026-11-12 (website analytics); the terms did not.
+  expect(html.includes(label === "Privacy" ? "Effective November 12, 2026" : "Effective October 29, 2026"), `${label}: current revision date`);
   expect(html.includes("RendProp LLC") && html.includes("855 Central Avenue, Saint Petersburg, FL 33701"), `${label}: owner-supplied legal entity and mailing address`);
   expect(!/<script\b/i.test(html), `${label}: no third-party scripts or telemetry added`);
 }
 expect(t.includes("without your written consent") && p.includes("without your written consent"), "Written-consent commitment retained");
+// The marketing pages load Cloudflare Web Analytics (scripts/check-web-analytics.mjs);
+// the policy has to say so, say what it does not do, and keep the app-only lines app-only.
+expect(p.includes("Website analytics.") && p.includes("Cloudflare Web Analytics") && p.includes("no cookies, no local storage and no fingerprinting")
+  && p.includes("aggregate page views") && p.includes("not used on the property websites or portfolio pages that agents publish")
+  && p.includes("it is not in the app"), "Privacy discloses cookie-free website analytics on the marketing pages only");
+expect(p.includes("Web Analytics on the rendprop.com marketing pages"), "Cloudflare processor row includes website analytics");
+expect(!/no (?:website|web) analytics|website (?:has|uses) no analytics|no analytics on (?:the|our) website/i.test(p), "No sentence claims the website has no analytics");
+expect(!p.includes("All of this is first-party"), "The first-party statement is scoped to the app");
 expect(t.includes("requires separate permission") && p.includes("not covered by an earlier AI permission"), "Kie never inherits earlier processor permission");
 expect(t.includes("optional paid AI Aerial opening") && t.includes("eligible paid access") && t.includes("remaining Aerial allowance")
   && t.includes("available processing capacity") && t.includes("separate permission for the listed")
@@ -82,7 +92,7 @@ expect(t.includes("at least 18 years old") && p.includes("adults aged 18 or olde
 expect(p.includes("Settings → Download account data") && p.includes("scope and omissions") && p.includes("separate download controls"), "Account JSON export and binary-media limits are stated");
 expect(p.includes("Provider copies can remain") && p.includes("paid and unpaid processing") && p.includes("video results do not expire by default"), "Provider retention is not inferred from Rendprop URL expiry");
 expect(!p.includes("They process data solely"), "No unsupported universal processor-use guarantee");
-expect(t.includes("Launch plans and included usage are being finalized") && t.includes("The app is the source of truth") && t.includes("Apple shows the price, billing period"), "Terms defer current plan features and purchase terms to the app and Apple");
+expect(t.includes("Current monthly plans and their U.S. prices are listed at rendprop.com/pricing") && t.includes("The app is the source of truth") && t.includes("Apple shows the price, billing period"), "Terms defer current plan features and purchase terms to the app and Apple");
 expect(t.includes("If Apple presents an introductory offer") && t.includes("Downloading or signing in does not activate an offer") && t.includes("purchase sheet control"), "Introductory offers depend on Apple's purchase sheet, not download or sign-in");
 expect(t.includes("introductory offer eligibility, duration, renewal price, and terms before confirmation") && !/one introductory offer per subscription group/i.test(t), "Apple shows offer eligibility without a fixed group-level promise");
 expect(t.includes("Apple charges the price and billing schedule shown when you confirm") && t.includes("first charge after any applicable free trial") && !t.includes("limited to a trial usage ceiling"), "Terms distinguish Apple's conditional offer from unapproved usage ceilings");

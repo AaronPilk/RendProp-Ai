@@ -1,0 +1,40 @@
+{
+  "slug": "does-a-listing-page-need-a-contact-form",
+  "title": "Does a listing page need a contact form",
+  "description": "Yes, alongside a tappable phone number. The form catches the buyer who will not call, and a date field turns a vague message into a showing request.",
+  "category": "questions",
+  "keywords": [
+    "does property website need contact form",
+    "listing page contact form",
+    "enquiry form single property website",
+    "contact form fields real estate",
+    "property page lead capture"
+  ],
+  "tldr": "Yes, next to a phone number a buyer can tap. The form catches the buyer who will not call a stranger at 9 p.m., and a date field turns a vague message into a showing request. Keep it short: name, a way to reach them, the date they want, and a message box. Anything longer loses the people it was meant to catch.",
+  "html": "<p>Yes, next to a phone number a buyer can tap. The form catches the buyer who will not call a stranger at 9 p.m. but will happily type three lines, and a date field turns a vague message into a showing request you can confirm in one reply. Keep it short: a name, a way to reach them, the date they want, and a message box. Anything longer loses the people it was meant to catch.</p><h2>Why a phone number alone is not enough</h2><p>A tappable number serves the buyer who is ready to talk now. Plenty are not. They are scrolling in bed, they are at work, they are the quieter half of a couple, they are out of state and do not want to pay for the call, or they simply prefer to write. For them a form is the difference between enquiring and closing the tab.</p><p>A form also leaves a record. The buyer's name, their contact details and what they asked are in writing, attached to the listing, which is more than a missed call gives you.</p><h2>The fields that earn their place</h2><ul><li><strong>Name.</strong> One field, not first and last.</li><li><strong>A way to reach them.</strong> Email or phone; asking for both is fine, requiring both is not.</li><li><strong>The date they want to visit.</strong> The single most useful field on the page. “Thursday after 5” lets you answer with a time rather than a question.</li><li><strong>A message box.</strong> Optional, for the roof age, the HOA fee, the school question.</li></ul><p>Everything else, from budget to pre-approval status to “how did you hear about us,” belongs in the conversation that follows, not on the form. The post on <a href=\"/blog/contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries\">the fields that get real enquiries</a> goes through each one.</p><h2>A worked example: the same buyer, two pages</h2><p>A couple relocating from two states away find a four-bed on a cul-de-sac on a Tuesday night. They will be in town the following weekend.</p><p>Page one has a phone number and an email address in the footer. It is 10:40 p.m. They do not call. They mean to email in the morning, and by Thursday they have found three other homes and the email was not sent.</p><p>Page two has the same number plus a four-field form with a date picker. At 10:41 p.m. they type their names, an email, Saturday, and “is the garage big enough for two cars.” At 7:15 the next morning the agent replies with “Saturday at 11 works, and yes, it is a true double; photo twelve shows it.” The showing is booked before the couple have had coffee.</p><p>Same buyer, same home, same agent. The form was the only variable.</p><h2>Where contact forms go wrong</h2><ol><li><strong>Too many fields.</strong> Nine required fields is an application, not an enquiry. Every extra field loses people.</li><li><strong>No date field.</strong> Without it, every enquiry needs a round trip to find out when they can come.</li><li><strong>The form goes nowhere useful.</strong> A shared mailbox, a former assistant's address, a spam folder. Test it with a real submission.</li><li><strong>No confirmation.</strong> The buyer taps send and nothing happens. They assume it failed and move on. The page should acknowledge the submission.</li><li><strong>Form only, no number.</strong> The buyer who wants to talk now should be able to. Both, always.</li><li><strong>A CAPTCHA puzzle.</strong> A buyer who has to identify six traffic lights to ask about a house will not.</li><li><strong>A slow reply.</strong> The form did its job; the agent did not. Same-day response or the form was wasted.</li></ol><h2>How this works in Rendprop</h2><p>Every property website published from Rendprop includes a contact card and an enquiry form, and the form asks for the date the visitor wants. Each enquiry lands in the app's inbox, filed under its listing and visible in the combined list too. A photographer who publishes a listing can present the agent's contact details on it, with enquiry forwarding once the agent's email is verified. The <a href=\"/features#leads\">enquiries section</a> of the features page covers the inbox, and the <a href=\"/f/estate-demo\">demo listing</a> shows the form in place on a live page.</p><h2>Count the fields tonight</h2><p>Open your current listing page on your phone and count the fields on the form. If it is more than four, cut it down tonight. If there is no date field, add one. Then submit a test enquiry with tomorrow's date and make sure it reaches you before you share the link again.</p>",
+  "faq": [
+    {
+      "q": "Is a phone number on the page enough?",
+      "a": "No. A tappable number serves buyers who want to talk now; a form catches the ones who will not call a stranger late at night or from another state. Pages that offer both get enquiries from both kinds of buyer."
+    },
+    {
+      "q": "What fields should a listing page contact form have?",
+      "a": "Name, a way to reach them, the date they want to visit, and an optional message box. Budget, pre-approval status and marketing questions belong in the conversation that follows, not on the form."
+    },
+    {
+      "q": "Why does the date field matter so much?",
+      "a": "Because it turns a message into a showing request. A buyer who writes Thursday after five gets a confirmed time in one reply, instead of three messages to find out when they are free."
+    },
+    {
+      "q": "How quickly should I respond to a form enquiry?",
+      "a": "The same day, and within the hour if you can. A short acknowledgement that you have seen it and will confirm the time keeps the buyer from enquiring elsewhere while they wait."
+    }
+  ],
+  "related": [
+    "contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries",
+    "where-do-enquiries-from-a-listing-page-go",
+    "your-contact-card-on-every-listing-page-name-business-number-one-tap",
+    "a-property-page-that-works-on-a-phone-what-buyers-tap-first"
+  ],
+  "published": "2026-10-28"
+}

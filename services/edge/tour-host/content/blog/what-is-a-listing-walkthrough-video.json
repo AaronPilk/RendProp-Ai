@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-listing-walkthrough-video",
+  "title": "What is a listing walkthrough video",
+  "description": "A listing walkthrough video is continuous recorded footage of a person moving through the home, room to room, so a viewer sees how the spaces connect.",
+  "category": "glossary",
+  "keywords": [
+    "listing walkthrough video",
+    "walkthrough video real estate",
+    "what is a walkthrough video",
+    "handheld walkthrough listing",
+    "video tour of a home"
+  ],
+  "tldr": "A listing walkthrough video is continuous recorded footage of someone moving through the home at walking pace, from the front door through each room, so a viewer sees how the spaces connect and how big they feel. It is filmed, not assembled from photos, and it is handheld footage, not drone footage. It is the right tool when flow is the selling point and the wrong tool when the home's story is told by a few great rooms.",
+  "html": "<p>A listing walkthrough video is continuous recorded footage of a person moving through the home at walking pace, from the front door through each room, so a viewer sees how the spaces connect and how big they feel underfoot. It is filmed, not assembled from photos. It is handheld or gimbal footage from inside the home, not drone footage from above it.</p><p>The walkthrough answers one question that photos cannot: what is it like to be in this house and walk from here to there.</p><h2>How a walkthrough is filmed</h2><p>Someone holds a phone or a camera, starts recording outside or at the entry, and walks the natural route a buyer would take: entry, living areas, kitchen, then bedrooms and baths, then outdoor space. The camera stays level and moves slowly. Turns are held so the viewer can orient. Doors are opened before the camera reaches them. The whole thing is one take or a few long takes joined with simple cuts.</p><p>A wide lens helps rooms feel open without the fish-eye bend of the widest settings. Lights on, blinds open, pacing slow enough that a viewer could pause on any frame and see a clear image.</p><h2>When to film one</h2><ul><li>Homes where the layout is the story: an open plan that connects three spaces, a split level, a long hall with rooms off it, a loft over a living room.</li><li>Unusual layouts that confuse buyers in photos, so they arrive at the showing already understanding the plan.</li><li>Out-of-town buyers who cannot visit before offering and want to walk the house with you.</li><li>Rentals, where a tenant wants to see the whole unit, not the best three frames.</li></ul><p>A walkthrough is less useful for a home whose appeal is a few exceptional rooms and a lot of ordinary ones, because the footage gives every room equal weight.</p><h2>What a walkthrough is not</h2><p>A walkthrough is not a <a href=\"/blog/what-is-a-photo-based-listing-video\">photo-based listing video</a>, which is built from stills with camera motion added. The two can sit on the same property page and do different jobs. It is not a 3D tour, which is a clickable model, and it is not an aerial clip. It is not a cinematic listing film with a crew either; that is a different product at a different price.</p><p>The nearest confusable thing is a live video showing on a call. Similar movement, but a walkthrough is recorded, reviewed and published, so it is calm, lit and repeatable. A live call is none of those.</p><h2>A split-level that photos could not explain</h2><p>An agent lists a split-level with a sunken living room, a half flight up to the bedrooms and a half flight down to a family room with a walkout. Photos make it look like three unrelated houses. On a Tuesday afternoon she films a four-minute walkthrough: front door, three steps down into the living room, a slow turn to show the kitchen above, up to the bedrooms, back down and through the family room to the patio.</p><p>She publishes it on the property page beside the photo video. Buyers who watched it arrive at the Saturday open house saying they already know where the bedrooms are. The showing takes ten minutes instead of twenty, and the questions are about the furnace, not the layout.</p><h2>How this works in Rendprop</h2><p>In Rendprop a recorded walkthrough is optional and separate from the photo-based video. You record it in the app with the wide 0.5x lens on by default, and the app shows live pacing cues while you film: slow down, level out, hold the turn. Uploads resume if the connection drops. A published walkthrough appears on the property website, where viewers can watch it or scroll through it. It is handheld footage, not drone footage. See <a href=\"/features#listing-site\">the listing site section</a> for where it sits on the page, and <a href=\"/blog/how-to-record-a-walkthrough-in-rendprop\">how to record a walkthrough in Rendprop</a> for the steps.</p><h2>Where walkthroughs go wrong</h2><p>The common faults are speed, height and turns. People walk too fast, hold the camera at chest height so rooms look squat, and whip around corners so the viewer loses the plan. Mirrors catch the person filming. Blinds are half closed and the windows blow out. Someone is talking in the background. Most of this is fixed by filming slower than feels natural, at eye height, with the house prepared the way it would be for photos.</p><p>Next step: at your next listing with a layout that photos cannot explain, film a single slow take from the front door to the back door. Watch it on your phone before you decide whether it needs a second attempt.</p>",
+  "faq": [
+    {
+      "q": "Is a walkthrough video better than a photo-based listing video?",
+      "a": "Neither is better; they do different jobs. A photo video shows the best of each room with pace and polish. A walkthrough shows how rooms connect and how the home feels to move through. Many listings benefit from both on the same page."
+    },
+    {
+      "q": "How long should a listing walkthrough be?",
+      "a": "As long as a calm walk through the home takes, which is usually two to five minutes for a typical house. Do not rush to shorten it; viewers who want a walkthrough want the whole route."
+    },
+    {
+      "q": "Can I film a walkthrough on a phone?",
+      "a": "Yes. A phone with a wide lens, held level at eye height and moved slowly, produces a usable walkthrough. Lights on, blinds open, and walk slower than feels natural."
+    },
+    {
+      "q": "Is a walkthrough the same as a virtual tour?",
+      "a": "People use virtual tour for both, but they differ. A walkthrough is a linear video. A 3D virtual tour is a clickable model a viewer steers. Check your MLS's current rules for which kinds of links the virtual tour field accepts."
+    }
+  ],
+  "related": [
+    "recorded-walkthrough-versus-photo-video-when-to-film-the-home-yourself",
+    "filming-a-handheld-walkthrough-that-viewers-can-scroll",
+    "how-to-record-a-walkthrough-in-rendprop",
+    "what-is-a-photo-based-listing-video"
+  ],
+  "published": "2026-10-28"
+}

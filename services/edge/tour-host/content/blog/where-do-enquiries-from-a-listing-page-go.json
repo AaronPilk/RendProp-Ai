@@ -1,0 +1,40 @@
+{
+  "slug": "where-do-enquiries-from-a-listing-page-go",
+  "title": "Where do enquiries from a listing page go",
+  "description": "To whoever controls the form. On your own property page that should be you, per listing, with the date the buyer wants. On a portal, whoever it routes to.",
+  "category": "questions",
+  "keywords": [
+    "where do property website enquiries go",
+    "listing page contact form leads",
+    "property page enquiry inbox",
+    "who gets leads from listing website",
+    "real estate enquiry routing"
+  ],
+  "tldr": "To whoever controls the form on that page. On a property page you publish yourself, that should be you, in one inbox, grouped by listing, with the date the buyer wants to visit. On a portal listing, the enquiry goes wherever the portal routes it, which may not be you. The difference is the reason to have your own page.",
+  "html": "<p>To whoever controls the form on that page. On a property page you publish yourself, that should be you, in one inbox, grouped by listing, with the date the buyer wants to visit attached. On a portal, the enquiry goes wherever the portal's routing sends it, which may be you, may be a paying agent in that zip code, or may be a call centre. The difference between those two answers is most of the reason to have your own page.</p><h2>The three places an enquiry can land</h2><p><strong>Your own inbox.</strong> The form on your page sends the message to you. You see the listing it came from, the buyer's name, their contact details and what they asked. If the form asks for a date, you can reply with a time instead of a question. This is the best case and it should be the default on any page with your name on it.</p><p><strong>A shared brokerage or team address.</strong> Common on brokerage-built pages. The message lands in a general mailbox and someone forwards it, eventually. Response time is measured in hours or days, and the buyer has usually enquired about two other homes by then.</p><p><strong>Someone else entirely.</strong> Portal lead routing, a photographer's dashboard, a tool account that belongs to a former assistant. The buyer thinks they wrote to the listing agent. They did not.</p><h2>A worked example: Tuesday evening, three enquiries</h2><p>A three-bed on a quiet street goes live Tuesday morning with its own page. By 8 p.m. three enquiries have come in through the page's form.</p><p>The first is a couple who want to see it Thursday at 6. The date is in the enquiry, so the reply is “Thursday at 6 works, see you there” and a confirmation text. The second is an investor asking about the roof age; the agent replies with the year and a link to the page's gallery photo of the roof. The third is a neighbour asking the price “for a friend.” That one gets a polite reply and goes in the file for the next listing on that street.</p><p>All three sat in one inbox under the same listing, next to the enquiries from the agent's other two active listings. Nobody had to search an email account for the word “interested.”</p><p>Compare that with the same Tuesday where the page's form emails a shared brokerage address. The Thursday couple's message is read Wednesday afternoon, forwarded Wednesday evening, and the agent replies Thursday morning offering Saturday. The couple booked a different house Wednesday.</p><h2>What goes wrong with enquiry routing</h2><ul><li><strong>The form goes to an address nobody watches.</strong> Set up two years ago by someone who left. Test every form on every live page with a real submission.</li><li><strong>The spam folder.</strong> Form emails from new tools often land there for the first few weeks. Check it, and whitelist the sender.</li><li><strong>No date field.</strong> “I'd like to see this home” means another round trip to find out when. Ask for the date on the form.</li><li><strong>Enquiries scattered across tools.</strong> Some in email, some in a portal dashboard, some in a text thread. Nothing gets a follow-up because nothing is in one place.</li><li><strong>A photographer-built page sending leads to the photographer.</strong> Fine if forwarding is set up and verified. Not fine if it is not.</li><li><strong>No reply at all.</strong> The enquiry arrived, the agent was at a closing, and by the time it was opened the buyer had moved on. A same-day reply, even a short one, keeps the conversation alive.</li></ul><p>The post on <a href=\"/blog/where-listing-enquiries-should-land-your-inbox-not-three-other-agents\">where enquiries should land</a> makes the case for owning the inbox, and <a href=\"/blog/follow-up-from-a-listing-enquiry-the-first-reply-and-the-first-call\">the first reply and the first call</a> covers what to do once they arrive.</p><h2>How this works in Rendprop</h2><p>Every property website published from Rendprop has a contact card and an enquiry form, and the form asks for the date the visitor wants. Enquiries land in the app's inbox, per listing and all together. If a photographer publishes the listing and presents your contact details on it, enquiry forwarding to you needs your email verified first. Mark a listing sold or archived and the page says so. The <a href=\"/features#leads\">enquiries section</a> of the features page covers the inbox and forwarding.</p><h2>Test every form today</h2><p>Go to every live listing page you have and submit an enquiry as if you were a buyer, with tomorrow's date. Note where each one lands and how long it takes to reach your phone. Any page where the answer is “not sure” or “not me” gets fixed before you share its link again.</p>",
+  "faq": [
+    {
+      "q": "Do enquiries from my property page go to my brokerage?",
+      "a": "Only if the form was set up that way. On a page you publish yourself the enquiries should come to you directly, grouped by listing. Test the form on each page with a real submission to confirm where it lands."
+    },
+    {
+      "q": "Why should the form ask for a date?",
+      "a": "Because it turns a vague message into a showing request. A buyer who says Thursday at 6 gets a confirmation instead of a question, and the reply happens in one message rather than three."
+    },
+    {
+      "q": "What if a photographer published my listing page?",
+      "a": "Ask whether the page shows your contact details and whether enquiries are forwarded to you, then test it. Forwarding usually needs your email verified, so do that before the listing goes live rather than after the first buyer writes in."
+    },
+    {
+      "q": "How fast should I reply to a page enquiry?",
+      "a": "The same day, and sooner if the buyer named a date. A short acknowledgement within the hour and a proper reply that evening beats a perfect reply two days later."
+    }
+  ],
+  "related": [
+    "where-listing-enquiries-should-land-your-inbox-not-three-other-agents",
+    "does-a-listing-page-need-a-contact-form",
+    "follow-up-from-a-listing-enquiry-the-first-reply-and-the-first-call",
+    "where-enquiries-appear-in-rendprop-and-how-to-reply"
+  ],
+  "published": "2026-10-28"
+}

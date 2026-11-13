@@ -1,0 +1,40 @@
+{
+  "slug": "a-property-page-that-works-on-a-phone-what-buyers-tap-first",
+  "title": "A property page that works on a phone: what buyers tap first",
+  "description": "Buyers open listing pages on phones, from texts. They tap the gallery, then the video, then the number. Keep the price above the fold and test on a phone.",
+  "category": "website",
+  "keywords": [
+    "mobile property website",
+    "property page on phone",
+    "what buyers tap on listing page",
+    "mobile listing page design",
+    "real estate website mobile first"
+  ],
+  "tldr": "Most buyers open a property page on a phone, from a text or a social post, often with one hand. They tap the gallery first, the video second, and the phone number or form third. A page that works on a phone shows the main photo and price without scrolling, lets the gallery swipe with a thumb, keeps the video silent until tapped, and makes the call button reachable without stretching. Test it on your own phone, not your desktop.",
+  "html": "<p>Buyers open property pages on phones, from a text or a social post, usually with one hand and in a hurry, and the order they tap is consistent: the gallery first, the video second, the phone number or the enquiry form third. A page that works on a phone puts the main photo and the price on screen before any scrolling, lets the gallery swipe with a thumb, keeps the video silent until it is tapped, and places the call button where a thumb can reach it. Test the page on your own phone, not on the desktop where you built it.</p><h2>The three taps, in order</h2><p><strong>The gallery.</strong> A buyer who has just seen the main photo wants the next one. They swipe. If the gallery needs a tap to open and then a tap to advance, you have already lost the ones who were only mildly interested. The gallery should be full width, swipeable, and fast on a mobile connection.</p><p><strong>The video.</strong> After ten or so photos, the buyer who is still there wants to feel the flow of the home. They look for a play button. The video should play when tapped, with sound, and should not have started on its own while they were looking at photos. A video that autoplays with music on a bus is the quickest way to get a page closed.</p><p><strong>The number or the form.</strong> The buyer who watched the video is deciding whether to ask for a showing. They want a one-tap call or a short form. If the number is plain text that cannot be tapped, or the form has eight fields, the decision gets postponed, and postponed usually means lost.</p><h2>Above the fold on a phone</h2><p>Before any scrolling, the screen should show the main photo and the price. If the beds, baths and square feet fit under it, better. A buyer decides whether to keep going on those two things. A page that opens on a logo, a menu bar and a headline about your brokerage has spent the most valuable screen in the whole experience on things the buyer did not come for.</p><h2>A worked example: one-handed on a Saturday</h2><p>A buyer is standing in a queue at a coffee shop when her partner texts a link to a 2-bed condo. She opens it with one thumb. The main photo fills the screen; the price is right under it. She swipes the gallery: living room, kitchen, balcony view, bedroom, bath. She taps the video and holds the phone sideways for forty seconds, then turns it back. She scrolls to the bottom, sees a name and a number, taps the number, and the phone dials. The agent answers on the third ring. The whole thing took ninety seconds and the agent has a showing for Sunday.</p><p>Replace any step with friction (a gallery that needs a tap to open, a video that autoplayed and startled her, a number she had to copy and paste) and she sends the link back to her partner with \"looks ok\" and gets her coffee.</p><h2>What breaks on a phone and looks fine on a desktop</h2><ul><li><strong>Hover effects.</strong> There is no hover on a phone. Anything that reveals on hover is invisible.</li><li><strong>Small tap targets.</strong> A phone number in small text, a play button in a corner, a form field that is hard to hit. Thumbs are not precise.</li><li><strong>Pop-ups and chat widgets.</strong> They cover the photo on a small screen and the close button is tiny.</li><li><strong>Autoplaying video.</strong> Sound on, in public, before the buyer chose it.</li><li><strong>Slow galleries.</strong> Full-resolution images on a cellular connection. The buyer waits for the third photo and leaves.</li><li><strong>Menus and headers.</strong> A sticky header takes a fifth of a phone screen and adds nothing to a single-property page.</li><li><strong>Text that needs pinching.</strong> If the price is not readable at arm's length, it is too small.</li></ul><h2>How this works in Rendprop</h2><p>The property website Rendprop publishes opens in a browser on a phone, which is where buyers meet it; no app is needed to view it. The page shows the selected main photo and the details you typed in, a gallery, the selected listing video (plays on request, never autoplays), your contact card and an enquiry form that asks for the date the visitor wants. Sections appear when filled in and hide when empty, so there is no empty block pushing the form further down. Open the <a href=\"/f/estate-demo\">demo listing</a> on your phone to see how it handles, and read the <a href=\"/features#listing-site\">listing site feature page</a> for the parts. Enquiries from the form land in the app's inbox.</p><h2>The test that takes two minutes</h2><p>Send the link to yourself. Open it on your phone with one hand, in a place with ordinary cellular signal, not on your office wifi. Count how many seconds until the main photo and price are visible. Swipe the gallery and count how many photos load without a pause. Tap the video and confirm it was silent until you tapped. Scroll to the bottom and tap the number. If any of those steps makes you wait or stretch, a buyer will not do it.</p><p>The next step: do that test on your current listing right now, before the next text goes out. For what the link preview should show in the text itself, read <a href=\"/blog/sharing-a-listing-link-by-text-what-the-preview-should-show\">sharing a listing link by text</a>, and for the case against autoplay, see <a href=\"/blog/listing-page-video-that-does-not-autoplay-why-that-is-the-right-choice\">listing page video that does not autoplay</a>.</p>",
+  "faq": [
+    {
+      "q": "What do buyers tap first on a property page?",
+      "a": "The gallery. They have seen the main photo and want the next one. The video comes second, usually after ten or so photos, and the phone number or enquiry form third. Design the page so each of those is one tap or one swipe away."
+    },
+    {
+      "q": "Should a listing page have a navigation menu?",
+      "a": "No. A single-property page has one job and a menu invites the buyer to leave it. A sticky header also eats a fifth of a phone screen. Put the main photo and price at the top instead."
+    },
+    {
+      "q": "How do I test a property page on a phone properly?",
+      "a": "Send yourself the link, open it on cellular rather than wifi, and use one hand. Check that the main photo and price appear without scrolling, the gallery swipes without pauses, the video stays silent until tapped, and the phone number dials when tapped."
+    },
+    {
+      "q": "Does the video need to play in portrait on a phone?",
+      "a": "A landscape video plays fine on a phone; buyers turn the phone sideways for it. What matters is that it plays only when tapped and that the play button is big enough to hit with a thumb. For social feeds, a separate vertical version is the better fit."
+    }
+  ],
+  "related": [
+    "sharing-a-listing-link-by-text-what-the-preview-should-show",
+    "listing-page-video-that-does-not-autoplay-why-that-is-the-right-choice",
+    "the-listing-page-gallery-how-many-photos-and-in-what-order",
+    "your-contact-card-on-every-listing-page-name-business-number-one-tap"
+  ],
+  "published": "2026-10-28"
+}

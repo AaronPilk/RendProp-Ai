@@ -1,0 +1,40 @@
+{
+  "slug": "the-property-page-as-the-home-of-the-listing-video",
+  "title": "The property page as the home of the listing video",
+  "description": "Post the reel on social, but make the property page where the full video lives: no suggested videos, no competing listings, the form below.",
+  "category": "website",
+  "keywords": [
+    "where to host listing video",
+    "listing video on property website",
+    "property page video hosting",
+    "listing video home page",
+    "video on single property site"
+  ],
+  "tldr": "The listing video should live on the property page, with the gallery above it and the enquiry form below. Social platforms and video sites are where you post clips to be found; the page is where the full video is watched without suggested videos, competing listings or an algorithm deciding what plays next. Every post, text and sign points at the page, and the page holds the video.",
+  "html": "<p>The listing video should live on the property page, between the gallery and the enquiry form. Social platforms and video sites are where you post clips to be discovered; the page is where the full video gets watched with nothing else competing for attention: no suggested videos when it ends, no other agents' listings in a sidebar, no algorithm deciding what plays next. Every reel, text and sign points to the page, and the page holds the video.</p><p>The distinction is between where a video is found and where it is watched. Mixing the two is how a buyer finishes your video and is shown a cheaper home down the street.</p><h2>What happens when the video lives elsewhere</h2><p><strong>On a video platform.</strong> The video ends and a grid of related videos appears: other listings, other agents, a cooking show. The buyer who was deciding whether to book a showing is now watching something else. The comments are open. The page around it is not yours.</p><p><strong>On a social platform only.</strong> The clip is short, vertical, and cut for a feed. It is good at stopping a scroll and bad at letting someone sit with the home. There is no gallery to swipe after it, and the link to anything else is in a bio two taps away.</p><p><strong>In an email attachment or a shared file.</strong> It downloads, it may not play, it cannot be forwarded cleanly, and it has no form.</p><p><strong>On the property page.</strong> The buyer arrived because they wanted this home. They swipe the gallery, tap the video, watch it with sound, and the next thing on the screen is the form asking when they want to visit. Nothing else is offered.</p><h2>The relationship between the reel and the page</h2><p>The vertical social video is the advertisement. The landscape video on the page is the product. The reel's job is to get a tap on the link; the page's job is to turn that tap into a showing request. Both are made from the same photos, which is why they feel like one listing rather than two.</p><p>A practical order: the page goes live first, with the full video. Then the reel is posted, pointing at the page. Then the text to the database, the sign, the email, all pointing at the page. The page is the fixed point; everything else is a path to it.</p><h2>A worked example: the 4-bed in week one</h2><p>Monday: photos delivered. Tuesday: page published with 28 photos and a 55-second landscape video with a recorded voiceover and captions. Tuesday evening: a 20-second vertical cut posted on Instagram with the branded link in the bio and \"full video on the listing page\" in the caption. Wednesday: email to the database with one photo and the link. Thursday: sign up with a QR code to the page.</p><p>A buyer sees the reel Tuesday night, taps the bio link, lands on the page, swipes the gallery, taps the full video, watches it with the sound on, and fills in the form for Saturday. The reel found her; the page sold her; the form caught her. At no point was she offered anything other than this home.</p><h2>How the video ends up in the wrong place</h2><ul><li><strong>Embedding a social or video-platform player on the page.</strong> You get the page's focus and the platform's end screen. Host the video on the page itself.</li><li><strong>Posting the full video on social and nothing on the page.</strong> The page is a gallery with no motion, and the full video sits in a feed where it is gone in a day.</li><li><strong>Autoplay on the page.</strong> The video starts before the buyer has seen a photo, usually muted, and the voiceover is lost. Tap to play.</li><li><strong>Different videos in different places with different prices.</strong> After a price cut, the reel says one number and the page says another. Keep the price out of the video script, or update everywhere the same day.</li><li><strong>A video that is only vertical on the page.</strong> On a phone it is fine; on a laptop it is a tall strip with bars. The page should hold the 16:9 version; the vertical version is for feeds.</li></ul><h2>How this works in Rendprop</h2><p>Rendprop makes both videos from the same listing photos: a landscape video for the page and the MLS, and a vertical social video for feeds, with 16:9 and 9:16 exports. The property website shows the selected listing video alongside the gallery, the details, your contact card and the enquiry form, and the video plays on request, never autoplays. The page is the listing and nothing else: no suggested videos, no other listings, and nothing to host. The branded link from the Share sheet is what you put in the reel's caption, the bio, the email and the sign; the unbranded link is for the MLS tour field. Enquiries from the page land in the app's inbox. See <a href=\"/features#reels\">reels and listing video</a> for the videos and the <a href=\"/features#listing-site\">listing site feature page</a> for the page.</p><h2>One rule to keep</h2><p>Never link to the video. Link to the page. If someone asks for \"the video\", send the page link and tell them the video is on it. Over time, every path you create leads to one place, and that place has the form.</p><p>The next step: check where your current listing's full video lives, and if it is anywhere other than the page, move it. For why the page video should not autoplay, read <a href=\"/blog/listing-page-video-that-does-not-autoplay-why-that-is-the-right-choice\">listing page video that does not autoplay</a>, and for the choice between formats, see <a href=\"/blog/9-16-or-16-9-picking-the-format-for-instagram-tiktok-youtube-and-the-mls\">9:16 or 16:9: picking the format</a>.</p>",
+  "faq": [
+    {
+      "q": "Should I still post the listing video on social media?",
+      "a": "Yes, as the vertical cut, with the page link in the caption or bio. Social is where the video gets found. The page is where the full version gets watched without distractions and with the enquiry form underneath."
+    },
+    {
+      "q": "Can I embed a video-platform player on my property page?",
+      "a": "You can, but you inherit the platform's end screen with suggested videos and sometimes its ads. A video hosted on the page itself ends on your page, with your form the next thing on screen."
+    },
+    {
+      "q": "Which version of the video belongs on the page: 16:9 or vertical?",
+      "a": "The 16:9 version. It fills a laptop screen and plays fine on a phone turned sideways. The vertical version is cut for feeds and looks like a tall strip with bars on a wide screen."
+    },
+    {
+      "q": "What if a buyer asks me to send them the video directly?",
+      "a": "Send the page link and say the video is on it. A file attachment may not play, cannot be forwarded cleanly, and has no gallery or form around it. The page gives them the video and everything else."
+    }
+  ],
+  "related": [
+    "listing-page-video-that-does-not-autoplay-why-that-is-the-right-choice",
+    "9-16-or-16-9-picking-the-format-for-instagram-tiktok-youtube-and-the-mls",
+    "posting-a-listing-video-on-instagram-captions-hashtags-and-the-link",
+    "photo-based-listing-video-what-it-is-and-when-it-beats-a-walkthrough"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,39 @@
+{
+  "slug": "shooting-for-video-photo-sets-that-cut-together-well",
+  "title": "Shooting for video: photo sets that cut together well",
+  "description": "A photo set that becomes a good listing video needs a path through the home, consistent height and exposure, and one clean wide frame per room.",
+  "category": "photographers",
+  "keywords": [
+    "shooting photos for listing video",
+    "photo set for video real estate",
+    "real estate photography for video",
+    "listing video shot list",
+    "photos that cut together"
+  ],
+  "tldr": "A photo set cuts together well when it follows a walking path through the home, keeps camera height and exposure consistent from frame to frame, and gives each room one clean wide frame plus a transition shot. Detail shots stay in the gallery; the video is built from the path.",
+  "html": "<p>A photo set cuts together into a convincing listing video when it follows a walking path through the home, holds the same camera height and exposure from room to room, and gives each room one clean wide frame plus a shot of the doorway into the next. Shoot the set as a route, not a collection, and the video assembles itself. Shoot thirty unrelated angles and the video jumps.</p><p>This is a small change to a shot list you already know. It costs ten minutes on site and it is the difference between a video an agent posts and one they quietly leave off the page.</p><h2>Think in scenes, not in photos</h2><p>A photo-based video gives each still a slow camera move and cuts to the next. The viewer's brain reads that as moving through a space. It only works if the next frame is where they would plausibly have walked. Front exterior to front door. Front door to entry hall. Hall to living room. Living room to kitchen. Kitchen to dining. Then upstairs: landing, primary bedroom, primary bath. Then out to the yard and a final exterior.</p><p>That is the spine. Every home has one. Walk it before you shoot, with the camera down, and note where the doorways are. Those doorways are your transitions.</p><h2>The shot list for a video-ready set</h2><ul><li><strong>Front exterior, level, clean.</strong> This is the opening scene and it stays on screen longest. No car in the drive, no bins, no trailing hose. Shoot it first while the light is right.</li><li><strong>One wide establishing frame per room.</strong> The angle that shows the room's shape and its main window. This becomes the room's scene.</li><li><strong>One transition per doorway.</strong> Stand in the room you are leaving and frame the doorway with a slice of the next room visible. These make the cut feel like a step rather than a jump.</li><li><strong>Detail shots as usual.</strong> The range, the tile, the built-ins. They go in the gallery. They rarely belong in the video.</li><li><strong>A closing exterior.</strong> Rear yard or a second front angle. The video should end where a buyer would end a visit.</li></ul><p>For a vertical social video, shoot portrait frames of the four or five rooms that matter most as separate photos, not crops of the landscape photos. The post on <a href=\"/blog/landscape-or-portrait-shooting-photos-for-listing-video-and-social-video\">landscape photos or portrait photos</a> covers why a crop loses the room.</p><h2>Consistency is what sells the motion</h2><p>Camera moves on still frames look natural when the frames share a vocabulary. Three things to hold constant:</p><ol><li><strong>Height.</strong> Pick one tripod height for interiors and keep it. A video that drops from chest height to waist height between rooms feels like two different visits.</li><li><strong>Exposure and white balance.</strong> Match them across rooms in the edit. A warm kitchen cutting to a cool bedroom reads as a lighting change, not a room change.</li><li><strong>Verticals.</strong> Keep them straight in every frame. A camera move on a frame with leaning walls makes the lean worse.</li></ol><h2>A four-bed in fourteen frames</h2><p>A two-storey four-bed, shot on a Thursday. The path: front exterior, porch to front door, entry hall looking toward the living room, living room wide, living room doorway into the kitchen, kitchen wide, kitchen to dining, dining wide, stairs from the hall, landing, primary bedroom wide, primary bath wide, rear deck from the kitchen door, rear exterior. Fourteen frames in order. The gallery gets another twelve detail shots. The video uses the fourteen. In Rendprop the scene order and the camera motion are planned automatically once the photos are in; shoot the frames as a path and review the result at the video step before it goes anywhere. The <a href=\"/blog/scene-order-for-a-listing-video-start-outside-or-start-in-the-kitchen\">scene order post</a> explains when to break the pattern.</p><h2>Building the video from the set</h2><p>Add the landscape photos to the listing, choose the ones you want in the video, and move to the video step. Rendprop plans scene order and camera motion, you add a recorded voiceover or an AI voice reading your script, captions appear word by word, and music is optional. Review it all the way through before publishing. The <a href=\"/features#reels\">video section</a> of the features page covers both the 16:9 and 9:16 exports.</p><h2>What makes a set cut badly</h2><ul><li><strong>Two wides of the same room from opposite corners, back to back.</strong> The viewer loses their bearings. Use one.</li><li><strong>Skipping the hall.</strong> Living room straight to bedroom with nothing between reads as a jump cut.</li><li><strong>Mixed lenses.</strong> A 0.5x frame next to a 1x frame changes the apparent size of the home mid-video. Hold one focal length for the path.</li><li><strong>Exterior shot last, in flat light.</strong> It is the opening scene. Give it the best light of the visit.</li></ul><p>Next step: on your next shoot, walk the path first and write the doorways down, then shoot the path as a sequence before you shoot anything else.</p>",
+  "faq": [
+    {
+      "q": "How many photos should a video use?",
+      "a": "Ten to fifteen frames following the path through the home is a good working range for a landscape video. The rest of the set belongs in the gallery. A vertical social video uses fewer, typically the four or five rooms that matter most."
+    },
+    {
+      "q": "Can I crop landscape photos for the vertical video?",
+      "a": "You can, but a crop loses the width of the room. Shoot separate portrait frames of the main rooms for the vertical version. It adds a few minutes on site and the result reads as intended."
+    },
+    {
+      "q": "Does the scene order have to follow the walking path?",
+      "a": "It is the safest default. Rendprop plans the scene order automatically, so shoot the set as a path and review the planned order at the video step. Some homes justify opening in the kitchen or on a view; the scene order post covers when that works."
+    },
+    {
+      "q": "Should detail shots go in the video?",
+      "a": "Rarely. Camera motion on a close-up of a tap or a tile adds little and breaks the sense of walking through. Keep detail shots in the gallery where buyers can study them."
+    }
+  ],
+  "related": [
+    "landscape-or-portrait-shooting-photos-for-listing-video-and-social-video",
+    "how-many-photos-does-a-listing-video-need",
+    "scene-order-for-a-listing-video-start-outside-or-start-in-the-kitchen"
+  ],
+  "published": "2026-10-28"
+}

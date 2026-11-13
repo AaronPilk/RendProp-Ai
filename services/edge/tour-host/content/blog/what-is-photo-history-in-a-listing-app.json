@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-photo-history-in-a-listing-app",
+  "title": "What is photo history in a listing app",
+  "description": "Photo history is the record a listing app keeps of a photo's untouched original and every edited version made from it, so you can compare and revert.",
+  "category": "glossary",
+  "keywords": [
+    "photo history listing app",
+    "photo version history real estate",
+    "original photo kept after edit",
+    "photo edit history",
+    "listing photo provenance"
+  ],
+  "tldr": "Photo history is the record a listing app keeps for each photo: the untouched original plus every edited version made from it, with the label each version carries. It lets you compare an edit with the original, go back to the original at any time, and show anyone who asks exactly what changed. Without it, an edit overwrites the only copy you had.",
+  "html": "<p>Photo history is the record a listing app keeps for each photo: the untouched original plus every edited version made from it, each with its label. It lets you compare an edit against the original, go back to the original whenever you want, and show anyone who asks exactly what was changed and when.</p><p>Without it, an edit replaces the only copy you had, and the brown lawn you greened is gone for good.</p><h2>How it is kept</h2><p>When you add a photo, the app stores it as the original. When you make an edit, the app does not change that file; it creates a new version alongside it and records what kind of edit it was. Make three edits and you have one original and three versions. Each version can be selected for use in the gallery or the video, or left on the shelf. Delete a version and the original is still there.</p><p>The history is attached to the photo, not to the listing as a whole, so each image carries its own trail. That is what makes a comparison possible months later, when the listing is sold and a question comes in.</p><h2>When it matters</h2><ul><li>Reviewing an AI edit. You cannot judge a sky replacement without the original next to it.</li><li>Changing your mind. The twilight version looked right on Tuesday and wrong on Thursday; swap back without re-uploading.</li><li>A question from a buyer, a broker or a board about an edited photo. The original and the labelled version answer it.</li><li>A relaunch. The listing expires, the lawn has recovered, and you want the untouched exterior back.</li></ul><h2>What photo history is not</h2><p>Photo history is not a backup of your camera roll, and it is not cloud storage for everything you have ever shot. It is specific to the photos in a listing and the versions made from them. It is also not an edit log in the sense of undo and redo inside one editing session; those steps vanish when you close the editor. History persists.</p><p>The nearest confusable thing is a <a href=\"/blog/what-is-a-saved-photo-version\">saved photo version</a>. A version is one entry in the history. The history is the whole set, original included.</p><h2>A February shoot and a May relaunch</h2><p>A photographer shoots a 3-bed on a sloping lot in late February. The lawn is patchy, the sky is white, and the sellers have moved out. She adds twenty-six photos to the listing. For the front exterior she makes a blue sky version and a green lawn version. For the living room she makes a staged version. That is three photos with history: each has an original and one or two labelled versions.</p><p>The agent uses the blue sky exterior and the staged living room and leaves the green lawn version unused. In May, with the listing relisted after a failed contract, the lawn is lush and the agent reshoots nothing; she switches the exterior back to the original, now accurate, and keeps the staged living room. Nobody searches a hard drive for a file named IMG_4471_final_v2.</p><h2>How this works in Rendprop</h2><p>In Rendprop every AI edit is a separate version with a disclosure, and the untouched original stays in photo history. You compare each edit with the original and choose which saved versions to use in the gallery and the video. Staging is labelled Virtually staged; other edits carry an AI-alteration disclosure. You own your photos and videos, and Rendprop does not use your content for its own marketing or AI training without written permission. See <a href=\"/features#photo-studio\">the photo studio</a> and <a href=\"/blog/keeping-original-photos-why-your-photo-history-matters\">why your photo history matters</a>.</p><h2>Where photo history breaks</h2><p>The history only protects you if the original went in untouched. If you edit on your phone first and upload the edited file, the app's original is already altered and the real original lives nowhere. The second failure is exporting a version, renaming it and uploading it to another tool, which strips the history and the label at once. Add the original to the listing first, make edits inside the app, and share from the app.</p><p>Next step: open any edited photo in your current listing and find the original. If it takes longer than a few seconds, or if it is not there, that is the gap to fix before the next listing.</p>",
+  "faq": [
+    {
+      "q": "Does photo history mean the original photo is kept after an AI edit?",
+      "a": "Yes, that is its purpose. The edit becomes a separate version and the original stays untouched. In Rendprop the untouched original stays in photo history and every AI edit is a separate labelled version."
+    },
+    {
+      "q": "Why does photo history matter for listing photos specifically?",
+      "a": "Because edited listing photos get questioned. A buyer, a broker or an MLS compliance desk may ask what a room really looked like. The original answers that, and the labelled version shows what was changed."
+    },
+    {
+      "q": "Is photo history the same as a backup?",
+      "a": "No. A backup copies files somewhere else. Photo history keeps the original and the versions of a listing photo together, with labels, inside the listing. You may still want a backup of your originals elsewhere."
+    },
+    {
+      "q": "What breaks photo history?",
+      "a": "Uploading an already-edited file as the original, so there is no untouched copy. Or exporting a version, renaming it and uploading it to a different tool, which separates the version from its original and its label."
+    }
+  ],
+  "related": [
+    "keeping-original-photos-why-your-photo-history-matters",
+    "what-is-a-saved-photo-version",
+    "why-a-property-marketing-app-should-keep-your-originals",
+    "photo-provenance-for-real-estate-originals-versions-and-labels"
+  ],
+  "published": "2026-10-28"
+}

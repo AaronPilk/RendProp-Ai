@@ -31,9 +31,9 @@
 <link rel="stylesheet" href="/assets/site.css">
 <script>(function(){try{var t=localStorage.getItem("rp-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 <script src="/assets/site.js" defer></script>
+<!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "aee78d818cb24eebace4f3e851895a0e"}'></script><!-- End Cloudflare Web Analytics -->
 
-<link rel="preload" as="image" href="/assets/hero-twilight-modern-home.webp" media="(min-width: 768px)" fetchpriority="high">
-<link rel="preload" as="image" href="/assets/hero-twilight-modern-home-1280.webp" media="(max-width: 767px)" fetchpriority="high">
+<link rel="preload" as="image" href="/assets/scene-living-ocean.webp" imagesrcset="/assets/scene-living-ocean-1200.webp 1200w, /assets/scene-living-ocean.webp 2400w" imagesizes="100vw" fetchpriority="high">
 
 <script type="application/ld+json">
 {
@@ -47,14 +47,37 @@
       "logo": "https://rendprop.com/assets/apple-touch-icon.png",
       "email": "aaron@pilk.ai",
       "description": "Rendprop helps agents prepare property photos, create landscape listing videos or vertical social videos, and publish a property website with a gallery and contact form. Recorded walkthroughs are optional.",
-      "parentOrganization": { "@type": "Organization", "name": "Pilk.ai", "url": "https://pilk.ai/" }
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "Pilk.ai",
+        "url": "https://pilk.ai/"
+      },
+      "sameAs": [
+        "https://apps.apple.com/us/app/id6808982413"
+      ]
+    },
+    {
+      "@type": "WebPage",
+      "@id": "https://rendprop.com/#page",
+      "url": "https://rendprop.com/",
+      "name": "Rendprop — Property Photos, Videos & Websites for iPhone",
+      "description": "Create listing and social videos from property photos, then publish a property website. An optional paid AI Aerial opening uses a reviewed original front exterior photo, subject to allowance, capacity and processor permission.",
+      "isPartOf": {
+        "@id": "https://rendprop.com/#site"
+      },
+      "inLanguage": "en-US",
+      "about": {
+        "@id": "https://rendprop.com/#app"
+      }
     },
     {
       "@type": "WebSite",
       "@id": "https://rendprop.com/#site",
       "url": "https://rendprop.com/",
       "name": "Rendprop",
-      "publisher": { "@id": "https://rendprop.com/#org" }
+      "publisher": {
+        "@id": "https://rendprop.com/#org"
+      }
     },
     {
       "@type": "SoftwareApplication",
@@ -65,7 +88,9 @@
       "url": "https://rendprop.com/",
       "installUrl": "https://apps.apple.com/us/app/id6808982413",
       "downloadUrl": "https://apps.apple.com/us/app/id6808982413",
-      "publisher": { "@id": "https://rendprop.com/#org" },
+      "publisher": {
+        "@id": "https://rendprop.com/#org"
+      },
       "description": "Start a listing, add property photos, review optional AI edits, create a photo-based video and publish a property website. Landscape listing videos and vertical social videos use the selected saved photo versions. A recorded walkthrough is optional. An optional paid AI Aerial opening starts from a reviewed original front exterior photo when the allowance, capacity and processor permission requirements are met.",
       "featureList": [
         "Photo-based landscape listing videos from selected saved photo versions",
@@ -80,24 +105,78 @@
     {
       "@type": "FAQPage",
       "mainEntity": [
-        { "@type": "Question", "name": "Is Rendprop an app?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes — Rendprop is an iPhone app for property photos, photo-based videos and websites, and it needs iOS 16 or later. Add photos, review optional AI edits, create a video and publish from your phone. Buyers can open the published website in a browser." } },
-        { "@type": "Question", "name": "Do I need a drone or a gimbal?",
-          "acceptedAnswer": { "@type": "Answer", "text": "No. Start with landscape property photos for a listing video or choose portrait photos for social video. A recorded walkthrough is optional and separate. An optional paid AI Aerial opening starts from a reviewed original front exterior photo; it is generated footage, not a drone recording. Creation requires an eligible Aerial allowance, available processing capacity and separate permission for the listed processors. The older free-form Aerial generator remains closed." } },
-        { "@type": "Question", "name": "Do I need an account to try it?",
-          "acceptedAnswer": { "@type": "Answer", "text": "You can record and prepare content locally before signing in. Publishing needs an internet connection and a connected workspace. Sign in with Apple enables account recovery, phone/Studio continuity and teams. Current subscription requirements and any introductory offer are shown in the app before confirmation." } },
-        { "@type": "Question", "name": "Will the AI misrepresent my property?",
-          "acceptedAnswer": { "@type": "Answer", "text": "AI can change or invent property details, including in an Aerial opening. Results vary and quality is not guaranteed. Review every AI-edited photo and photo-based video against your original photos before publishing. AI-generated or edited media carries disclosures, and available original photos are linked for comparison." } },
-        { "@type": "Question", "name": "Can I use the tour in the MLS?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Every tour you publish gives you two links: a branded page with your card and contact form, and a separate unbranded link with no name, no contact details and no Rendprop branding — the one that is safe to paste into an MLS virtual-tour field. Check your own MLS rules before you post." } },
-        { "@type": "Question", "name": "How is this different from AI reel makers?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Rendprop combines property photo editing, landscape listing videos, vertical social videos and a hosted property website with your gallery, selected video and contact form. Recorded walkthroughs are optional. Review AI-generated or edited media against your original photos before publication. See the full comparison." } },
-        { "@type": "Question", "name": "Is the tour link a real listing page?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes. A published property website opens with your photos and property details. Its video player uses the listing video you selected for the website; recorded walkthroughs remain optional. The page can include the details you entered, a contact card and an enquiry form. Open the live demo to see a sample gallery, story and features list." } },
-        { "@type": "Question", "name": "What does Rendprop cost?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Launch plans and included usage are being finalized. Rendprop is free to download. Rendprop shows current plan features and included usage in the app. Apple shows the price, billing period, and any introductory offer eligibility, duration, renewal price, and terms before confirmation." } },
-        { "@type": "Question", "name": "Who owns my footage and photos?",
-          "acceptedAnswer": { "@type": "Answer", "text": "You do. Rendprop never uses your content for its own marketing or AI training without your written permission. Optional Kie photo-to-video processing asks for separate permission before selected photos are sent; its terms and retention are explained in our Privacy Policy. You can request account deletion in the app; provider-held copies and shared-workspace records have separate retention limits." } }
+        {
+          "@type": "Question",
+          "name": "Is Rendprop an app?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes — Rendprop is an iPhone app for property photos, photo-based videos and websites, and it needs iOS 16 or later. Add photos, review optional AI edits, create a video and publish from your phone. Buyers can open the published website in a browser."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need a drone or a gimbal?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Start with landscape property photos for a listing video or choose portrait photos for social video. A recorded walkthrough is optional and separate. An optional paid AI Aerial opening starts from a reviewed original front exterior photo; it is generated footage, not a drone recording. Creation requires an eligible Aerial allowance, available processing capacity and separate permission for the listed processors. The older free-form Aerial generator remains closed."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need an account to try it?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "You can record and prepare content locally before signing in. Publishing needs an internet connection and a connected workspace. Sign in with Apple enables account recovery, phone/Studio continuity and teams. Current subscription requirements and any introductory offer are shown in the app before confirmation."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will the AI misrepresent my property?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "AI can change or invent property details, including in an Aerial opening. Results vary and quality is not guaranteed. Review every AI-edited photo and photo-based video against your original photos before publishing. AI-generated or edited media carries disclosures, and available original photos are linked for comparison."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I use the tour in the MLS?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Every tour you publish gives you two links: a branded page with your card and contact form, and a separate unbranded link with no name, no contact details and no Rendprop branding — the one that is safe to paste into an MLS virtual-tour field. Check your own MLS rules before you post."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How is this different from AI reel makers?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Rendprop combines property photo editing, landscape listing videos, vertical social videos and a hosted property website with your gallery, selected video and contact form. Recorded walkthroughs are optional. Review AI-generated or edited media against your original photos before publication. See the full comparison."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is the tour link a real listing page?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. A published property website opens with your photos and property details. Its video player uses the listing video you selected for the website; recorded walkthroughs remain optional. The page can include the details you entered, a contact card and an enquiry form. Open the live demo to see a sample gallery, story and features list."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does Rendprop cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Rendprop is free to download. Monthly plans in the U.S. are Pro $29.99, Max $49, Ultra $99.99 and Team $249.99 with three seats, and eligible new subscribers can start with a 7-day free trial. The app shows current plan features and your available usage. Apple shows the price, billing period, and any introductory offer eligibility, duration, renewal price, and terms before confirmation."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Who owns my footage and photos?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "You do. Rendprop never uses your content for its own marketing or AI training without your written permission. Optional Kie photo-to-video processing asks for separate permission before selected photos are sent; its terms and retention are explained in our Privacy Policy. You can request account deletion in the app; provider-held copies and shared-workspace records have separate retention limits."
+          }
+        }
       ]
     }
   ]
@@ -107,6 +186,13 @@
 <body>
 
 <a class="skip" href="#main">Skip to content</a>
+
+<div class="scene" aria-hidden="true">
+  <img class="is-on" data-scene="living" src="/assets/scene-living-ocean.webp" srcset="/assets/scene-living-ocean-1200.webp 1200w, /assets/scene-living-ocean.webp 2400w" sizes="100vw" width="2400" height="1340" alt="" fetchpriority="high" decoding="async">
+  <img data-scene="dusk" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/assets/scene-dusk-lounge.webp" data-srcset="/assets/scene-dusk-lounge-1200.webp 1200w, /assets/scene-dusk-lounge.webp 2400w" sizes="100vw" width="2400" height="1610" alt="" decoding="async">
+  <img data-scene="kitchen" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/assets/scene-kitchen.webp" data-srcset="/assets/scene-kitchen-1200.webp 1200w, /assets/scene-kitchen.webp 2400w" sizes="100vw" width="2400" height="1340" alt="" decoding="async">
+  <img data-scene="twilight" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/assets/scene-twilight-pool.webp" data-srcset="/assets/scene-twilight-pool-1200.webp 1200w, /assets/scene-twilight-pool.webp 2400w" sizes="100vw" width="2400" height="1340" alt="" decoding="async">
+</div>
 
 <!-- ================= NAV ================= -->
 <header class="nav" id="nav">
@@ -121,29 +207,38 @@
         <a href="/pricing">Pricing</a>
         <a href="/compare">Compare</a>
         <a href="/support">Support</a>
-        <a href="/#faq">FAQ</a>
+        <a href="/blog">Blog</a>
       </div>
-      <button class="menu-btn" id="menuBtn" type="button" aria-controls="navMenu" aria-expanded="false" aria-label="Menu">☰</button>
-      <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
-      <a class="btn btn-primary nav-cta" href="https://apps.apple.com/us/app/id6808982413?ct=site&amp;mt=8">Get the app</a>
+      <div class="nav-actions">
+        <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">◐</button>
+        <a class="btn btn-primary nav-cta" href="https://apps.apple.com/us/app/id6808982413?ct=site&amp;mt=8">Get the app</a>
+        <button class="menu-btn" id="menuBtn" type="button" aria-controls="navMenu" aria-expanded="false" aria-label="Menu">☰</button>
+      </div>
     </nav>
   </div>
 </header>
 
+<nav class="rail" aria-label="On this page">
+  <a href="#how" data-tip="How it works" aria-label="How it works"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h9"/></svg></a>
+  <a href="#example" data-tip="Before and after" aria-label="Before and after"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M12 5v14"/></svg></a>
+  <a href="#features-overview" data-tip="What's in the app" aria-label="What's in the app"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg></a>
+  <a href="#ai" data-tip="The AI engine" aria-label="The AI engine"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg></a>
+  <a href="#industries" data-tip="Not only homes" aria-label="Not only homes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V8l5-3v15M9 20V11l6-3v12M15 20V13l5-2v9M3 20h18"/></svg></a>
+  <a href="#two-links" data-tip="Two links" aria-label="Two links"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 005.7 0l2.6-2.6a4 4 0 00-5.7-5.7L11.5 7"/><path d="M14 10a4 4 0 00-5.7 0l-2.6 2.6a4 4 0 005.7 5.7L12.5 17"/></svg></a>
+  <a href="#listing-site" data-tip="The listing website" aria-label="The listing website"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M8 6.5h.01M11 6.5h.01"/></svg></a>
+  <a href="#pricing-teaser" data-tip="Pricing" aria-label="Pricing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12l-8 8-9-9V4h7z"/><circle cx="8" cy="8" r="1.2"/></svg></a>
+  <a href="#faq" data-tip="FAQ" aria-label="FAQ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 015 0c0 1.6-2.5 2-2.5 3.5M12 17h.01"/></svg></a>
+</nav>
+
 <main id="main">
 
 <!-- ================= HERO ================= -->
-<section class="hero" aria-label="Intro">
-  <div class="hero-bg" data-hero-plx>
-    <picture>
-      <source media="(max-width: 767px)" srcset="/assets/hero-twilight-modern-home-1280.webp">
-      <img src="/assets/hero-twilight-modern-home.webp" width="2400" height="1340" fetchpriority="high"
-           alt="Example modern property at twilight">
-    </picture>
-  </div>
-
+<section class="hero" data-scene="living" aria-label="Intro">
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" style="top:10%; right:-160px; bottom:auto;" aria-hidden="true"></div>
+  <div class="scroll-cue" aria-hidden="true"></div>
   <div class="wrap hero-inner">
-    <div>
+    <div class="hero-card">
       <p class="eyebrow">The iPhone app for property photos, videos and websites</p>
       <h1>Win the listing.<br><span class="grad-text">Skip the film crew.</span></h1>
       <p class="lede">Start with your property photos. Polish them, create a landscape listing video or a vertical social video, then publish a website buyers can explore — all from your phone.</p>
@@ -159,8 +254,16 @@
     </div>
 
     <div class="hero-phone-col">
+      <div class="f-card a" data-mplx="22" data-depth="0.12" aria-hidden="true">
+        <span class="ico">✦</span>
+        <span>Video preview<small>Review before publishing</small></span>
+      </div>
+      <div class="f-card b" data-mplx="16" data-depth="0.09" aria-hidden="true">
+        <span class="ico">◉</span>
+        <span>Property website<small>Gallery, video and contact details</small></span>
+      </div>
       <!-- Illustrative phone preview; not a captured app screen -->
-      <div class="phone phone-float" data-mplx="10" aria-hidden="true">
+      <div class="phone" data-mplx="10" data-depth="0.05" aria-hidden="true">
         <div class="phone-screen">
           <img class="fill" src="/assets/living-room-walkthrough.webp" width="1400" height="1050" alt="" loading="eager">
           <div class="ps-grad"></div>
@@ -178,22 +281,10 @@
     </div>
   </div>
 
-  <div class="f-card" style="right:38%; top:18%;" data-mplx="22" aria-hidden="true">
-    <span class="ico">✦</span>
-    <span>Video preview<small>Review before publishing</small></span>
-  </div>
-  <div class="f-card" style="right:4%; bottom:14%;" data-mplx="16" aria-hidden="true">
-    <span class="ico">◉</span>
-    <span>Property website<small>Gallery, video and contact details</small></span>
-  </div>
-
-  <div class="orb orb-a" aria-hidden="true"></div>
-  <div class="scroll-cue" aria-hidden="true"></div>
 </section>
 
 <!-- ================= HOW IT WORKS ================= -->
 <section id="how" aria-label="How it works">
-  <div class="orb orb-b" style="top:10%; right:-160px; bottom:auto;" aria-hidden="true"></div>
   <div class="wrap">
     <p class="eyebrow reveal">How the app works</p>
     <h2 class="reveal">Three steps in the app.<br><span class="grad-text">Photos to a property website.</span></h2>
@@ -291,11 +382,15 @@
     <p class="reveal center" style="margin-top:40px;">
       <a class="btn btn-primary" href="/features">Explore every feature in depth</a>
     </p>
+    <p class="reveal center" data-d="1" style="margin-top:18px; color:var(--dim); font-size:15px;">In more detail:
+      <a href="/listing-video-from-photos" style="color:var(--accent-3);">listing video from photos</a> ·
+      <a href="/single-property-website" style="color:var(--accent-3);">single property websites</a> ·
+      <a href="/real-estate-photo-editing-app" style="color:var(--accent-3);">photo editing and virtual staging</a></p>
   </div>
 </section>
 
 <!-- ================= AI ENGINE ================= -->
-<section id="ai" class="band-dark" aria-label="AI engine">
+<section data-scene="dusk" id="ai" class="band-dark" aria-label="AI engine">
   <div class="band-bg" aria-hidden="true">
     <img src="/assets/ai-wave-dark.webp" width="2000" height="1142" loading="lazy" alt="">
   </div>
@@ -325,7 +420,6 @@
 
 <!-- ================= INDUSTRIES ================= -->
 <section id="industries" aria-label="Industries">
-  <div class="orb orb-a" style="top:20%; left:-180px;" aria-hidden="true"></div>
   <div class="wrap">
     <p class="eyebrow reveal">Not only homes</p>
     <h2 class="reveal">Pick your space.<br><span class="grad-text">The whole app reshapes around it.</span></h2>
@@ -362,7 +456,8 @@
 </section>
 
 <!-- ================= SHARE + LEADS ================= -->
-<section id="two-links" aria-label="Sharing and enquiries">
+<section data-scene="kitchen" id="two-links" aria-label="Sharing and enquiries">
+  <div class="orb orb-a" style="top:20%; left:-180px;" aria-hidden="true"></div>
   <div class="wrap">
     <div class="frow">
       <div class="fcopy reveal">
@@ -398,7 +493,7 @@
 
 <!-- ================= LISTING WEBSITE ================= -->
 <section id="listing-site" aria-label="The listing website">
-  <div class="orb orb-b" style="top:12%; left:-160px; bottom:auto;" aria-hidden="true"></div>
+  <div class="orb orb-b" style="top:12%; left:-160px; right:auto; bottom:auto;" aria-hidden="true"></div>
   <div class="wrap">
     <div class="frow">
       <div class="fcopy reveal">
@@ -433,21 +528,37 @@
 </section>
 
 <!-- ================= PRICING TEASER ================= -->
-<section id="pricing-teaser" aria-label="Pricing">
+<section data-scene="twilight" id="pricing-teaser" aria-label="Pricing">
+  <div class="orb orb-b" style="top:8%; right:-140px; bottom:auto;" aria-hidden="true"></div>
   <div class="wrap center">
     <p class="eyebrow reveal">Pricing</p>
     <h2 class="reveal">Less than one photo pack.<br><span class="grad-text">Instead of a whole film crew.</span></h2>
-    <p class="lede reveal" data-d="1">Launch plans and included usage are being finalized. Rendprop is free to download,
-    and the app shows current subscription options before you confirm anything with Apple.</p>
+    <p class="lede reveal" data-d="1">Plans start at $29.99 a month. Eligible new subscribers in the U.S. can try it free for
+    7 days, and Apple shows the price and any introductory offer before you confirm.</p>
 
-    <div class="tiers" style="grid-template-columns: minmax(0, 560px); justify-content: center;">
-      <div class="tier hot reveal" data-d="1">
-        <div class="tier-name">Launch plans</div>
-        <div class="tier-price">Finalizing</div>
-        <p class="tier-for">Rendprop shows current plan features and included usage in the app. Apple shows the price, billing period, and any introductory offer eligibility, duration, renewal price, and terms before confirmation.</p>
-        <a class="btn btn-primary" href="/pricing">How subscriptions work</a>
-      </div>
+    <div class="tiers four">
+      <a class="tier tier-mini reveal" data-d="1" href="/pricing">
+        <span class="tier-name">Pro</span>
+        <span class="tier-price">$29.99<small>/month</small></span>
+        <span class="tier-for">AI photo edits, videos and a property website</span>
+      </a>
+      <a class="tier tier-mini hot reveal" data-d="2" href="/pricing"><span class="tier-flag">Most popular</span>
+        <span class="tier-name">Max</span>
+        <span class="tier-price">$49<small>/month</small></span>
+        <span class="tier-for">More monthly AI usage</span>
+      </a>
+      <a class="tier tier-mini reveal" data-d="3" href="/pricing">
+        <span class="tier-name">Ultra</span>
+        <span class="tier-price">$99.99<small>/month</small></span>
+        <span class="tier-for">For high-volume agents</span>
+      </a>
+      <a class="tier tier-mini reveal" data-d="4" href="/pricing">
+        <span class="tier-name">Team</span>
+        <span class="tier-price">$249.99<small>/month</small></span>
+        <span class="tier-for">3 seats, one workspace</span>
+      </a>
     </div>
+    <p class="reveal" data-d="2" style="margin-top:26px;"><a class="btn btn-primary" href="/pricing">See plans and the free trial</a></p>
   </div>
 </section>
 
@@ -520,9 +631,10 @@
       </details>
       <details>
         <summary>What does Rendprop cost?</summary>
-        <p>Launch plans and included usage are being finalized. Rendprop is free to download. Rendprop shows current plan features and included usage in the app.
-        Apple shows the price, billing period, and any introductory offer eligibility, duration, renewal price, and terms before confirmation.
-        <a href="/pricing">Learn how subscriptions work.</a></p>
+        <p>Rendprop is free to download. Monthly plans in the U.S. are Pro $29.99, Max $49, Ultra $99.99 and Team $249.99
+        with three seats, and eligible new subscribers can start with a 7-day free trial. The app shows current plan features
+        and your available usage. Apple shows the price, billing period, and any introductory offer eligibility, duration,
+        renewal price, and terms before confirmation. <a href="/pricing">See plans and the free trial.</a></p>
       </details>
       <details>
         <summary>Who owns my footage and photos?</summary>
@@ -540,7 +652,7 @@
 
 <!-- ================= FINAL CTA ================= -->
 <section class="cta-band" aria-label="Get started">
-  <div class="orb orb-a" style="left:50%; top:30%; transform:translateX(-50%);" aria-hidden="true"></div>
+  <div class="orb orb-a" style="left:calc(50% - 240px); top:6%;" aria-hidden="true"></div>
   <div class="wrap">
     <h2 class="reveal">Your next listing deserves a film crew.<br><span class="grad-text">You have an iPhone.</span></h2>
     <p class="lede reveal center" data-d="1">Free to download. Rendprop shows current plan features and included usage in the app; Apple shows purchase and offer terms before confirmation.</p>
@@ -567,6 +679,7 @@
       <a href="/pricing">Pricing</a>
       <a href="/compare">Compare</a>
       <a href="/support">Support</a>
+      <a href="/blog">Blog</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
       <a href="mailto:aaron@pilk.ai">Contact</a>

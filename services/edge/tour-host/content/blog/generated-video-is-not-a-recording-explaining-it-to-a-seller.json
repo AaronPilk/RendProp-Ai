@@ -1,0 +1,40 @@
+{
+  "slug": "generated-video-is-not-a-recording-explaining-it-to-a-seller",
+  "title": "Generated video is not a recording: explaining it to a seller",
+  "description": "A photo-based listing video is motion built over still photos, not footage of someone walking through. How to explain that to a seller in two minutes.",
+  "category": "ai-trust",
+  "keywords": [
+    "photo-based listing video explained",
+    "is a listing video a recording",
+    "explain AI video to seller",
+    "generated video versus walkthrough",
+    "what to call a listing video"
+  ],
+  "tldr": "Tell the seller plainly: this video is built from the still photos of your home, with camera motion added over each photo and a voiceover on top. Nobody walked through with a camera and nothing in it is footage. A recorded walkthrough is a different product. Sellers accept this when they hear it before they see the video, and resent it when they work it out afterwards.",
+  "html": "<p>Tell the seller plainly, before they see it: this video is built from the still photos of your home, with camera motion added over each photo and a voiceover on top, and nobody walked through with a camera. A recorded walkthrough is a different product, and if they want one, that is a separate conversation. Sellers accept this easily when they hear it first, and resent it when they work it out on their own after the video is already posted.</p><h2>Why sellers get confused</h2><p>A well-made photo-based video moves. The camera glides across the kitchen, pushes toward the window, settles on the island. To a seller it looks like someone filmed it. Then a neighbour asks “when did they film the video?” and the seller does not know the answer, which feels like being left out of their own marketing.</p><p>The confusion is not about quality. It is about not having been told. The fix is one short explanation, in the listing appointment or the day the photos come back, before the video exists.</p><h2>The two-minute explanation</h2><p>Something like this works, in your own words:</p><p><em>“The listing video is made from the photos. Each photo gets a slow camera move, the scenes are put in order, and a voiceover reads a short script over the top. It is a good way to show the home on social and on the property page without a film crew. It is not a recording. If you would like a walkthrough where someone films the home room by room, I can do that separately; it is handheld, and it is a different kind of video.”</em></p><p>Then show them an example from a previous listing, or the <a href=\"/f/estate-demo\">demo listing</a>, and point at the moment where a photo they recognise as a photo starts to move. Once they see the trick, they stop being suspicious of it.</p><h2>What to call it, and what not to call it</h2><ul><li><strong>Call it</strong> a listing video, a photo video, a reel, a social video, or a property video.</li><li><strong>Do not call it</strong> a tour, a walkthrough, a film, footage, or “the video we shot.” Each of those tells the seller, and later the buyer, that a camera moved through the home.</li><li><strong>A recorded walkthrough</strong> is handheld footage of someone walking through the home. Call that a walkthrough, and only that.</li></ul><p>If the video opens with a generated aerial, say so in the same breath. An AI Aerial opening in Rendprop starts from a reviewed original front exterior photo and is generated footage, not a drone recording; creating one requires eligible paid access, a remaining Aerial allowance, available processing capacity and separate processor permission; results vary and you review it before use. Tell the seller it is a generated opening built from their front photo, not a drone flight over their roof. Most listings do not need one.</p><h2>A worked example: the Thursday listing appointment</h2><p>An agent sits with a couple selling a split-level. She shows the video from her last listing on her phone, pauses it on the kitchen, and says “this is the kitchen photo you would see on the MLS; the app moves across it so the video flows.” The husband says “so you did not film it,” and she says “correct, it is built from the photos.” He nods. The wife asks whether they can get a walkthrough as well. The agent says yes, it is handheld, she will film it herself after the photos are done, and it will be on the property page with the photo video.</p><p>Total time: two minutes. The couple now knows exactly what each video is, and when the neighbour asks, they have an answer.</p><h2>Where this goes wrong</h2><ul><li><strong>Showing the video before explaining it.</strong> The seller forms their own theory about how it was made, and then feels misled when corrected.</li><li><strong>Letting a photographer deliver it as a “tour.”</strong> If a photographer builds the video, agree on the words before delivery.</li><li><strong>Using edited photos without saying so.</strong> If the video uses a staged family room or a twilight exterior, the seller should know that too. The <a href=\"/blog/reviewing-ai-video-for-property-details-before-publishing\">video review post</a> covers checking which versions went in.</li><li><strong>Promising what the video is not.</strong> A photo video does not show the flow between rooms the way a walkthrough does. Say that, and offer the walkthrough if it matters for that home.</li></ul><h2>How this works in Rendprop</h2><p>Rendprop builds the listing video from the property photos you choose: scene order and camera motion are planned automatically, a voiceover can be recorded or read by an AI voice from your script, captions are word by word, and music is optional. It exports in 16:9 for the listing video and 9:16 for social. A recorded walkthrough is a separate, optional thing: handheld footage, not drone footage, which viewers can watch or scroll on the published page. The <a href=\"/features#reels\">video features</a> page describes both, and the <a href=\"/blog/photo-based-listing-video-what-it-is-and-when-it-beats-a-walkthrough\">photo-based video post</a> goes deeper on when each makes sense.</p><p>Next step: add one sentence to your listing appointment script that says the video is built from the photos, and say it before you press play.</p>",
+  "faq": [
+    {
+      "q": "What is the difference between a photo-based listing video and a walkthrough?",
+      "a": "A photo-based video is built from still photos with camera motion added over each one, plus voiceover and captions. A walkthrough is handheld footage of someone moving through the home. They are different products and should be named differently."
+    },
+    {
+      "q": "When should I tell the seller the video is generated from photos?",
+      "a": "Before they see it, ideally at the listing appointment or the day the photos come back. Sellers who hear it first accept it; sellers who work it out afterwards feel misled."
+    },
+    {
+      "q": "What should I avoid calling a photo-based video?",
+      "a": "Avoid tour, walkthrough, film, footage or “the video we shot.” Each implies a camera moved through the home. Listing video, photo video, reel or property video are accurate."
+    },
+    {
+      "q": "Is an AI aerial opening a drone shot?",
+      "a": "No. In Rendprop an AI Aerial opening is generated footage built from a reviewed original front exterior photo, not a drone recording. It needs eligible paid access, a remaining Aerial allowance, available processing capacity and separate processor permission; results vary and you review before use."
+    }
+  ],
+  "related": [
+    "ai-generated-aerial-openings-what-they-are-and-what-they-are-not",
+    "reviewing-ai-video-for-property-details-before-publishing",
+    "photo-based-listing-video-what-it-is-and-when-it-beats-a-walkthrough",
+    "recorded-walkthrough-versus-photo-video-when-to-film-the-home-yourself"
+  ],
+  "published": "2026-10-28"
+}

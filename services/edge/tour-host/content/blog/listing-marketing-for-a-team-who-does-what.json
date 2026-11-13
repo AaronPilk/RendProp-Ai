@@ -1,0 +1,40 @@
+{
+  "slug": "listing-marketing-for-a-team-who-does-what",
+  "title": "Listing marketing for a team: who does what",
+  "description": "Five jobs in team listing marketing (seller, media, page and links, posting, enquiries), who holds each, the handoffs between them and what goes wrong.",
+  "category": "business",
+  "keywords": [
+    "real estate team marketing roles",
+    "who does what on a listing team",
+    "listing coordinator responsibilities",
+    "team listing workflow",
+    "real estate team handoffs"
+  ],
+  "tldr": "Team listing marketing works when one named person owns each of five jobs: the seller conversation, the media, the page and links, the posting, and the enquiries. The jobs can be shared, but each needs a single owner, or the enquiry sits unanswered because three people assumed someone else had it.",
+  "html": "<p>On a team, listing marketing works when one named person owns each of five jobs: the seller conversation, the media, the page and its links, the posting, and the enquiries. Two people can do a job together, but each job needs a single name against it. The failure mode on teams is not bad work. It is an enquiry that sat for two days because the listing agent thought the coordinator had it and the coordinator thought the showing agent did.</p><h2>The five jobs and who usually holds them</h2><ul><li><strong>The seller conversation</strong> belongs to the listing agent. Prep list, what gets shown, price on the page, the text that says it is live, the weekly update. Nobody else should be telling the seller anything about marketing.</li><li><strong>The media</strong> belongs to the coordinator or ops person: booking the photographer, receiving the delivery, culling, ordering, choosing the main photo, reviewing any AI edits against the originals, building the video. The listing agent approves the main photo and the video; they do not build them.</li><li><strong>The page and the links</strong> belong to the same coordinator. Publish the page, type the details once, copy the branded and unbranded links into the shared note, enter the unbranded link in the MLS.</li><li><strong>The posting</strong> can sit with the coordinator or with whoever runs the team's social. One person, one calendar, so two listings do not launch an hour apart on the same feed.</li><li><strong>The enquiries</strong> belong to one person on any given day. On many teams that is a rotating inside-sales role or the listing agent. What matters is that the name is written down and that everyone knows where enquiries arrive.</li></ul><h2>The handoffs between them</h2><p>There are three handoffs, and each one is a short message with a link, not a meeting.</p><ol><li>Listing agent to coordinator, the day the agreement is signed: address, details, what to show and skip, which rooms are empty, the date the seller wants it live.</li><li>Coordinator to listing agent, after the review: here is the main photo, here is the video, here is the page. Approve or change by this evening.</li><li>Coordinator to whoever answers enquiries, at launch: it is live, here is the page, here is the note with both links, you are on enquiries for this listing.</li></ol><h2>A three-person team on a Thursday listing</h2><p>The listing agent signs a 4-bed on Thursday afternoon and sends the coordinator the first handoff by text: details, the garage stays out of frame, two bedrooms empty and the seller is fine with virtual staging, live by Monday. The coordinator books the photographer for Friday morning. Friday afternoon the coordinator culls to thirty-two photos, stages the two bedrooms with the staged label on each, compares them with the originals, builds the landscape video, publishes the page and sends the second handoff: three links, approve by 7 p.m. The listing agent swaps the main photo for the kitchen angle and approves. Monday at 9 a.m. the coordinator enters the MLS with the unbranded link, posts the reel with the branded one, and sends the third handoff to the showing agent who is on enquiries this week. Monday at 2 p.m. the first enquiry asks for Wednesday. The showing agent books it. The listing agent texts the seller: live, first showing Wednesday.</p><h2>What goes wrong on teams</h2><ul><li><strong>Enquiries split across people.</strong> The form goes to one inbox, the portal messages to another, texts to a third. Point everything at one place and name who checks it.</li><li><strong>Two people editing the same photos.</strong> The coordinator stages the bedroom; the listing agent, meaning well, also stages it with a different sofa. Keep the originals in one place and let one person make versions.</li><li><strong>The seller hearing from three people.</strong> One voice for the seller. Everyone else routes through the listing agent.</li><li><strong>Approval that does not come.</strong> Give the listing agent a deadline in the handoff. Silence by the deadline means approved.</li><li><strong>A new team member who cannot find the listing.</strong> If the media lives on one person's laptop, the team is one sick day from a stalled launch.</li></ul><h2>Teams and shared listings in Rendprop</h2><p>Rendprop has teams, so the people who handle a listing can work from a shared workspace rather than forwarding files. The coordinator can add the photos, review edits in the photo studio, build the video and publish the property website; the branded and unbranded links come from the Share sheet; and enquiries land in the inbox, per listing and all together, so whoever is on enquiries that week has one place to look. The originals stay in each photo's history alongside any AI versions, each with its disclosure. See <a href=\"/features#leads\">how enquiries arrive</a> and <a href=\"/blog/teams-in-rendprop-inviting-people-and-what-they-can-see\">how teams work in the app</a>.</p><p>Next step: write the five jobs on a shared note with one name beside each, per listing, and add the three handoffs as templates. The next time a listing stalls, you will know within a minute whose job it was.</p>",
+  "faq": [
+    {
+      "q": "Should the listing agent build the video and the page?",
+      "a": "Usually not. The listing agent approves the main photo and the video; the coordinator builds them. That split keeps the agent on seller conversations and showings, and keeps the media consistent across every listing the team runs."
+    },
+    {
+      "q": "Who should answer enquiries on a team?",
+      "a": "One named person per listing per week, written down in the handoff. It can rotate, but at any moment everyone on the team should be able to say who has enquiries for a given address."
+    },
+    {
+      "q": "How does a team stop two listings launching on top of each other?",
+      "a": "One person owns the posting calendar. Launch posts go a day apart, and the coordinator checks the calendar before publishing a page, not after."
+    },
+    {
+      "q": "What is the minimum a new coordinator needs to take over a listing?",
+      "a": "The originals, the chosen main photo, the page link, both share links and the name of whoever is on enquiries. If all of that lives in one shared listing rather than one person's laptop, the handover takes a minute."
+    }
+  ],
+  "related": [
+    "the-photographer-agent-handoff-files-links-and-who-posts-what",
+    "where-listing-enquiries-should-land-your-inbox-not-three-other-agents",
+    "teams-in-rendprop-inviting-people-and-what-they-can-see",
+    "the-weekly-review-fifteen-minutes-that-keep-listings-moving"
+  ],
+  "published": "2026-10-28"
+}

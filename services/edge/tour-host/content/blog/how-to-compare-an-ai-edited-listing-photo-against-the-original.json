@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+  "title": "How to compare an AI-edited listing photo against the original",
+  "description": "Put edit and original side by side and count windows, doors, outlets, fixtures and text. If any count differs, the edit changed the room.",
+  "category": "photos",
+  "keywords": [
+    "compare AI edited photo original",
+    "check AI photo edit real estate",
+    "AI photo edit review checklist",
+    "spot AI changes listing photo",
+    "verify virtual staging photo"
+  ],
+  "tldr": "Put the edited photo and the original side by side at the same size, then count windows, doors, outlets, switches, fixtures, vents and anything with text. If any count differs, the edit changed the room and should not be published as it stands. Then check edges, reflections and the parts of the frame you were not looking at.",
+  "html": "<p>Put the edited photo and the original side by side at the same size, then count: windows, doors, outlets, switches, light fixtures, vents and anything with text. If any count differs, the edit changed the room and should not be published as it stands. After the counts, check edges, reflections and the parts of the frame you were not looking at when you asked for the edit. The whole check takes about a minute per photo once it is a habit.</p><h2>Why counting beats looking</h2><p>Your eye is drawn to the thing you changed. If you asked for a blue sky, you look at the sky. The model, meanwhile, may have redrawn the chimney, dropped a downspout and softened the brick. A count forces attention onto the parts of the frame you did not ask about, which is where invented details live.</p><p>Counting also gives you a yes or no answer. Looks fine is a judgement. Six windows before, six after is a fact.</p><h2>The checklist, in order</h2><ol><li><strong>Openings.</strong> Windows and doors, inside and out. Count panes on a divided window too. Models like to add or remove mullions.</li><li><strong>Wall hardware.</strong> Outlets, switches, thermostats, vents, smoke detectors, cable plates. These vanish in tidy and staging edits because the model treats them as clutter.</li><li><strong>Fixtures.</strong> Ceiling lights, fans, sconces, faucets, towel bars, the range hood. Note style as well as count. A brushed nickel faucet that came back chrome is a change.</li><li><strong>Surfaces.</strong> Flooring pattern, countertop material, tile grout lines. Look for a plank floor that became tile at the edge of the frame.</li><li><strong>Text and logos.</strong> Anything with letters: the oven display, a street number, a brand on an appliance. Models mangle text and the result looks wrong even when the buyer cannot say why.</li><li><strong>Edges and corners.</strong> The four corners of the frame and the edge where the edited area meets the rest. This is where blending fails.</li><li><strong>Reflections.</strong> Mirrors, glass doors, polished floors, a stainless fridge. The reflection should show the room as it is in the rest of the frame.</li></ol><h2>A worked example: the staged living room</h2><p>An agent runs an add-furniture edit on an empty living room in a 1960s ranch. The edit looks good: a sofa, a rug, two lamps, a plant by the window. Side by side with the original, the counts come back as follows.</p><ul><li>Windows: two in the original, two in the edit. Pass.</li><li>Outlets: three in the original, one in the edit. The model hid two behind the sofa and removed one on the far wall. Fail.</li><li>Fixtures: the ceiling fan in the original is a flush light in the edit. Fail.</li><li>Flooring: oak in both, but the plank direction changes under the rug. Fail.</li></ul><p>Three fails on a frame that looked fine. The agent runs it again with a prompt that says to keep all outlets, the ceiling fan and the floor exactly as they are, and gets a version that passes. That is the normal pattern: the first edit is a draft and the comparison tells you what to say in the second.</p><h2>What a fail means in practice</h2><p>Not every fail kills the edit. An outlet hidden behind a sofa is plausible, because a real sofa would hide it too. An outlet removed from a bare wall is not. A ceiling fan that became a flush light is a changed fixture and a buyer will notice at the showing. Ask whether the difference would survive a walk through the room. If it would not, do not publish.</p><h2>Comparing inside Rendprop</h2><p>Every AI edit in the <a href=\"/features#photo-studio\">photo studio</a> is saved as a separate version, and the untouched original stays in the photo history, so the comparison is built into the step where you choose which version the listing uses. Put the two side by side, run the count, and pick. If the edit fails, you can choose the original, or write a custom prompt that names what to keep, then compare again. Staging carries the Virtually staged label and other edits carry an AI-alteration disclosure, so what you publish is labelled either way. The comparison is still yours to do, because AI can change or invent details, and the label does not catch a missing outlet.</p><h2>Do it on the obvious ones too</h2><p>Run the count on every edit, including the ones that look plainly fine. The plainly fine ones are where a missing vent gets through. If you have a batch to get through before a Monday launch, <a href=\"/blog/how-to-review-a-batch-of-ai-photo-edits-in-ten-minutes\">how to review a batch of AI photo edits in ten minutes</a> turns this checklist into a timed routine, and <a href=\"/blog/what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room\">what to do when an AI edit invents a detail</a> covers the fix when the count fails.</p>",
+  "faq": [
+    {
+      "q": "What should I check first when comparing an AI edit to the original?",
+      "a": "Count the openings: windows and doors, including panes on divided windows. Then count wall hardware such as outlets and switches, then fixtures. Counting gives a yes or no answer where looking gives an impression."
+    },
+    {
+      "q": "How long does it take to compare an edited photo properly?",
+      "a": "About a minute per photo once the count is a habit, and thirty seconds for a simple sky swap. A batch of twenty edits fits in ten minutes with a fixed routine."
+    },
+    {
+      "q": "Does every failed count mean I cannot use the edit?",
+      "a": "No. An outlet hidden behind an added sofa is plausible, because a real sofa would hide it too. An outlet removed from a bare wall or a ceiling fan that became a flush light is a change a buyer will see at the showing. Ask whether the difference would survive a walk through the room."
+    },
+    {
+      "q": "Where is the original photo in Rendprop?",
+      "a": "In the photo history for that photo. Every AI edit is saved as a separate version and the untouched original stays alongside it, so you can compare them before choosing which version the listing uses."
+    }
+  ],
+  "related": [
+    "how-to-review-a-batch-of-ai-photo-edits-in-ten-minutes",
+    "what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room",
+    "reviewing-ai-output-against-the-original-a-habit-not-a-step",
+    "how-to-review-ai-edits-in-rendprop-and-compare-them-with-the-original"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "how-many-photos-does-a-listing-video-need",
+  "title": "How many photos does a listing video need",
+  "description": "A listing video needs 12 to 20 photos and a vertical social video 6 to 10. The spread across rooms matters more than the total. Three worked counts.",
+  "category": "photos",
+  "keywords": [
+    "how many photos listing video",
+    "photos needed for property video",
+    "listing video length photos",
+    "photo slideshow real estate how many",
+    "social video photo count"
+  ],
+  "tldr": "A listing video needs 12 to 20 photos. A vertical social video needs 6 to 10. Below those ranges the video feels thin and the camera lingers too long. Above them it runs past the point where a buyer is still watching. One frame per space, with a second only for the rooms that sell the house.",
+  "html": "<p>A listing video needs 12 to 20 photos. A vertical social video needs 6 to 10. Below those ranges the video feels thin and the camera lingers on each frame too long. Above them the video runs past the point where a buyer is still watching. The number is set by the home and by the viewer's patience, not by how many frames came back from the shoot.</p><h2>Start from seconds, not from photos</h2><p>Each photo in a photo-based video gets a few seconds of camera motion, long enough to read the room and short enough to keep moving. Multiply that by the number of photos and you have the runtime. A listing video that a buyer will watch to the end on a property page runs about a minute to ninety seconds, which lands you at 12 to 20 frames. A social video that has to hold attention in a feed runs well under a minute, which is 6 to 10 frames.</p><p>So the question is not how many photos do I have. It is how long will this person watch, and how many rooms can I show in that time.</p><h2>The spread matters more than the total</h2><p>Fourteen photos of which five are the kitchen is a kitchen video. Fourteen photos with one or two per space is a tour. Before counting, list the spaces: exterior front, living, kitchen, dining, primary bed, primary bath, second bed, third bed, hall bath, yard, plus anything specific to the house like an office, a finished basement, a pool, a workshop.</p><p>Give each space one frame. Give the two or three best spaces a second frame. That is usually 12 to 16 and the house feels complete.</p><h2>A worked example, three sizes of home</h2><p><strong>A 1-bed condo.</strong> Building entrance or lobby, living room, the view, kitchen, bedroom, bath, balcony, amenity space. Eight frames for the listing video. Six for social, dropping the lobby and the bath.</p><p><strong>A 3-bed in a cul-de-sac.</strong> Exterior, entry, living, kitchen, kitchen detail, dining, primary bed, primary bath, bed two, bed three, hall bath, deck, yard. Thirteen frames. Social cut: exterior, living, kitchen, primary, deck, yard. Six.</p><p><strong>A 5-bed with a pool and a finished basement.</strong> Exterior, rear exterior with pool, entry, living, family room, kitchen, kitchen detail, dining, office, primary bed, primary bath, two more beds, basement, bar, pool at dusk, yard. Eighteen frames. Even here, the social cut stays under ten: pool, kitchen, living, primary, basement bar, exterior, and a closing frame.</p><h2>What goes wrong at the extremes</h2><p><strong>Too few.</strong> Six frames in a listing video means each one gets a long, slow move and the video feels like a slideshow with a wait between slides. Buyers scrub forward or leave.</p><p><strong>Too many.</strong> Thirty frames means the buyer is watching the laundry room at the 80-second mark, long after they decided whether to book a showing. The extra frames also dilute the good ones: the kitchen shot gets the same screen time as the linen closet.</p><p><strong>Duplicates.</strong> Two angles of the same room back to back read as a stutter. Keep one, or separate them with another space.</p><p><strong>Padding with details.</strong> A faucet, a doorknob and a light switch make the count but add nothing. Details work when the detail is the upgrade. Otherwise cut.</p><h2>What Rendprop does with the count</h2><p>At the video step you choose which photos go into the video. Scene order and camera motion are planned automatically from the set you pick, so the count you choose sets the pace and the length. Landscape photos go into the listing video, portrait photos into the vertical social video, and each exports in its own format, 16:9 or 9:16. If the listing video feels long on review, remove three frames and create it again rather than trying to speed it up. The <a href=\"/features#reels\">reels</a> page covers what else sits around the photos: voiceover, captions and music.</p><h2>Pick the count, then shoot for it</h2><p>Before the shoot, write the list of spaces and the number of frames each gets. Hand it to the photographer or keep it for yourself. The shoot then produces the video's photos on purpose, with the extra frames going to the gallery, and <a href=\"/blog/how-to-choose-which-listing-photos-to-turn-into-a-video\">how to choose which listing photos to turn into a video</a> covers the cull when the shoot came back without a list. For runtime from the other direction, see <a href=\"/blog/how-long-should-a-listing-video-be\">how long should a listing video be</a>.</p>",
+  "faq": [
+    {
+      "q": "Is 30 photos too many for a listing video?",
+      "a": "Yes, for almost any home. At 30 frames the buyer is watching utility rooms long after they decided about a showing, and the strong rooms get the same screen time as the weak ones. Cut to 12 to 20 and put the rest in the gallery."
+    },
+    {
+      "q": "How many photos does a vertical social video need?",
+      "a": "Six to ten. A social video has to hold attention in a feed, so it runs well under a minute. Open on the exterior or the front door, show the four or five strongest rooms, and close on the deck, the yard or the view."
+    },
+    {
+      "q": "Should every room get a photo in the video?",
+      "a": "Every space a buyer would use to decide on a showing gets one frame. Laundry rooms, closets, garages and hallways usually do not, and go in the gallery instead. The two or three best spaces can have a second frame."
+    },
+    {
+      "q": "Does adding more photos make a Rendprop video longer?",
+      "a": "The set you choose at the video step is what the scene order and camera motion are planned from, so more frames means more scenes. If the video feels long on review, remove a few frames and create it again."
+    }
+  ],
+  "related": [
+    "how-to-choose-which-listing-photos-to-turn-into-a-video",
+    "how-long-should-a-listing-video-be",
+    "landscape-or-portrait-shooting-photos-for-listing-video-and-social-video",
+    "camera-motion-on-still-photos-what-looks-natural-and-what-looks-like-a-s"
+  ],
+  "published": "2026-10-28"
+}

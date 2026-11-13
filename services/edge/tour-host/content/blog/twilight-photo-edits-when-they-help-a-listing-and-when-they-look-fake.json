@@ -1,0 +1,40 @@
+{
+  "slug": "twilight-photo-edits-when-they-help-a-listing-and-when-they-look-fake",
+  "title": "Twilight photo edits: when they help and when they look fake",
+  "description": "Use a twilight edit on one or two exteriors with real fixtures and glowing windows, label it, and leave the rest in daylight. The four ways it goes wrong.",
+  "category": "photos",
+  "keywords": [
+    "twilight photo edit real estate",
+    "day to dusk listing photo",
+    "fake twilight listing photos",
+    "when to use twilight edit",
+    "virtual twilight real estate"
+  ],
+  "tldr": "A twilight edit helps when the home has exterior lighting, big windows, a pool or a view that reads better at dusk. It looks fake when there are no fixtures to justify the glow, when daytime shadows remain, or when every window is lit. Use it on one or two exteriors, disclose it, and keep the rest of the set in daylight.",
+  "html": "<p>A twilight edit helps when the home has something that only shows at dusk: exterior lighting, big windows that glow from inside, a pool, a view that reads better against a darker sky. It looks fake when the house has no exterior fixtures to justify the glow, when daytime shadows are still on the lawn, or when it is the only twilight frame in a daylight set. Use it on one or two exteriors, label it, and leave the rest of the set in daylight.</p><h2>What a twilight frame does for a buyer</h2><p>At dusk the sky goes deep blue, the interior lights turn the windows warm, and any fixture on the porch or along the path becomes a point of light. The effect is that the house looks lived in and cared for, and it stands out in a feed of grey daylight exteriors. That is the whole value. It is not about the house being different. It is about the house being seen.</p><p>The real thing costs a second trip at the right twenty minutes. The AI version costs a careful look. Twilight conversions from a vendor run $5–25 per photo at typical U.S. rates as of August 2026, and an AI edit inside an app is the same idea without the round-trip.</p><h2>Homes where it earns its place</h2><ul><li>A house with porch lights, path lights or garden uplighting that exist in the yard and are on in the edit</li><li>A rear elevation with a wall of glass over a deck or pool</li><li>A hillside or waterfront lot where the view is the selling point and a dusk sky frames it</li><li>A listing going live in winter, when the daylight frames came back flat and overcast</li></ul><p>Take a 4-bed colonial listed on a Tuesday in November. The front exterior shot at 2pm is grey sky, bare trees, beige siding. A twilight edit on that one frame gives the main photo a reason to be clicked. The other 30 frames stay daylight, because a buyer who clicks through and sees every room at dusk starts to wonder what the daylight hides.</p><h2>Where it goes wrong</h2><p>Most bad twilight edits fail on one of four things.</p><p><strong>Lights with no fixture.</strong> The edit adds a warm glow on the garage wall but there is no sconce. A buyer who drives by at 7pm notices. So does the seller's neighbour.</p><p><strong>Two suns.</strong> The sky says dusk but the lawn still carries the hard 2pm shadow from the chimney. Shadows should soften and lengthen or fade. If they are crisp, the frame is lying.</p><p><strong>Every window lit.</strong> A real house at dusk has a few rooms lit, not all of them. When all 14 windows glow the same yellow, including the attic, the frame reads as rendered.</p><p><strong>A twilight that changes the house.</strong> The sky is fair game. The roofline, the siding colour, the number of windows and the shape of the drive are not. Compare the edit against the original and count. The post on <a href=\"/blog/before-and-after-what-an-ai-twilight-edit-changes-and-what-it-should-not\">what an AI twilight edit changes and what it should not</a> goes through that frame by frame.</p><h2>A rule for the set</h2><p>One twilight exterior as the main photo, possibly a second for the rear if the back of the house is the story. Everything else daylight. If the listing has a social cut, the twilight frame can open it too. If you find yourself wanting a third or fourth, the home probably needs a real dusk shoot rather than more edits.</p><h2>How the twilight edit runs in Rendprop</h2><p>In the <a href=\"/features#photo-studio\">photo studio</a>, twilight is one of the optional edits alongside blue sky, green lawn, tidy the room and add furniture. You run it on a photo, it is saved as a separate version with an AI-alteration disclosure, and the untouched original stays in the photo history. You compare the two side by side and choose which version the listing uses. The original is not replaced. If the edit added a glow where there is no fixture, you choose the original and move on, or try a custom prompt that tells it to keep the exterior lighting as it is.</p><p>Check your MLS rules before posting an altered exterior as the main photo. Where the disclosure goes, and whether an altered main photo is allowed at all, varies by board.</p><h2>Walk the exterior before you run it</h2><p>At the shoot, note which fixtures exist. Write them down: two porch sconces, one coach light on the garage, no path lights. That note is what you check the edit against, and it takes a minute. Then run twilight on the one frame that will be the main photo and <a href=\"/blog/which-photo-should-be-the-main-photo-of-a-listing\">decide whether it should be</a>.</p>",
+  "faq": [
+    {
+      "q": "How many twilight photos should a listing have?",
+      "a": "One, usually the front exterior as the main photo. A second for the rear elevation if the back of the house is the selling point. More than that and the set starts to look rendered, and buyers wonder what daylight would show."
+    },
+    {
+      "q": "Does a twilight edit need a disclosure?",
+      "a": "Yes. It is an altered image, so it carries an AI-alteration disclosure, and your MLS may require specific wording or placement. Check your board's current rules before using an altered photo as the main photo."
+    },
+    {
+      "q": "What makes a twilight edit look fake?",
+      "a": "Lights where there are no fixtures, hard daytime shadows under a dusk sky, every window lit the same colour, and any change to the house itself such as the roofline or the number of windows. Compare the edit against the original and count."
+    },
+    {
+      "q": "Is an AI twilight edit as good as a real dusk shoot?",
+      "a": "A real dusk shoot captures what the house looks like at that hour. An AI edit approximates it from a daylight frame and can get the light direction or the fixtures wrong. For a home where twilight is the whole story, book the real shoot. For one main photo on an ordinary listing, a checked edit does the job."
+    }
+  ],
+  "related": [
+    "before-and-after-what-an-ai-twilight-edit-changes-and-what-it-should-not",
+    "blue-sky-replacement-for-listing-photos-a-practical-guide",
+    "which-photo-should-be-the-main-photo-of-a-listing",
+    "twilight-edits-and-misrepresentation-where-the-line-sits"
+  ],
+  "published": "2026-10-28"
+}

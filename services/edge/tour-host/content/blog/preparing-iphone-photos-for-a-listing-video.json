@@ -1,0 +1,40 @@
+{
+  "slug": "preparing-iphone-photos-for-a-listing-video",
+  "title": "Preparing iPhone photos for a listing video",
+  "description": "Clean the lens, shoot level at 1x with the lights on, one careful frame per space, then cull hard. Video magnifies a soft or tilted still.",
+  "category": "photos",
+  "keywords": [
+    "iphone real estate photos",
+    "prepare photos for listing video",
+    "iphone listing photography tips",
+    "shoot listing photos on phone",
+    "phone photos property video"
+  ],
+  "tldr": "Clean the lens, shoot level at the 1x lens with the lights on, hold the phone horizontally for the listing video and upright for the social video, and shoot one careful frame per space rather than six quick ones. Then cull duplicates, blur and tilt, and keep the set in one white balance.",
+  "html": "<p>Clean the lens, shoot level at the 1x lens with the lights on, hold the phone horizontally for the listing video and upright for the social video, and shoot one careful frame per space rather than six quick ones. Then cull the duplicates, drop any frame with a blur or a tilt, and keep the set in a consistent white balance. The video is only as good as the stills, and the stills take ten minutes of care.</p><h2>Before you lift the phone</h2><ul><li>Wipe the lens with a cloth. A smudged lens is the most common reason an iPhone listing photo looks soft, and it shows worst in video, where the camera moves across the frame.</li><li>Turn on every light in the house. Open every blind.</li><li>Clear the counters and the floors. <a href=\"/blog/tidy-the-room-decluttering-a-listing-photo-without-misleading-buyers\">Tidy the room</a> can fix one frame afterward; it cannot fix a house.</li><li>Decide the order: exterior first if the light suits, then the ground floor front to back, then upstairs, then the yard.</li></ul><h2>How to hold it</h2><p>Two hands, elbows in, phone at chest height. Use the grid if the camera app offers one and line the verticals up with it. A tilted frame is the single tell that separates a phone shoot from a camera shoot, and it is free to fix at the time and awkward to fix later.</p><p>Shoot interiors in landscape orientation for the listing video. Then, for the rooms that stand up well, shoot a second frame upright for the vertical social video. The post on <a href=\"/blog/landscape-or-portrait-shooting-photos-for-listing-video-and-social-video\">photos for listing and social video</a> covers which rooms those are.</p><h2>The lens choice</h2><p>Default to 1x. It is the lens that shows a room the size it is. Switch to 0.5x only when 1x cannot show the space from any corner, usually a small bathroom or a galley kitchen. When you do, keep the phone level, because the wide lens bends anything that is not.</p><p>Avoid any portrait or depth mode for rooms. The background blur that flatters a face makes a kitchen look like a model.</p><h2>One frame per space, done properly</h2><p>Pick the corner, set the exposure by tapping a mid-tone wall, hold still, shoot. Check the frame on the screen at full size, not the thumbnail. If the verticals lean or the window is a white block, shoot again now. Six quick frames of a room from the doorway produce six frames to cull. One careful frame from the right corner produces the one you will use.</p><h2>A worked example: the Tuesday morning shoot</h2><p>An agent shoots a 3-bed herself before a Thursday launch. Exterior at 9am because the front faces east. Inside, lens wiped, every light on, 1x throughout except the hall bath at 0.5x. One frame per room from the corner, a second upright frame in the kitchen, the stairs and the primary bath. Twenty-two frames in forty minutes.</p><p>At the kitchen table afterward: two frames cut for a tilt, one for a blur, one duplicate living room dropped. Eighteen left, fourteen horizontal for the listing video and four upright for the social cut. The set has one white balance because every room was shot with the lights on and the blinds open.</p><h2>Culling for video</h2><p>Video is less forgiving than a gallery. In a gallery a soft frame is one of thirty. In a video the camera moves across it for several seconds and the softness is the whole screen. Cull harder than you would for the MLS:</p><ol><li>Any blur, out.</li><li>Any tilt you did not catch at the time, out, unless you can straighten it without cropping the room away.</li><li>Any frame where the window is a white rectangle with no room detail, out.</li><li>Any frame of a space the buyer will not use to decide on a showing, out of the video and into the gallery.</li><li>Any duplicate, keep the one with more floor.</li></ol><h2>Consistency across the set</h2><p>A set where one room is warm and the next is cool looks like two shoots. It usually comes from mixed bulbs or from shooting some rooms with the lights off. Keep the lights on throughout and swap any bulb that is obviously a different colour from its neighbours. If a frame still looks off, leave it out rather than trying to match it with an edit.</p><h2>From the camera roll into Rendprop</h2><p>Rendprop runs on an iPhone on iOS 16 or later. You start a listing, add the photos from the shoot, and landscape photos feed the listing video while portrait photos feed the vertical social video. Optional AI edits in the <a href=\"/features#photo-studio\">photo studio</a> are saved as separate versions with disclosures, with the original kept in the photo history. At the video step you choose the frames, and scene order and camera motion are planned automatically. You can prepare the listing before signing in; publishing needs a connection and a connected workspace. Check the App Store listing for device requirements.</p><h2>Ten minutes, then the app</h2><p>Lens, lights, level, 1x, one frame per space, cull hard. That is the preparation. Everything after it is choosing, and <a href=\"/blog/how-to-choose-which-listing-photos-to-turn-into-a-video\">how to choose which listing photos to turn into a video</a> covers that part.</p>",
+  "faq": [
+    {
+      "q": "Are iPhone photos good enough for a listing video?",
+      "a": "Yes, if they are shot with care: lens cleaned, lights on, phone level, 1x lens, one considered frame per room from the corner. The failures in phone shoots come from tilt, flash and the wide lens from the doorway, not from the camera."
+    },
+    {
+      "q": "Which iPhone lens should I use for listing photos?",
+      "a": "1x by default. It shows rooms at the size they are. Use 0.5x only when 1x cannot show the space from any corner, usually a small bathroom or a galley kitchen, and keep the phone level when you do."
+    },
+    {
+      "q": "Why do my phone photos look soft in the video but fine in the gallery?",
+      "a": "Video moves the camera across the frame for several seconds, so a slightly soft or smudged still fills the screen. Wipe the lens before the shoot and cull any frame with blur harder than you would for the MLS."
+    },
+    {
+      "q": "Do I need to be signed in to Rendprop to prepare the photos?",
+      "a": "No. You can prepare content locally before signing in. Publishing the property website needs a connection and a connected workspace. Rendprop runs on an iPhone on iOS 16 or later; check the App Store listing for device requirements."
+    }
+  ],
+  "related": [
+    "how-to-choose-which-listing-photos-to-turn-into-a-video",
+    "landscape-or-portrait-shooting-photos-for-listing-video-and-social-video",
+    "real-estate-photography-with-an-iphone-what-is-possible-today",
+    "how-to-add-property-photos-to-a-listing-in-rendprop"
+  ],
+  "published": "2026-10-28"
+}

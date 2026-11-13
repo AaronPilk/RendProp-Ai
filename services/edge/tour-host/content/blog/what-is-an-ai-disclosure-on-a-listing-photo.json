@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-an-ai-disclosure-on-a-listing-photo",
+  "title": "What is an AI disclosure on a listing photo",
+  "description": "An AI disclosure on a listing photo is a label that tells the viewer the image was altered by AI, and how: virtually staged, sky replaced, room tidied.",
+  "category": "glossary",
+  "keywords": [
+    "ai disclosure listing photo",
+    "ai altered photo label",
+    "virtually staged label",
+    "disclosure on edited real estate photo",
+    "ai photo disclosure real estate"
+  ],
+  "tldr": "An AI disclosure on a listing photo is a label attached to an edited image that tells the viewer it was altered by AI, and ideally what kind of alteration it was: virtually staged, sky replaced, room tidied. It travels with the photo so a buyer, an agent or a compliance desk can tell the edited version from the original. It is not a caption you add later; it belongs to the version itself.",
+  "html": "<p>An AI disclosure on a listing photo is a label attached to an edited image that tells the viewer the photo was altered by AI, and ideally what kind of alteration it was: virtually staged, sky replaced, lawn greened, room tidied. It travels with that version of the photo so a buyer, another agent or a compliance desk can tell the edited image from the original without asking.</p><p>The point is not to apologise for the edit. It is to make sure nobody discovers the edit at the showing.</p><h2>How a disclosure works</h2><p>A disclosure has three parts. The label itself, a short phrase on or next to the image. The scope, which says what changed, because virtually staged means something different from sky replaced. And the link back to the original, so anyone who wants to see the unedited room can. The best implementations attach the label to the edited version automatically when the edit is made, rather than relying on someone to remember it at upload time.</p><p>Where the label appears depends on the channel. On a property page it can sit beside the photo. In the MLS it may go in the remarks or a photo caption, depending on what your board allows. On social it is a line in the caption. The label follows the photo wherever the photo goes.</p><h2>When one is needed</h2><ul><li>Any staging edit. Furniture that is not in the room is the clearest case.</li><li>Sky, lawn and twilight edits, which change the conditions the buyer will see.</li><li>Decluttering, where items were removed from an occupied room.</li><li>Any custom edit, because a prompt can change more than you asked for.</li></ul><p>Basic exposure and colour correction is usually treated as ordinary photo processing rather than an alteration, but the line sits in different places on different boards. Check your MLS's current rules and ask your broker where they draw it.</p><h2>What a disclosure is not</h2><p>A disclosure is not a watermark and not a copyright notice. It is not a general line in the listing remarks that says photos may have been enhanced, which tells a buyer nothing about which photo or how. And it is not the same as keeping the original on file; keeping the original is the backup, the disclosure is the front-facing label. You need both.</p><p>The nearest confusable thing is the Virtually staged label on its own. That is one kind of disclosure, specific to added furniture. A photo with a replaced sky needs a different label, because a buyer who reads virtually staged on an exterior shot with no furniture will be confused about what was done.</p><h2>Two edits, two labels, one Saturday showing</h2><p>An agent lists a vacant 3-bed on a Monday with a brown October lawn and an empty living room. She greens the lawn in the front exterior and stages the living room with a sofa and a rug. Two edits, two labels. The exterior carries an AI-alteration disclosure that says the lawn was edited. The living room carries Virtually staged. Both originals sit in the gallery a few frames later.</p><p>On Saturday a buyer's agent walks her clients through. The lawn is brown, the living room is empty, and nobody says a word, because the page told them. The following week a compliance query from the board asks about the exterior; the agent sends the labelled version and the original, and the query closes the same afternoon.</p><h2>How this works in Rendprop</h2><p>In Rendprop every AI edit is a separate version with a disclosure. Staging is labelled Virtually staged; other edits, such as blue sky, twilight, green lawn, tidy the room and custom prompts, carry an AI-alteration disclosure. The untouched original stays in photo history, so the labelled version and the original are always both available. AI can change or invent details, so compare edited photos against your originals before publishing, and check your own MLS rules before posting altered images. See <a href=\"/features#photo-studio\">the photo studio</a> and <a href=\"/blog/how-rendprop-labels-ai-edited-photos-and-videos\">how Rendprop labels AI-edited photos and videos</a>.</p><h2>Where disclosures go wrong</h2><p>Labels get lost when a photo is exported, renamed and uploaded somewhere else by hand. A staged photo saved to the camera roll and posted to a group on Facebook arrives with no label at all. The second failure is the wrong label, usually Virtually staged on a photo that was not staged. The third is a disclosure buried in a paragraph of remarks where no buyer will find it. Keep the label on the version, keep it specific, and keep it near the photo.</p><p>Next step: open your current listing's gallery and, for every edited photo, confirm you can say in four words what was changed. If you cannot, the label is not doing its job.</p>",
+  "faq": [
+    {
+      "q": "Does every AI-edited listing photo need a disclosure?",
+      "a": "Treat it that way. Staging, sky, lawn, twilight, decluttering and custom edits all change what a buyer will see at the showing. Basic exposure correction is usually treated differently, but check your MLS's current rules and ask your broker where they draw the line."
+    },
+    {
+      "q": "What should the disclosure say?",
+      "a": "What was done, in a few words. Virtually staged for added furniture. Sky replaced, lawn edited or room tidied for the others. A vague line like photos enhanced tells the buyer nothing useful."
+    },
+    {
+      "q": "Where does the disclosure go in the MLS?",
+      "a": "It depends on your board. Some allow photo captions, some use the remarks, some have a specific field. Check your MLS's current rules before uploading an altered photo and follow their placement."
+    },
+    {
+      "q": "Is keeping the original photo enough on its own?",
+      "a": "No. The original is your backup and your proof. The disclosure is what the buyer sees before the showing. You need the label on the edited version and the original on file."
+    }
+  ],
+  "related": [
+    "why-every-ai-photo-edit-should-carry-a-disclosure",
+    "ai-edited-listing-photos-what-to-disclose-and-where",
+    "how-rendprop-labels-ai-edited-photos-and-videos",
+    "what-is-a-saved-photo-version"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room",
+  "title": "When an AI edit invents a detail that is not in the room",
+  "description": "Do not publish it. Go back to the original, re-run with a prompt that names the invented detail, and if it happens again use the original.",
+  "category": "photos",
+  "keywords": [
+    "AI edit added something not in room",
+    "AI photo edit added detail not in room",
+    "fix invented detail AI photo",
+    "AI staging added window",
+    "what to do wrong AI edit listing"
+  ],
+  "tldr": "Do not publish it. Go back to the original, decide whether the edit is worth a second attempt, and if it is, run it again with a prompt that names the invented detail and says to leave that area exactly as it is. If the second attempt invents something else, use the original. If it is already published, replace it the same day.",
+  "html": "<p>Do not publish it. Go back to the original, decide whether the edit is worth a second attempt, and if it is, run it again with a prompt that names the invented detail and says to leave that area exactly as it is. If the second attempt invents something else, use the original. If the edit is already published, replace it with the original or a corrected version the same day and add a line to the remarks. The invented detail is the problem. The fix is the original.</p><h2>What counts as an invented detail</h2><p>Anything in the edited photo that is not in the room and was not asked for. A second window on a wall that has one. A ceiling fan where there was a flush light. A patch of hardwood where the carpet meets the hall. A door that leads nowhere. A path light on a lawn with no wiring. Text on an appliance that is not a word. A reflection in a mirror that shows a different room.</p><p>Some are obvious. Most are not, which is why you compare every edit against its original and count openings, fixtures and surfaces before choosing it. The post on <a href=\"/blog/how-to-compare-an-ai-edited-listing-photo-against-the-original\">how to compare an AI-edited listing photo against the original</a> has the count.</p><h2>The decision, in order</h2><ol><li><strong>Reject the version.</strong> It does not go in the gallery, the video or the social cut. The original is the fallback and it is already there.</li><li><strong>Ask whether the edit matters.</strong> A sky swap on the fourth exterior frame is not worth a second run. A staged living room on a vacant listing probably is.</li><li><strong>Name the invention in the new prompt.</strong> Keep the wall to the right of the fireplace blank with no window. Keep the ceiling fan. Keep the carpet in the doorway. The model invented it because the prompt left room; close the room.</li><li><strong>Compare again.</strong> Same count. A second version can fix the first invention and add a new one.</li><li><strong>Two strikes, use the original.</strong> If the second run also invents, the frame is not a good candidate for that edit. Publish the original and move on.</li></ol><h2>A worked example: the dining room with the extra door</h2><p>An agent runs a tidy-the-room edit on a dining room to remove a high chair and a stack of boxes. The edit comes back clean, and in the corner where the boxes were there is now a door. The original has a blank wall.</p><p>Rejected. The edit matters, because the boxes make the room look like storage. Second run: Remove the high chair and the boxes. Keep the wall behind the boxes blank with no door, window or fixture. Keep the floor, the window and the light exactly as they are. The second version comes back with the boxes gone and a blank wall. Count passes. Published with an AI-alteration disclosure, original kept.</p><h2>If it is already live</h2><p>Swap the photo for the original or the corrected version the same day, everywhere it appears: the MLS, the property page, the social post. Then add a line to the remarks saying one photo was replaced. If a buyer has already asked about the detail, tell them plainly that the edit added something that is not there and show them the original. That conversation is short when you have the original and the version history, and long when you do not. <a href=\"/blog/keeping-original-photos-why-your-photo-history-matters\">Keeping original photos</a> is the reason this is a short conversation.</p><h2>Why it happens, so you can reduce it</h2><p>An image model fills the space you ask it to change with the most likely content. A blank wall where boxes were is less likely, to the model, than a wall with something on it. Hence the door. The fix is a prompt that says what the space should contain, not just what should leave it. Removing with no instruction for what remains is the single most common source of invention. <a href=\"/blog/writing-a-custom-edit-prompt-for-a-property-photo\">Writing a custom edit prompt for a property photo</a> covers the structure that closes the gap.</p><h2>What not to do</h2><ul><li>Publish it because the invention is small. Small inventions are the ones a buyer finds at the showing and uses to doubt the rest.</li><li>Crop the invention out. A cropped room is a smaller room, and a crop that hides an edit is still an edit.</li><li>Run the same prompt again hoping for a different result. Change the prompt or use the original.</li><li>Edit the edit. Each generation on a generated image compounds what it got wrong.</li></ul><h2>How Rendprop makes the fallback easy</h2><p>Every AI edit in Rendprop's <a href=\"/features#photo-studio\">photo studio</a> is a separate version. The untouched original stays in the photo history, so rejecting an edit is a matter of not choosing it, and the original is already the version the listing can use. Staging is labelled Virtually staged and other edits carry an AI-alteration disclosure, but the label does not catch an invented door; the comparison does. Suggest and Improve my prompt help with the second run, and the custom prompt is where you name what the model must leave alone. AI can change or invent details, which is the reason the original is kept.</p><h2>Keep the original within reach</h2><p>The whole fix depends on the original being findable in seconds. If it is, an invented detail costs you one retry or one swap. If it is not, it costs you a reshoot or a conversation with a buyer you would rather not have.</p>",
+  "faq": [
+    {
+      "q": "What should I do if an AI edit added a window or door that is not there?",
+      "a": "Reject that version and use the original. If the edit matters, run it again with a prompt that names the wall and says to keep it blank with no window, door or fixture, then compare again. If the second attempt invents something else, publish the original."
+    },
+    {
+      "q": "Can I crop out the part of the photo the AI invented?",
+      "a": "No. A cropped room is a smaller room, and a crop that hides an edit is still an edit. Use the original or a corrected version that passes the count."
+    },
+    {
+      "q": "What if the photo with the invented detail is already on the MLS?",
+      "a": "Replace it the same day everywhere it appears: MLS, property page, social posts. Add a line to the remarks that a photo was replaced. If a buyer has asked, tell them plainly and show the original."
+    },
+    {
+      "q": "Why do AI edits invent details?",
+      "a": "The model fills the area you asked it to change with the most likely content, and a blank wall is less likely to it than a wall with something on it. A prompt that says what the space should contain, not just what should leave, reduces it. Comparing against the original catches the rest."
+    }
+  ],
+  "related": [
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "writing-a-custom-edit-prompt-for-a-property-photo",
+    "keeping-original-photos-why-your-photo-history-matters",
+    "reviewing-ai-output-against-the-original-a-habit-not-a-step"
+  ],
+  "published": "2026-10-28"
+}

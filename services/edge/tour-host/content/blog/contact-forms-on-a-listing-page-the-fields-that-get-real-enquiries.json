@@ -1,0 +1,40 @@
+{
+  "slug": "contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries",
+  "title": "Contact forms on a listing page: fields that get real enquiries",
+  "description": "A listing enquiry form needs four fields: name, a way to reach them, a message and the date they want to see the home. Every extra field loses a buyer.",
+  "category": "website",
+  "keywords": [
+    "listing page contact form",
+    "real estate enquiry form fields",
+    "property website lead form",
+    "showing request form",
+    "contact form that converts"
+  ],
+  "tldr": "The enquiry form on a listing page needs four fields: name, a way to reach them (phone or email), a short message and the date they want to see the home. The date field is the one that separates a real showing request from a vague question. Anything beyond four fields reduces submissions without improving quality.",
+  "html": "<p>The enquiry form on a listing page needs four fields: name, a way to reach them, a short message, and the date they want to see the home. The date field is the one that matters most, because it turns \"Is this still available?\" into \"Can I see it Saturday at two.\" Every field beyond those four reduces the number of buyers who finish the form without improving who they are.</p><p>Agents overbuild forms because they want to qualify the lead before replying. The form is the wrong place for that. Qualify on the phone call; the form's only job is to get the phone call.</p><h2>The four fields and why each earns its place</h2><p><strong>Name.</strong> So you can greet them. First name is enough; asking for a full name feels like a credit application.</p><p><strong>A contact method.</strong> Phone or email, their choice. Forcing both costs you the buyer who does not want calls yet. If you can only have one, ask for whichever you actually use to reply, and be honest with yourself about that.</p><p><strong>A message.</strong> Optional, short, with a placeholder that invites a question. Most buyers write one line. That line often tells you more than any dropdown: \"Is the basement finished?\" means they are comparing it to another home with a finished basement.</p><p><strong>The date they want to see it.</strong> This is the field that changes everything. A buyer who picks a date has mentally booked a showing. Your reply is a confirmation, not a sales pitch. A buyer who leaves it blank is browsing, and you know to reply differently.</p><h2>A worked example: Saturday evening after an open house</h2><p>A 3-bed bungalow had an open house from one to three. At six that evening two enquiries come in from the page. The first: \"Sarah, 555-0142, 'Loved the backyard, is the shed included?', Sunday.\" The second: \"J., email only, 'More info please', no date.\"</p><p>Sarah gets a call at six-fifteen confirming Sunday at eleven and a yes on the shed. J. gets an email with the page link, the price and a line asking what information would help. Same form, two very different replies, and the date field told you which was which in a second.</p><h2>Fields that look useful and are not</h2><ul><li><strong>Pre-approval status.</strong> Buyers lie, skip it, or leave. Ask on the call.</li><li><strong>Budget range.</strong> They are on the page for a home with a price on it. The budget is implied.</li><li><strong>Are you working with an agent.</strong> Important to know, awkward to ask in a form. A buyer with an agent often leaves rather than answer. Ask on the call.</li><li><strong>How did you hear about us.</strong> Marketing wants this. Buyers do not care. Track the link source instead.</li><li><strong>Timeline dropdowns.</strong> \"0 to 3 months, 3 to 6 months.\" The date field already covers urgency more honestly.</li><li><strong>A required subject line.</strong> Nobody knows what to put. Drop it.</li><li><strong>Captchas that require squinting.</strong> Spam is a real problem, but a buyer who fails a puzzle twice on a phone is gone. Use the lightest protection that works.</li></ul><h2>The reply is part of the form</h2><p>A form that gets filled in and then sits for two days has failed as surely as one nobody filled in. Decide before you publish who replies, how fast, and from where. A buyer who picked Saturday and hears nothing by Friday night has already booked a showing somewhere else.</p><p>Keep the reply simple. Confirm the date or offer two alternatives, answer the one question they asked, and give them your direct number. Do not send a brochure.</p><h2>How this works in Rendprop</h2><p>Every published property page in Rendprop includes an enquiry form that asks for the date the visitor wants. Submissions land in the app's inbox, per listing and all together, so a Saturday evening with three active listings is one list to work through, not three logins. The form is part of the page, so there is nothing to build or connect. The <a href=\"/features#leads\">leads feature page</a> covers the detail, and the <a href=\"/f/estate-demo\">demo listing</a> shows the form in place. If a photographer published the page for you, enquiries can be forwarded to you once your email is verified.</p><h2>Test the form yourself</h2><p>Before the listing goes out, fill in your own form from your phone. Time how long it takes. Check that the submission arrives where you expect, with the date intact. Check that a one-word message and a blank message both go through. If it takes you more than thirty seconds or you hesitate at any field, a buyer will too.</p><p>The next step: look at the form on your current listing and count the fields. If there are more than four required, cut until there are four. For where submissions should land once they come in, read <a href=\"/blog/where-listing-enquiries-should-land-your-inbox-not-three-other-agents\">where listing enquiries should land</a>, and for what to say back, see <a href=\"/blog/follow-up-from-a-listing-enquiry-the-first-reply-and-the-first-call\">follow-up from a listing enquiry</a>.</p>",
+  "faq": [
+    {
+      "q": "Should the enquiry form require a phone number?",
+      "a": "Require one contact method, not both. Some buyers will give a phone number, some only an email, and forcing the one they do not want to share costs you the enquiry. Reply using whichever they gave."
+    },
+    {
+      "q": "Why ask for a showing date on the form?",
+      "a": "A buyer who picks a date has decided to see the home. Your reply becomes a confirmation instead of a pitch. A blank date tells you they are still browsing, so you can reply with information rather than a booking."
+    },
+    {
+      "q": "How do I stop spam without a hard captcha?",
+      "a": "Use the lightest protection available and accept a little noise. A buyer who fails a puzzle on a phone leaves. Spam is a nuisance; a lost showing request is lost money."
+    },
+    {
+      "q": "Should the message field be required?",
+      "a": "No. Many real buyers have no question yet and just want to see the home. Make it optional with a short placeholder like \"Anything you want to ask?\" and let the date field do the qualifying."
+    }
+  ],
+  "related": [
+    "where-listing-enquiries-should-land-your-inbox-not-three-other-agents",
+    "follow-up-from-a-listing-enquiry-the-first-reply-and-the-first-call",
+    "where-enquiries-appear-in-rendprop-and-how-to-reply",
+    "property-website-links-for-open-houses-the-sign-in-that-follows-up-itsel"
+  ],
+  "published": "2026-10-28"
+}

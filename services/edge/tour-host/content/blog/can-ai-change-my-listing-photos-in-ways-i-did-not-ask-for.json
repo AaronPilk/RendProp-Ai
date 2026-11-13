@@ -1,0 +1,40 @@
+{
+  "slug": "can-ai-change-my-listing-photos-in-ways-i-did-not-ask-for",
+  "title": "Can AI change my listing photos in ways I did not ask for",
+  "description": "Yes. An AI edit can alter or invent details beyond the request: a missing radiator, a new window, a different floor. Compare before you publish.",
+  "category": "questions",
+  "keywords": [
+    "AI photo edit changed things I did not ask",
+    "AI listing photo hallucination",
+    "AI edit added details to photo",
+    "unexpected changes AI photo editing real estate",
+    "check AI edited listing photo"
+  ],
+  "tldr": "Yes. Ask an AI to add a blue sky and it may also brighten the brickwork; ask it to tidy a room and it may remove the radiator along with the laundry. The model regenerates the area it touches rather than cutting and pasting, so details nearby can shift or vanish. The fix is a habit, not a setting: compare every edit against the original at full size before it goes anywhere.",
+  "html": "<p>Yes. Ask an AI to add a blue sky and it may also brighten the brickwork; ask it to tidy a room and it may remove the radiator along with the laundry; ask it to furnish an empty bedroom and the window may come back a different shape. The model regenerates the area it touches rather than cutting and pasting, so details near the edit can shift, vanish or appear. The fix is a habit rather than a setting: compare every edited photo against its original at full size before it goes anywhere.</p><h2>Why this happens</h2><p>An AI image edit does not know what a radiator is in the way you do. It knows what pixels tend to look like in a room described as tidy, and it redraws the region you asked about to match. Anything in that region that does not fit the pattern is at risk: an unusual fixture, a quirky window, a pipe that runs where pipes usually do not. Things just outside the region can be nudged too, because the model blends the edit into its surroundings.</p><p>The result is usually plausible. That is the problem. A missing radiator looks like a wall. A redrawn window looks like a window. Nothing flags itself as wrong, which is why a glance at a thumbnail is not a review.</p><h2>The changes that turn up most</h2><ul><li><strong>Removed fixtures.</strong> Radiators, thermostats, smoke detectors, vents, outlets and light switches disappear during tidy or staging edits.</li><li><strong>Changed windows and doors.</strong> Panes multiply or merge, a door handle moves, a door disappears behind imaginary furniture.</li><li><strong>Different flooring.</strong> The grain changes direction, tiles become planks, a rug appears where there was none.</li><li><strong>Altered views.</strong> The neighbour's wall becomes a hedge; the car park becomes a garden; a sky edit brightens what is beyond the glass.</li><li><strong>New objects.</strong> A plant, a lamp, a picture frame, a second sink. Staging prompts in particular add things beyond the furniture.</li><li><strong>Text and numbers.</strong> House numbers, signs and labels get scrambled.</li><li><strong>Proportions.</strong> A room reads a little wider, a ceiling a little higher, after the edit.</li></ul><h2>A worked example: the garage and the shelf</h2><p>An agent runs a tidy-the-room edit on a garage photo of a three-bed. The original shows bikes, boxes, a workbench and a wall-mounted shelf with paint tins. The edit returns a clean garage with the bench and the floor looking better than they are. Nice.</p><p>Side by side at full size, two things have gone: the shelf, and the electrical panel that was next to it. The buyer who turns up expecting a bare wall finds a shelf and a fuse box, which is fine, but the buyer who wanted to know where the panel was has been shown a garage without one. The agent discards the version, runs the edit again with a prompt that says to keep all fixtures and shelving, compares again, and this time only the clutter is gone. Two minutes, and the photo is both tidy and true.</p><h2>What goes wrong when nobody compares</h2><ol><li><strong>The edit goes to the MLS and the showing contradicts it.</strong> A buyer notices, the buyer's agent notices, and the question becomes what else was changed.</li><li><strong>The original is gone.</strong> The agent saved over it, so there is no way to show what the room really looked like when asked.</li><li><strong>The change is defended instead of fixed.</strong> “It is only a radiator” is not a position you want to take with a board or a buyer.</li><li><strong>The same error repeats across the set.</strong> If one edit removed the vents, the others probably did too. Check them all, not just the first.</li></ol><p>The post on <a href=\"/blog/what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room\">what to do when an AI edit invents a detail</a> covers the recovery, and <a href=\"/blog/how-to-compare-an-ai-edited-listing-photo-against-the-original\">how to compare an edited photo against the original</a> gives a method that takes under a minute per photo.</p><h2>How this works in Rendprop</h2><p>In Rendprop's photo studio every AI edit is saved as a separate version with a disclosure, and the untouched original stays in photo history. You compare each edit with the original and choose which saved versions to use; the ones you do not choose do not go on the website or in the video. Staging is labelled “Virtually staged” and other edits carry an AI-alteration disclosure. Rendprop states plainly that AI can change or invent details, which is why the comparison is part of the workflow. A custom prompt lets you tell the edit what to leave alone, and “Improve my prompt” sharpens the wording. See the <a href=\"/features#photo-studio\">photo studio</a> on the features page.</p><h2>Check your last published edit</h2><p>Open the last AI-edited photo you published next to its original and look at the fixtures, the windows, the floor and the view, in that order. If anything differs beyond what you asked for, swap the version now. Then make that four-point look the rule for every edit from here on.</p>",
+  "faq": [
+    {
+      "q": "Why would an AI remove something I did not mention?",
+      "a": "Because it redraws the region it edits to match what a typical version of that scene looks like, and anything unusual in that region may not survive. A radiator or a fuse box does not fit the model's idea of a tidy wall, so it goes."
+    },
+    {
+      "q": "Can I stop the AI from changing fixtures?",
+      "a": "You can reduce it. Write the prompt to say what must stay: keep all windows, radiators, outlets and flooring as they are. Then compare the result anyway, because a prompt lowers the risk without removing it."
+    },
+    {
+      "q": "What should I do if I already published an edit with an invented detail?",
+      "a": "Replace it with the original or a corrected version as soon as you see it, everywhere it was posted. If a buyer has already raised it, say plainly that an AI edit altered the photo and show them the original."
+    },
+    {
+      "q": "Does this mean I should avoid AI photo edits?",
+      "a": "No. It means every edit needs a side-by-side check before it is used. Sky, lawn, twilight and tidy edits done carefully improve listings; done without comparison they create showings that contradict the photos."
+    }
+  ],
+  "related": [
+    "what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room",
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "what-should-i-check-before-publishing-an-ai-edited-photo",
+    "can-ai-misrepresent-a-property-yes-here-is-how-to-keep-it-from-happening"
+  ],
+  "published": "2026-10-28"
+}

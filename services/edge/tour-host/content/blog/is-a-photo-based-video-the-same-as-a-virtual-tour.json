@@ -1,0 +1,40 @@
+{
+  "slug": "is-a-photo-based-video-the-same-as-a-virtual-tour",
+  "title": "Is a photo-based video the same as a virtual tour",
+  "description": "No. A virtual tour is usually something the viewer steers; a photo-based video is a short film you watch. The MLS tour field often takes a link to either.",
+  "category": "questions",
+  "keywords": [
+    "photo based video vs virtual tour",
+    "is a listing video a virtual tour",
+    "MLS virtual tour field video link",
+    "difference between virtual tour and listing video",
+    "what counts as a virtual tour"
+  ],
+  "tldr": "No. A virtual tour, in the strict sense, is something the viewer steers: a set of 360 panoramas or a model they can move through. A photo-based video is a short film built from the listing photos that plays from start to finish. The MLS virtual-tour field is usually just a place for a link, and a property page with the video on it commonly goes there, but check your MLS's current rules on what the field accepts.",
+  "html": "<p>No. A virtual tour, in the strict sense, is something the viewer steers: a set of 360-degree panoramas or a model they move through, choosing where to look. A photo-based video is a short film built from the listing photos that plays from start to finish in a set order, so the two are different experiences for a buyer. The confusion comes from the MLS, where the “virtual tour” field is usually just a place for a link and a property page with a video on it commonly goes there; check your MLS's current rules on what that field accepts.</p><h2>What each one does for a buyer</h2><p><strong>A steerable tour</strong> answers “what is around the corner.” The buyer controls the path and the pace. It suits homes where the layout is the question: an unusual plan, a large house, a buyer who is out of state and wants to walk it alone at midnight. The cost is attention. Most buyers click around for thirty seconds and stop.</p><p><strong>A photo-based video</strong> answers “what is this home like, and why should I care.” The order, the pace and the words are set before the buyer presses play. It suits every home where you want to make an argument: this kitchen, this light, this garden, for this price. It plays on social, on the property page, in a text message. The cost is control: the buyer sees what you show them.</p><p><strong>A recorded walkthrough</strong> sits in between. It is handheld footage of the actual path through the home, played as a film or scrolled. It carries the flow of a tour with the direction of a video.</p><h2>The MLS field is the source of the mix-up</h2><p>Most MLS systems have a field called something like “virtual tour” that takes a URL. It was named when 360 tours were the new thing, and the name stuck. Today the field is used for whatever link the listing agent wants to attach: a 360 tour, a hosted video, a single-property page. What the field may contain, whether it must be unbranded, and how it is labelled are set by each MLS and change, so read the current rule before you paste.</p><p>Practically, a property page that holds the gallery, the video and the details is a sensible thing to put in that field, because a buyer clicking “virtual tour” gets everything in one place. Just do not describe a video as a 360 tour in the remarks. The post on <a href=\"/blog/what-is-an-mls-virtual-tour-field\">what the MLS virtual-tour field is</a> covers the field itself.</p><h2>A worked example: a three-bed, two buyers</h2><p>A three-bed on a quiet street is listed with a property page in the MLS virtual-tour field. The page has the 24-photo gallery, a 50-second photo-based video and the details.</p><p>Buyer one is local. She clicks the link on her lunch break, plays the video, decides the kitchen is worth seeing, and books a showing for Thursday through the page's form. She did not need to steer anything; she needed to be shown the home in order with a voice telling her why.</p><p>Buyer two is relocating and will only visit once. He watches the video, then asks his agent whether there is a way to see how the bedrooms connect to the bathroom. There is not, so his agent films a two-minute walkthrough on a phone during a preview and sends it. For him the video opened the door and the walkthrough answered the layout question. Neither buyer needed a 360 tour; both needed the video first.</p><h2>Where the tour-versus-video confusion costs you</h2><ul><li><strong>Calling a video a 360 tour.</strong> A buyer who expects to steer and gets a film feels misled, even if the film is good. Describe it as what it is.</li><li><strong>Putting a raw video file link in the field.</strong> A link that downloads a file or opens a bare player with no details sends the buyer to a dead end. Link to the page that holds the video.</li><li><strong>Branded link in the unbranded field.</strong> If your MLS keeps the virtual-tour field unbranded, your property page needs an unbranded version. Check the current rule.</li><li><strong>Making a 360 tour because the field says tour.</strong> Pay for a steerable tour when the layout is the question, not because of a field label.</li><li><strong>Skipping the video because you have a tour.</strong> The tour does not play on Instagram and most buyers will not click around it. The video is the thing people watch.</li></ul><h2>How this works in Rendprop</h2><p>Rendprop builds a photo-based listing video from the landscape photos in a listing, with scene order and camera motion planned automatically, a recorded or AI voiceover, word-by-word captions and optional music. The video is selected for the property website, where it plays on request. Every published listing gets a branded link and an unbranded link at rendprop.com/u/&lt;slug&gt; with no name, no contact details and no Rendprop branding, made for an MLS virtual-tour field. A recorded walkthrough is optional and separate; viewers can watch or scroll it. See <a href=\"/features#two-links\">two links</a> and the <a href=\"/features#reels\">video features</a> on the features page, and the <a href=\"/f/estate-demo\">demo listing</a> for the page a buyer would land on.</p><h2>Look at your virtual-tour field</h2><p>Look at what is in the virtual-tour field of your current listing. If it is empty, put the unbranded link to a page with the video on it there, after checking your MLS's current rules. If it is a 360 tour, ask whether a buyer could also find a video of the home anywhere, and if not, make one from the photos you already have.</p>",
+  "faq": [
+    {
+      "q": "Can I put a photo-based video in the MLS virtual-tour field?",
+      "a": "Usually you put a link in that field, and a property page that holds the video commonly goes there. What the field accepts and whether it must be unbranded is set by your MLS and changes, so check the current rules before you paste."
+    },
+    {
+      "q": "Is a 360 tour better than a listing video?",
+      "a": "They do different jobs. A steerable tour answers layout questions for the buyer who wants to explore; a video makes the case for the home in an order you chose and plays everywhere, including social. Most listings benefit from the video first."
+    },
+    {
+      "q": "What is a recorded walkthrough, then?",
+      "a": "Handheld footage of the actual path through the home, played as a film or scrolled by the viewer. It sits between a steerable tour and a photo-based video: real movement through the space, in a direction you chose."
+    },
+    {
+      "q": "Should I describe my listing video as a virtual tour in the remarks?",
+      "a": "No. Call it a video or a listing video. A buyer who expects to steer through the home and gets a film feels misled, and accuracy in the remarks is part of the same honesty as accuracy in the photos."
+    }
+  ],
+  "related": [
+    "what-is-an-mls-virtual-tour-field",
+    "photo-based-listing-video-what-it-is-and-when-it-beats-a-walkthrough",
+    "what-is-the-difference-between-a-branded-and-an-unbranded-tour-link",
+    "recorded-walkthrough-versus-photo-video-when-to-film-the-home-yourself"
+  ],
+  "published": "2026-10-28"
+}

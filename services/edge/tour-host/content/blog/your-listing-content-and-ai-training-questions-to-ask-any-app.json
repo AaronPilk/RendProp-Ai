@@ -1,0 +1,40 @@
+{
+  "slug": "your-listing-content-and-ai-training-questions-to-ask-any-app",
+  "title": "Your listing content and AI training: questions to ask any app",
+  "description": "Seven questions to ask before uploading listing photos to any app: training, marketing use, outside processing, originals, deletion and ownership.",
+  "category": "ai-trust",
+  "keywords": [
+    "does the app train AI on my photos",
+    "listing photos AI training",
+    "real estate app terms content rights",
+    "questions before uploading listing photos",
+    "photo app privacy real estate"
+  ],
+  "tldr": "Ask seven things before uploading listing photos to any app: will it train AI on my content, will it use my content in its marketing, does it send photos to outside processors and does it ask first, does it keep my originals, what happens when I delete my account, who owns the output, and can I get a plain answer in writing. A good app answers all seven without a lawyer.",
+  "html": "<p>Before you upload a single listing photo to any app, ask seven things: will it train AI on my content, will it use my content in its own marketing, does it send photos to outside processors and does it ask first, does it keep my untouched originals, what happens when I delete my account, who owns the edited output, and can I get the answers in plain writing. A good app answers all seven without making you read forty pages. An app that dodges any of them is telling you something.</p><h2>Why this matters more for listings than for holiday snaps</h2><p>A listing photo is not only yours. It shows a seller's home, often their furniture, sometimes their belongings. The photographer may hold rights in it. Your broker may have a policy on where it goes. If an app quietly uses that image to train a model or to sell itself on a landing page, you are the one who has to explain that to the seller and the photographer. “I did not read the terms” is not a good explanation.</p><h2>The seven questions</h2><h3>1. Do you train AI models on my content?</h3><p>The answer you want is “no, not without your written permission.” Watch for phrasing like “to improve our services,” which can mean anything. Ask directly and ask for a yes or no.</p><h3>2. Do you use my content in your own marketing?</h3><p>Some apps' terms grant themselves a licence to show your listings on their website, in ads or in app store screenshots. That might be fine for a demo listing. It is not fine for a seller's home without their consent. The answer you want is that your content stays yours and is not used for the app's marketing without written permission.</p><h3>3. Do you send my photos to outside processors, and do you ask first?</h3><p>AI edits and video generation often run on third-party services. That is normal. What matters is whether the app tells you and asks before it sends. An app that asks for separate permission before sending photos to a particular processor is being straight with you. One that sends everything everywhere by default is not.</p><h3>4. Do you keep my untouched originals?</h3><p>If an edit overwrites the original, you have lost the one file that proves what the room looked like. The answer you want is that the original stays in a history alongside every edited version. The <a href=\"/blog/why-a-property-marketing-app-should-keep-your-originals\">post on originals</a> explains why this is non-negotiable.</p><h3>5. What happens when I delete my account?</h3><p>Ask whether there is a deletion path at all, where it is, and what happens to your media and published pages. Ask what you should download before you delete. The <a href=\"/blog/account-deletion-and-your-listing-media-what-to-expect-from-an-app\">account deletion post</a> goes through what to expect.</p><h3>6. Who owns the edited output?</h3><p>The law around AI-edited images is still settling in many places, so the app cannot promise you the world. What it can do is state plainly that it claims nothing over your photos and videos, edited or not. That is the answer to look for.</p><h3>7. Can I get this in writing?</h3><p>A support reply, a help page, a line in the terms. If the answers to questions one to six exist only in a sales call, they do not exist.</p><h2>A worked example: the Saturday evening upload</h2><p>A photographer with four shoots on Saturday is trying a new app on Saturday night. Before uploading the first set, she opens the terms and searches for “train,” “marketing” and “licence.” Two minutes. She finds a clause granting the app a licence to use uploaded content to “promote the service.” She emails support: “Does this mean my clients' listings could appear in your ads?” The reply comes Monday: yes, unless you opt out in settings. She opts out, tells her agent clients, and moves on. Had she skipped the two minutes, the first time she learned about it might have been a client seeing their listing in an ad.</p><h2>Answers that should make you pause</h2><ul><li>“We may use your content to improve our products.” Ask what “improve” includes.</li><li>“By uploading you grant us a worldwide, perpetual licence.” Ask what for, and whether it survives deletion.</li><li>“Processing may involve third parties.” Ask which, and whether you are asked first.</li><li>“Originals are not stored.” Then where is your evidence of what was changed?</li><li>No deletion path at all. That is a reason to use something else.</li></ul><h2>How Rendprop answers</h2><p>You own your photos and videos. Rendprop never uses your content for its own marketing or AI training without written permission. The optional Kie photo-to-video processing asks for its own permission before any photo is sent. Every AI edit is a separate version with a disclosure and the untouched original stays in photo history. Account deletion requests are made from Settings. Product questions go to the <a href=\"/support\">support page</a>; questions about your own photographer agreements or the law in your state go to an attorney.</p><p>Next step: take the seven questions above and put them to every app that currently holds your listing photos. Keep the answers in one note. The ones that cannot answer are the ones to replace.</p>",
+  "faq": [
+    {
+      "q": "Is it normal for a property marketing app to send photos to third-party AI services?",
+      "a": "Yes, AI edits and video generation often run on outside processors. What matters is whether the app tells you which ones and asks for permission before sending. An app that asks separately for that permission is being straight with you."
+    },
+    {
+      "q": "What does “to improve our services” mean in an app's terms?",
+      "a": "It can mean anything from fixing bugs to training AI models on your uploads. Ask the app directly whether your content is used for AI training and whether it appears in their marketing, and ask for a yes or no in writing."
+    },
+    {
+      "q": "Why does it matter whether the app keeps my original photos?",
+      "a": "The untouched original is the only proof of what a room looked like before an edit. If the app overwrites it, you cannot review the edit properly or answer a buyer or seller who asks what changed."
+    },
+    {
+      "q": "What does Rendprop do with uploaded listing content?",
+      "a": "You own your photos and videos. Rendprop does not use your content for its own marketing or AI training without written permission, optional outside processing asks for separate permission before photos are sent, and originals stay in photo history alongside each edited version."
+    }
+  ],
+  "related": [
+    "who-owns-an-ai-edited-listing-photo",
+    "why-a-property-marketing-app-should-keep-your-originals",
+    "permission-before-processing-why-an-app-should-ask-before-sending-photos",
+    "how-rendprop-handles-your-photos-videos-and-ai-processing-permissions"
+  ],
+  "published": "2026-10-28"
+}

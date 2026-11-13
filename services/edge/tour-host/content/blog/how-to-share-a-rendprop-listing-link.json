@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-share-a-rendprop-listing-link",
+  "title": "How to share a Rendprop listing link",
+  "description": "Open the published listing's Share sheet: the branded link for buyers, sellers, texts and social, the unbranded link for the MLS. Where each one goes.",
+  "category": "howto",
+  "keywords": [
+    "share rendprop listing link",
+    "rendprop share sheet",
+    "send property page link by text",
+    "branded listing link",
+    "property website link for social"
+  ],
+  "tldr": "Open the published listing, open the Share sheet, and copy the link you need: the branded link (rendprop.com/f/…) for buyers, sellers, texts, email and social, or the unbranded link (rendprop.com/u/…) for the MLS virtual-tour field. Send the branded link wherever your name should appear and the unbranded one where it should not.",
+  "html": "<p>Open the published listing, open the Share sheet, and copy the link you need. The branded link (rendprop.com/f/ plus the listing slug) goes to buyers, sellers, your database, texts and social posts. The unbranded link (rendprop.com/u/ plus the same slug) goes in the MLS virtual-tour field.</p><p>Pick by one rule: if your name should be on the page where it lands, send the branded link.</p><h2>The two links, and the one question that picks between them</h2><p>Both links open the same listing: main photo, details, gallery and the selected video on request. The branded page also shows your contact card. The unbranded page shows no name, no contact details and no Rendprop branding. So the question is simply whether the person opening it should be able to reach you from the page. A buyer, yes. A seller, yes. The MLS, usually no; check your own MLS rules. The <a href=\"/features#two-links\">two links section</a> describes both.</p><h2>Sharing the link, in order</h2><ol><li>Open the listing from Home. It has to be published; the links are created at publish.</li><li>Open the Share sheet.</li><li>Choose the branded link or the unbranded link and copy it.</li><li>Paste it where it is going: a text, an email, a social caption or profile, a QR code generator for the sign, or the MLS field.</li><li>Open what you sent, from the other end if you can, and confirm the preview and the page look right.</li></ol><h3>What to check before you send it</h3><ul><li>Branded or unbranded is right for the destination.</li><li>The main photo is the one you want leading the page; it is the first thing the recipient sees.</li><li>The price and details on the page match what you are saying in the message.</li><li>The contact card on the branded page has the right person. A photographer presenting an agent's listing should see the agent's details there, not their own.</li></ul><h2>Where the branded link should go</h2><ul><li><strong>The seller.</strong> A text the day you publish, so they can forward it. Sellers are the first distribution channel and the most motivated one.</li><li><strong>Buyers who enquire.</strong> Reply with the link even if they came from the page; it gives them something to forward.</li><li><strong>Social.</strong> In the profile for a vertical video, in the caption or first comment where links are allowed. Check the current rules of each channel.</li><li><strong>Email to your database.</strong> One link, one main photo, one line of copy.</li><li><strong>The yard sign and the flyer.</strong> As a QR code pointing at the branded link. The <a href=\"/blog/qr-codes-on-the-yard-sign-and-the-flyer-send-people-to-the-property-page\">QR post</a> covers the sizing and placement.</li></ul><h2>Where the unbranded link should go</h2><p>The MLS virtual-tour field, and anywhere else a co-op agent or a syndication feed will display it under their own name. That is it. The branded link does the rest of the work, and the enquiries it produces land in your inbox under the listing.</p><h2>A worked example: one listing, five places, twenty minutes</h2><p>Wednesday, a 3-bed in a cul-de-sac, published at 9am. The agent opens the Share sheet and copies the branded link. 9:02: text to the seller, \"Your page is live, feel free to forward it.\" 9:05: branded link pasted into the Saturday open house post, scheduled. 9:08: same link into the email to the neighbourhood list, with the front exterior as the image. 9:12: branded link into a QR generator, QR saved for the sign rider the printer needs by noon. 9:15: back to the Share sheet, copy the unbranded link, paste it into the MLS virtual-tour field, save, open it from the MLS to confirm no branding shows. Done by 9:20. By the afternoon the seller has forwarded the page to three people and one of them has used the form.</p><h2>Mistakes that send the wrong link to the wrong place</h2><ul><li><strong>Branded link in the MLS.</strong> Look for /u/ before you save the MLS entry.</li><li><strong>Unbranded link to a buyer.</strong> They see no way to call you. Send /f/.</li><li><strong>Sharing before the review.</strong> Open the page on your phone once before the first text goes out. The <a href=\"/blog/checking-a-property-page-before-you-share-it-a-two-minute-review\">two-minute review</a> is enough.</li><li><strong>Different links in different places.</strong> One branded link for the sign, the flyer, the post and the email. Consistency makes it easy for people to share.</li><li><strong>Forgetting the seller.</strong> They are the most likely person to forward it. Send it first.</li></ul><h2>What the recipient sees</h2><p>A page in their browser, no app needed. The main photo, the details, the gallery, the video when they tap it, and, on the branded link, your contact card and the enquiry form; on the unbranded link, no name, no contact details and no Rendprop branding. The <a href=\"/blog/sharing-a-listing-link-by-text-what-the-preview-should-show\">link preview post</a> explains what shows in a text thread before they tap.</p><p>Next step: open your most recent published listing, copy the branded link from the Share sheet, and text it to the seller. Then copy the unbranded link for the MLS.</p>",
+  "faq": [
+    {
+      "q": "Which link do I send to a buyer?",
+      "a": "The branded link, rendprop.com/f/ plus the slug. It shows your contact card so they can reach you. The unbranded link is for the MLS virtual-tour field."
+    },
+    {
+      "q": "Do buyers need the app to open the link?",
+      "a": "No. The property page opens in a browser on any phone or computer. Only you need the app, to build and publish."
+    },
+    {
+      "q": "Can I share the link before the listing is published?",
+      "a": "No. The branded and unbranded links are created when you publish. Publish first, then open the Share sheet."
+    },
+    {
+      "q": "Can I send the same branded link everywhere?",
+      "a": "Yes, and you should. One branded link for the seller, the sign, the flyer, the post and the email keeps the page easy to forward, and every enquiry it produces lands in your inbox under that listing. The unbranded link is the exception, for the MLS virtual-tour field only."
+    }
+  ],
+  "related": [
+    "how-to-find-your-unbranded-mls-link-in-rendprop",
+    "sharing-a-listing-link-by-text-what-the-preview-should-show",
+    "branded-and-unbranded-listing-links-why-you-need-both",
+    "one-link-for-the-flyer-the-sign-the-mls-and-the-post-keeping-it-consiste"
+  ],
+  "published": "2026-10-28"
+}

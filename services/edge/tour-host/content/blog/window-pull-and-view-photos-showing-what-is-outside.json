@@ -1,0 +1,40 @@
+{
+  "slug": "window-pull-and-view-photos-showing-what-is-outside",
+  "title": "Window pull and view photos: showing what is outside",
+  "description": "A window pull exposes the view properly instead of blowing it to white. Bracket or shoot at the right hour, and only when the view is worth it.",
+  "category": "photos",
+  "keywords": [
+    "window pull real estate photography",
+    "show view through window listing photo",
+    "blown out windows listing photos",
+    "view property photography",
+    "balance window exposure interior"
+  ],
+  "tldr": "A window pull is a photo where the view through the window is exposed properly instead of blown out to white. Get it by bracketing and blending, or by shooting at the hour when inside and outside light are close. Do it when the view is part of what the buyer is paying for, and do not replace what is outside with something better.",
+  "html": "<p>A window pull is a photo where the view through the window is exposed properly instead of blown out to white. You get it by shooting the room and the window at different exposures and blending them, or by shooting at the hour when the light inside and outside is close. Do it when the view is part of what the buyer is paying for. Do not do it by replacing what is outside with something better, because the view is the one thing a buyer checks first when they walk in.</p><h2>Why windows go white</h2><p>A room is lit by lamps and whatever comes through the glass. Outside is lit by the sun. The difference is enormous, and a camera that exposes for the room has no choice but to let the window go white. For most rooms that is fine. The buyer knows there is a window and does not need to see the fence.</p><p>It stops being fine when the thing outside the window is the reason to buy: water, a city skyline, a mountain, a garden the seller spent years on, a golf course. Then a white window is a missing feature, and a window pull puts it back.</p><h2>Two honest ways to do it</h2><p><strong>Bracket and blend.</strong> Shoot the room exposed for the room, and the same frame exposed for the window, from exactly the same spot. A tripod or a phone braced on a doorframe makes this possible. Blend the two so the window shows the real view at the real brightness. Done with restraint, this is standard practice and most buyers would not call it an alteration, because nothing in either frame was invented.</p><p><strong>Shoot at the right hour.</strong> Early morning and late afternoon the outside light drops toward the inside light, and a single exposure can hold both. For a west-facing window, that is the half hour before sunset. For east, just after sunrise. A single frame at that hour needs no blending and no disclosure.</p><h2>The line you do not cross</h2><p>A pull shows what is outside. A replacement shows something else. If the window faces the neighbour's wall and the edit shows trees, that is an invented view, and it will be discovered in the first ten seconds of the showing. The same goes for sharpening a hazy skyline into a clear one, adding a sunset, removing a building, or moving the water closer.</p><p>If the view is bad, do not pull the window. Let it go bright and sell the room. The remarks can say what the window faces.</p><h2>A worked example: the ninth-floor condo</h2><p>A 2-bed with a living room wall of glass facing the harbour. At noon the glass is white. The photographer comes back at 6pm, when the harbour and the room are close in brightness, and shoots the living room from the corner at 1x with the lamps on. The harbour is there, the room is there, one exposure, no edit. That frame becomes the main photo.</p><p>The second bedroom faces the car park. The photographer shoots it at noon with the window white and the room well lit. No pull, no edit, and the remarks note the second bedroom faces the rear.</p><h2>When a pull is the wrong tool</h2><ul><li>A view that is pleasant but not a selling point. A bright window is fine; a pulled view of an ordinary street draws attention to nothing.</li><li>A frame where the room is the subject and the window is at the edge. Pulling it adds a dark rectangle to the corner.</li><li>Reflective glass at night. The pull shows the room reflected, not the view.</li><li>A view that changes with the season, like a lake that freezes. Pull it as it is on the day, and say when the photos were taken if it matters.</li></ul><h2>AI edits and the view</h2><p>If you use a custom prompt to balance a window, the instruction should be to show the view as it is at the correct brightness, keeping everything outside the glass exactly as it appears. Then compare the edit against the original and look only at the window. Count the buildings, trees or boats. If anything outside the glass is new, reject it. In Rendprop's <a href=\"/features#photo-studio\">photo studio</a>, an edit like this is saved as a separate version with an AI-alteration disclosure, the untouched original stays in the photo history, and you choose which version the listing uses after comparing. AI can change or invent details, and a view is the detail it is most tempted to improve.</p><h2>Book the view for its hour</h2><p>If the listing has a view, find out which way the window faces and book that room for the hour the light is even. One frame at the right time beats any blend and needs no label. For the rest of the exposure problems in a house, <a href=\"/blog/fixing-dark-rooms-in-listing-photos-without-flash\">fixing dark rooms in listing photos without flash</a>, and for what happens when an edit goes past the glass, <a href=\"/blog/what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room\">when an AI edit invents a detail that is not in the room</a>.</p>",
+  "faq": [
+    {
+      "q": "What is a window pull in real estate photography?",
+      "a": "A photo where the view through the window is exposed properly instead of blown out to white. It is done by blending two exposures of the same frame, one for the room and one for the window, or by shooting at the hour when inside and outside light are close."
+    },
+    {
+      "q": "Is a window pull an alteration that needs a disclosure?",
+      "a": "A blend of two real exposures from the same spot shows only what was there, and it is standard practice in listing photography. A single frame shot at the right hour needs nothing. An AI edit that balances the window is an alteration and carries a disclosure, and anything that changes what is outside is a misrepresentation."
+    },
+    {
+      "q": "Should I pull the window if the view is not good?",
+      "a": "No. Let the window go bright and sell the room. A pulled view of a car park draws attention to the car park. The remarks can say what the window faces."
+    },
+    {
+      "q": "What time of day is best for view photos?",
+      "a": "The half hour when the outside light drops toward the inside light: just before sunset for west-facing windows, just after sunrise for east-facing. One exposure holds both the room and the view, with no blending and no label."
+    }
+  ],
+  "related": [
+    "fixing-dark-rooms-in-listing-photos-without-flash",
+    "what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room",
+    "photo-edits-buyers-notice-five-changes-that-cause-trouble-at-the-showing",
+    "video-for-a-condo-listing-amenities-views-and-the-walk-to-the-door"
+  ],
+  "published": "2026-10-28"
+}

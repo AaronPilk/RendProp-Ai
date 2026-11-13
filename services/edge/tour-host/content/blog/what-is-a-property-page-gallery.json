@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-property-page-gallery",
+  "title": "What is a property page gallery",
+  "description": "A property page gallery is the ordered set of photos on a single-property website, led by the main photo and arranged so a buyer scrolls the home in order.",
+  "category": "glossary",
+  "keywords": [
+    "property page gallery",
+    "listing page photo gallery",
+    "property website gallery order",
+    "gallery on single property website",
+    "listing gallery meaning"
+  ],
+  "tldr": "A property page gallery is the ordered set of photos on a single-property website that a visitor scrolls or taps through. It starts with the main photo, runs in a deliberate sequence from the exterior through the home to the outdoor space, and shows the selected version of each photo with its label where an edit was made. It is the part of the page most visitors spend the most time on.",
+  "html": "<p>A property page gallery is the ordered set of photos on a single-property website that a visitor scrolls or taps through. It opens with the main photo, runs in a deliberate sequence from the exterior through the home to the outdoor space, and shows the selected version of each photo, with its disclosure where an AI edit was made. It is the part of the page most visitors spend the most time on, and the order is the editorial decision.</p><p>A gallery is not a folder of everything the photographer delivered. It is the photos you chose, in the order you chose.</p><h2>How a gallery is built</h2><p>You add photos to the listing, decide which versions to use where an edit exists, pick the main photo and arrange the rest. The page shows them in that order, and a visitor swipes or scrolls through them on a phone. Edited versions carry their disclosure. The listing video is a separate element from the gallery, because a visitor who wants to watch and a visitor who wants to scroll are doing different things.</p><p>The gallery usually draws from the same photo set as the MLS, but the order does not have to match. The MLS has its own conventions; the page can tell a better story.</p><h2>When the order matters most</h2><ul><li>Phone visitors from a sign or a text, who scroll fast and decide in the first five photos.</li><li>Out-of-town buyers who will not visit before deciding whether to make an offer, and who read the whole gallery as a tour.</li><li>Listings with one exceptional feature that should appear early rather than buried at photo nineteen.</li></ul><h2>What a gallery is not</h2><p>A property page gallery is not the MLS photo set, which has its own limits and rules. It is not the <a href=\"/blog/what-is-a-photo-based-listing-video\">listing video</a>, which is the same photos with motion and sequence chosen for a viewer who is watching rather than scrolling. And it is not a camera roll dump, where every bracketed exposure and both angles of the hall bath appear because they were delivered.</p><p>The nearest confusable thing is the main photo. The main photo is the first image and the one that appears in link previews and at the top of the page. The gallery is everything after it, including the main photo in its place at the front.</p><h2>Eighteen photos from twenty-six</h2><p>A photographer delivers twenty-six landscape photos of a 3-bed on a quiet crescent on a Saturday. The agent selects eighteen for the gallery. Front exterior first, as the main photo, with the blue sky version selected and labelled. Entry, living room, kitchen from the doorway, kitchen from the island, dining, deck through the kitchen door, then the primary bedroom, primary bath, two further bedrooms, hall bath, laundry, garage, back yard from the deck, back yard from the fence, and the front exterior again at a three-quarter angle to close.</p><p>She drops the two near-duplicate living room frames, the dark basement storage room and the second hall bath angle. The gallery reads like a walk through the house, the deck shows up by photo six because the kitchen-to-deck flow is the selling point, and nothing appears twice. A buyer who scrolls it on the bus understands the home.</p><h2>How this works in Rendprop</h2><p>The property website Rendprop publishes shows the selected main photo, the gallery, the details typed into the app and the selected listing video, which plays on request and does not autoplay. Where a photo has AI-edited versions, you compare each with the original and choose which saved version appears; staging is labelled Virtually staged and other edits carry an AI-alteration disclosure, with the untouched original kept in photo history. Sections you leave empty do not appear. The unbranded link shows the same gallery without your name or branding. See <a href=\"/features#listing-site\">the listing site section</a>, the <a href=\"/f/estate-demo\">live demo listing</a>, and <a href=\"/blog/the-listing-page-gallery-how-many-photos-and-in-what-order\">how many photos and in what order</a>.</p><h2>Where galleries go wrong</h2><p>Too many photos, so the home feels repetitive by photo twelve. The wrong photo first, usually a bathroom or a hallway because that was the file order. Duplicates. The one great feature at the end. Edited versions used without their labels. And a gallery that is not updated when the season changes or the home is relisted. Choose, order, label, and revisit when the listing does.</p><p>Next step: open your current listing's page on your phone and scroll the gallery without stopping. Note the first photo that made you want to skip ahead, and move or remove it.</p>",
+  "faq": [
+    {
+      "q": "How many photos should a property page gallery have?",
+      "a": "Enough to walk a visitor through the home once without repeating a room, which for a typical house is fifteen to twenty-five. More than that and attention drops; fewer and the home feels under-documented."
+    },
+    {
+      "q": "What order should gallery photos go in?",
+      "a": "Exterior first, then the route a buyer would walk: entry, living spaces, kitchen, then bedrooms and baths, then outdoor space, closing on another exterior. Move the home's one standout feature into the first six."
+    },
+    {
+      "q": "Should edited photos in the gallery show a label?",
+      "a": "Yes. A staged room should say virtually staged and other AI edits should carry a disclosure, so a buyer knows before the showing. Keep the original available as well."
+    },
+    {
+      "q": "Does the gallery order have to match the MLS?",
+      "a": "No. The MLS has its own conventions and limits. The property page gallery is yours to order, and it can run in whatever sequence tells the home's story best."
+    }
+  ],
+  "related": [
+    "the-listing-page-gallery-how-many-photos-and-in-what-order",
+    "listing-photo-order-the-sequence-that-keeps-buyers-scrolling",
+    "which-photo-should-be-the-main-photo-of-a-listing",
+    "what-is-a-single-property-website"
+  ],
+  "published": "2026-10-28"
+}

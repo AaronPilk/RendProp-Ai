@@ -1,0 +1,39 @@
+{
+  "slug": "editing-on-the-phone-between-shoots",
+  "title": "Editing on the phone between shoots",
+  "description": "Which listing tasks belong on the phone between shoots, which belong at the desk, and how to review AI edits on a small screen without missing things.",
+  "category": "photographers",
+  "keywords": [
+    "edit listing photos on iPhone",
+    "real estate photographer mobile workflow",
+    "review AI edits on phone",
+    "editing between shoots",
+    "phone editing real estate"
+  ],
+  "tldr": "Use the gaps between shoots for the tasks that need no big screen: adding photos to a listing, running AI edits, comparing each edit with its original, building the video and recording a voiceover. Save the final review and publishing for a sitting at the desk or the web Studio. The phone does the throughput; the desk does the sign-off.",
+  "html": "<p>The gaps between shoots are where a photographer's evening gets won back. In the twenty minutes parked outside the next property you can add the last shoot's photos to its listing, run the AI edits the agent asked for, compare each edit with its original, and build the video. What should wait for the desk is the final watch-through and the publish, where a bigger screen catches what a phone misses.</p><p>The split matters. Phone work is throughput. Desk work is sign-off. Mix them up and you either publish from the car in a hurry or spend the evening doing work that needed no desk at all.</p><h2>What belongs in the car</h2><ul><li><strong>Starting the listing.</strong> Address, price, beds, baths, square feet, the agent's contact details. Do it before the shoot while the booking message is open.</li><li><strong>Adding photos.</strong> Landscape photos for the listing video, portrait photos for the social version.</li><li><strong>Running AI edits.</strong> Blue sky on the exterior, green lawn, a tidy on the living room, staging on the empty bedroom. Run them while you are parked, so the comparison is the next job rather than the edit.</li><li><strong>Comparing edits with the originals.</strong> This is the most important phone task and the one that needs daylight and attention. More on it below.</li><li><strong>Building the video.</strong> Choose the photos for the video and create it at the video step. Scene order and camera motion are planned automatically.</li><li><strong>Recording the voiceover.</strong> A parked car with the engine off is a quiet room. Record there, not at a desk next to a dishwasher.</li></ul><h2>What belongs at the desk</h2><ul><li><strong>The full watch-through of each video.</strong> Watch at full size, with sound, start to finish.</li><li><strong>The last check of every edited photo that made it into the video or the gallery.</strong></li><li><strong>Publishing and sending links.</strong> One sitting, all listings, each agent's two links in one message.</li></ul><p>The web Studio at studio.rendprop.com shows the same listings you worked on in the app, so you can do the desk session on a desktop without re-doing anything. The <a href=\"/blog/how-to-use-rendprop-studio-on-the-web-alongside-the-iphone-app\">Studio post</a> covers moving between the two.</p><h2>Reviewing AI edits on a small screen</h2><p>A phone screen hides things. A small invented detail, a window that gained a pane, a fence that changed height, a floor that lost a vent. The way to catch them on a phone:</p><ol><li>Compare each edit against its original, not against your memory of the room.</li><li>Look at edges first: where the sky meets the roofline, where the lawn meets the path, where added furniture meets the wall and floor.</li><li>Count the fixed things: windows, doors, outlets, vents. If a count changes, the edit is wrong.</li><li>Zoom in on anything you are unsure about. If it is still unclear, leave the decision for the desk.</li></ol><p>Rendprop keeps every edit as a separate version with a disclosure and leaves the original in photo history, so you are choosing which saved versions to use rather than committing to anything. Staged photos are labelled Virtually staged; other edits carry an AI-alteration disclosure. The <a href=\"/features#photo-studio\">photo studio page</a> describes the edit options, including Suggest for proposed edits and Improve my prompt for sharpening a custom request.</p><h2>A worked gap</h2><p>You finish a condo shoot at 12:10 and the next booking is at 13:00, fifteen minutes away. Parked, engine off. You add the twenty-two landscape photos and six portrait ones to the condo listing. The agent wanted blue sky on the balcony shot and a tidy on the cluttered home office. You run both, then while they process you start the listing for the 13:00 shoot and type in its details. Back to the condo: the sky edit is clean at the roofline, kept. The office tidy removed the clutter but also removed a wall vent, which is a detail that is really there. Discarded; you will try a more specific custom prompt at the desk. Video built from the fourteen path photos. Voiceover recorded in the car, two takes. 12:45, drive. That condo is now a five-minute desk job.</p><h2>What goes wrong with phone editing</h2><ul><li><strong>Publishing from the car.</strong> You will miss something. Publish from a sitting where you have watched the video at full size.</li><li><strong>Reviewing edits in bright sun on a dim screen.</strong> Turn the brightness up or wait for shade. Subtle changes vanish in glare.</li><li><strong>Battery.</strong> A day of shooting and editing on one phone needs a car charger. Obvious, and still the thing that ends the workflow at 15:00.</li><li><strong>Skipping the comparison because the edit looks good.</strong> Looking good is not the test. Matching the room is the test.</li></ul><p>Next step: on your next two-shoot day, do the photo add, the edits and the video for shoot one in the gap before shoot two, and see how short the evening becomes. The <a href=\"/blog/four-shoots-on-saturday-a-delivery-workflow-for-busy-photographers\">four shoots on Saturday post</a> scales the same idea across a full day.</p>",
+  "faq": [
+    {
+      "q": "Can I do everything on the phone and skip the desk?",
+      "a": "You can, but the final video review and the last check of edited photos are better on a bigger screen. Use the phone for throughput between shoots and keep a short sitting at the desk or the web Studio for sign-off and publishing."
+    },
+    {
+      "q": "Do I need signal in the car to add photos and run edits?",
+      "a": "You can prepare content locally before signing in, so adding photos and filling in the listing does not wait for signal. Publishing needs a connection and a connected workspace, so plan the publish for somewhere with service."
+    },
+    {
+      "q": "How do I spot an AI edit that changed something it should not have?",
+      "a": "Compare the edit with its original, not with memory. Check the edges where sky, lawn or added furniture meet real surfaces, and count fixed items like windows, doors and vents. If a count changes, discard the version."
+    },
+    {
+      "q": "Is a car a good place to record a voiceover?",
+      "a": "Parked with the engine off, yes. It is a small, quiet, soft-surfaced room. Record two takes and pick the cleaner one at the desk."
+    }
+  ],
+  "related": [
+    "four-shoots-on-saturday-a-delivery-workflow-for-busy-photographers",
+    "how-to-review-a-batch-of-ai-photo-edits-in-ten-minutes",
+    "how-to-use-rendprop-studio-on-the-web-alongside-the-iphone-app"
+  ],
+  "published": "2026-10-28"
+}

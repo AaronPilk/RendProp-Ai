@@ -1,0 +1,40 @@
+{
+  "slug": "what-is-a-decluttering-edit",
+  "title": "What is a decluttering edit",
+  "description": "A decluttering edit removes movable mess from a listing photo: dishes, cords, toys, fridge magnets. The room, fixtures and finishes stay as they are.",
+  "category": "glossary",
+  "keywords": [
+    "decluttering edit",
+    "tidy the room edit",
+    "remove clutter from listing photo",
+    "declutter real estate photo",
+    "virtual decluttering"
+  ],
+  "tldr": "A decluttering edit removes movable items from a listing photo: dishes on the counter, cords, toys, towels, fridge magnets, the bin by the desk. It leaves the room, its fixtures, finishes and furniture untouched. It is the digital version of the tidy-up you would do before the photographer arrives, and it carries an AI-alteration disclosure because the photo no longer shows the room as it was that day.",
+  "html": "<p>A decluttering edit removes movable items from a listing photo: dishes on the counter, cords, toys on the rug, towels, fridge magnets, the recycling bin by the desk. The room, its fixtures, its finishes and its furniture stay as they are. It is the digital version of the tidy-up you would do before the photographer arrives, applied after the fact.</p><p>Because the photo no longer shows the room as it was that morning, it is an altered image and should carry a disclosure. The difference between a tidy-up and a misrepresentation is whether a buyer could have produced the same room with a laundry basket and ten minutes.</p><h2>The mechanics</h2><p>The tool identifies the objects you want gone and fills the space behind them with what would plausibly be there: counter, floor, wall. The quality of the fill is where edits succeed or fail. A clean counter is easy. A pile of shoes in front of patterned tile is hard, and the tool may invent tile that does not match. That is why a decluttering edit is reviewed against the original like any other.</p><p>With AI tools you either pick a tidy preset or describe what to remove. The output is a separate version; the cluttered original stays available.</p><h2>When a tidy edit is the right call</h2><ul><li>An occupied home where the sellers did their best and the kitchen still has a toaster, a knife block and a paper towel roll in the hero shot.</li><li>A rental between tenants where the previous tenant left a few things behind.</li><li>A single stray item that ruins an otherwise good frame: the dog bed, the extension cord, the drying rack.</li></ul><p>It is the wrong tool when the clutter is the furniture. Removing a sofa, a bed or a dining table is not decluttering, it is emptying the room, and buyers who arrive to find a furnished home where the photo showed open floor will feel misled about space.</p><h2>The nearest confusable thing</h2><p>Decluttering is the opposite of <a href=\"/blog/what-is-virtual-staging\">virtual staging</a>. Staging adds movable items to an empty room; decluttering takes movable items out of a full one. They carry different labels because they tell the buyer different things, which is why <a href=\"/blog/decluttered-versus-staged-labelling-two-different-edits\">decluttered versus staged</a> is worth reading before you label either.</p><p>It is also not repair. Removing a stain from the carpet, a crack in the wall or a water mark on the ceiling is hiding a defect, not tidying. If the thing you are removing would show up on an inspection report, leave it in the photo.</p><h2>A kitchen on a Wednesday</h2><p>A family of five is selling a 4-bed and still living in it. The kitchen photo, taken Wednesday morning, shows a good island, white cabinets and a window over the sink, plus a fruit bowl, a school lunch box, a phone charger, two bottles of dish soap and a drawing on the fridge. The agent runs a tidy edit and asks for the lunch box, the charger, the soap and the fridge paper to go. The fruit bowl stays because it reads as lived-in rather than messy.</p><p>She compares the two versions at full size. The counter fill matches, the grout lines run straight, the fridge is still the same fridge. She uses the tidy version as the kitchen frame in the gallery and in the listing video, with the disclosure attached. On Saturday the buyers walk into a kitchen with a lunch box on the counter, which surprises nobody.</p><h2>How this works in Rendprop</h2><p>Tidy the room is one of the optional AI edits in Rendprop's photo studio, alongside blue sky, twilight, green lawn, add furniture and a custom prompt. Suggest can propose edits for a photo, and Improve my prompt sharpens wording if you describe what to remove yourself. Each edit is a separate saved version carrying an AI-alteration disclosure, and the untouched original stays in photo history. You compare the tidy version against the original and choose which to use. AI can change or invent details, so look closely at the filled areas before publishing, and check your own MLS rules before posting altered images. See <a href=\"/features#photo-studio\">the photo studio</a> and <a href=\"/blog/tidy-the-room-decluttering-a-listing-photo-without-misleading-buyers\">tidy the room without misleading buyers</a>.</p><h2>Where tidy edits go wrong</h2><p>The first failure is scope creep: you ask for the cords to go and the tool also removes the outlet, or straightens the blinds, or swaps the rug. The second is invented fill, where a removed object leaves behind a patch of floor that does not match the rest. The third is over-tidying until the room reads as vacant, which sets up the showing for disappointment. In every case the fix is the same: compare against the original and reject the version if anything fixed has changed.</p><p>Next step: pick the single most cluttered photo in your current listing, remove only what a seller could carry out in one trip, label it, and compare it with the original before it goes anywhere.</p>",
+  "faq": [
+    {
+      "q": "Does a decluttering edit need a disclosure?",
+      "a": "Treat it as an altered image and label it, because the photo no longer shows the room as it was that day. Rules vary by MLS and change, so check your MLS's current rules and ask your broker about wording."
+    },
+    {
+      "q": "Can I remove furniture with a decluttering edit?",
+      "a": "You can, but you should not call it decluttering. Removing furniture changes how big and how usable the room looks, and a buyer who arrives to find the furniture there will feel misled. Keep decluttering to items a person could carry out in a trip or two."
+    },
+    {
+      "q": "Can I remove a stain or a crack?",
+      "a": "No. That is hiding a defect, not tidying. If the thing you want gone would appear on an inspection report or a disclosure form, it stays in the photo."
+    },
+    {
+      "q": "How do I check a decluttering edit before using it?",
+      "a": "Put the edited photo next to the original at full size and look at the areas where objects were removed. Counters, floors, tile and walls should continue naturally with no mismatched patches, and nothing fixed should have moved, changed colour or disappeared."
+    }
+  ],
+  "related": [
+    "tidy-the-room-decluttering-a-listing-photo-without-misleading-buyers",
+    "decluttered-versus-staged-labelling-two-different-edits",
+    "what-is-virtual-staging",
+    "what-is-an-ai-disclosure-on-a-listing-photo"
+  ],
+  "published": "2026-10-28"
+}
