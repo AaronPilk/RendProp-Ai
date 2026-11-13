@@ -7,9 +7,11 @@ import argparse, datetime, hashlib, json, os, shutil, subprocess, tempfile
 ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / 'services/supabase'
 MIG = SQL / 'migrations/20261113213000_photo_publication_saved_output_compat.sql'
+AUTH_MIG = SQL / 'migrations/20261113222000_photo_publication_authenticated_read.sql'
 FIX = SQL / 'tests/photo_publication_saved_output.sql'
 PG = Path('/opt/homebrew/opt/postgresql@17/bin')
 EXPECTED = '8c487dce9151ddaba5d721b3514ef83c4ff9d5430f4e7420a5464c7d473736dc'
+EXPECTED_AUTH = '6441321c2c6d646eab5fe5e920148f12b49e2654ea058d945fbce3686b0d3cc3'
 REFUSAL = 'Review changed accepted-photo publication source before saved-output compatibility'
 os.umask(0o077)
 p = argparse.ArgumentParser(); p.add_argument('--evidence-dir', required=True, type=Path); args = p.parse_args()
@@ -21,7 +23,7 @@ sha = lambda f: hashlib.sha256(f.read_bytes()).hexdigest()
 MIGRATIONS = sorted((SQL/'migrations').glob('*.sql'))
 SOURCES = [*MIGRATIONS, FIX, Path(__file__).resolve(), SQL/'tests/fresh_schema_migrations.py', SQL/'tests/ci-bootstrap.sql', ROOT/'tools/audit/run_database_regression.py']
 hashes = lambda: {str(f.relative_to(ROOT)): sha(f) for f in SOURCES}
-r = {'schema':'photo-publication-saved-output-pg17-v1','status':'running','startedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sourceHead':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'sourceStatus':subprocess.check_output(['git','status','--short'],cwd=ROOT,text=True).splitlines(),'sourceBefore':hashes(),'commands':[],'productionActions':False,'networkCalls':0,'providerCalls':0,'syntheticByteReceiptsOnly':True,'homePreserved':True,'codexHomePreserved':True}
+r = {'schema':'photo-publication-saved-output-pg17-v2','status':'running','startedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sourceHead':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'sourceStatus':subprocess.check_output(['git','status','--short'],cwd=ROOT,text=True).splitlines(),'sourceBefore':hashes(),'commands':[],'productionActions':False,'networkCalls':0,'providerCalls':0,'syntheticByteReceiptsOnly':True,'homePreserved':True,'codexHomePreserved':True}
 started = False
 def save(): (OUT/'receipt.json').write_text(json.dumps(r,indent=2)+'\n')
 def run(name, argv, body=None, refuses=None):
@@ -35,7 +37,7 @@ def run(name, argv, body=None, refuses=None):
 def query(name, body): return run(name,[*PSQL,'-Atq'],body)
 def catalog(name): return query(name,"select md5(string_agg(oid::regprocedure::text||pg_get_functiondef(oid)||proowner::text||coalesce(proacl::text,'')||coalesce(proconfig::text,''),'|' order by oid::regprocedure::text))from pg_proc where pronamespace='public'::regnamespace and prokind='f';")
 try:
-    assert sha(MIG)==EXPECTED, 'Frozen migration changed'
+    assert sha(MIG)==EXPECTED and sha(AUTH_MIG)==EXPECTED_AUTH, 'Frozen migration changed'
     r['runtime']={n:{'path':str(PG/n),'sha256':sha((PG/n).resolve())}for n in ['initdb','pg_ctl','createdb','psql','postgres']}
     r['postgresVersion']=run('pg-version',[PG/'postgres','--version']).strip(); assert ' 17.11 ' in r['postgresVersion']
     schema,live=partition_fresh_migrations(MIGRATIONS); r['excludedLiveStateOnly']=[m.name for m in live]
@@ -47,7 +49,7 @@ try:
     assert query('owned-identity',"select current_setting('data_directory')||'|'||current_setting('listen_addresses');").strip()==str(DATA)+'|'
     run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
     for i,m in enumerate(schema):
-        if m==MIG: continue
+        if m in (MIG,AUTH_MIG): continue
         run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
         if i%60==0: print(f'Applied {i+1}/{len(schema)} schema migrations',flush=True)
     r['predecessorMd5']=query('predecessor-md5',"select md5(prosrc)from pg_proc where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;").strip()
@@ -56,12 +58,18 @@ try:
     before=json.loads(query('metadata-before',"select (to_jsonb(p)-'prosrc'-'prosqlbody')::text from pg_proc p where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;"))
     run('apply-frozen-compatibility',[*PSQL,'-q','-f',MIG])
     after=json.loads(query('metadata-after',"select (to_jsonb(p)-'prosrc'-'prosqlbody')::text from pg_proc p where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;")); assert before==after
+    assert query('pre-auth-body-md5',"select md5(prosrc)from pg_proc where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;").strip()=='1fc4ef9f9702ca88d958915ee3ca5f2e'
+    run('authenticated-read-baseline-refused',[*PSQL,'-Atq','-f',FIX],refuses='PUBLICATION FAIL: authenticated prepared output passes Presenter access')
+    run('apply-authenticated-read-repair',[*PSQL,'-q','-f',AUTH_MIG])
+    assert query('post-auth-body-md5',"select md5(prosrc)from pg_proc where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;").strip()=='7320436e2ec027c83f3a2eddf50dc7af'
+    auth_after=json.loads(query('auth-metadata-after',"select (to_jsonb(p)-'prosrc'-'prosqlbody')::text from pg_proc p where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;")); assert before==auth_after
     r['ownerAclSecurityConfigUnchanged']=True
     original=query('current-source',"select pg_get_functiondef('public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure);")
     for stage in ['fresh','repeat']:
         out=run(stage+'-full-chain',[*PSQL,'-Atq','-f',FIX]); rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'"suite": "photo-publication-saved-output"'in x]
-        assert len(rows)==1 and rows[0]['passed'] and rows[0]['assertions']==31; r[stage]=rows[0]
+        assert len(rows)==1 and rows[0]['passed'] and rows[0]['assertions']==38; r[stage]=rows[0]
     current=catalog('catalog-before-replay')
+    run('exact-authenticated-replay',[*PSQL,'-q','-f',AUTH_MIG]); assert catalog('catalog-after-auth-replay')==current
     run('one-shot-replay-refused',[*PSQL,'-q','-f',MIG],refuses=REFUSAL); assert catalog('catalog-after-replay')==current
     r['oneShotReplayRefusedWithoutCatalogChange']=True
     needle="and saved_asset.sha256=e.output->>'sha256'"; assert original.count(needle)==1

@@ -39,6 +39,7 @@ create function pg_temp.source()returns jsonb language sql as $$select photo_pub
 set local role service_role;
 select pg_temp.ok(pg_temp.source()#>>'{evidence,id}'=(select x#>>'{evidence,id}'from evidence),'saved alias accepted by source authority');
 create temp table target as select photo_publication_target(actor,org,org,listing,(select output from ids))x from f;
+select pg_temp.no('select photo_publication_target(actor,org,org,gen_random_uuid(),(select output from ids))from f','foreign listing target refuses','RP404:');
 create temp table proof as select jsonb_build_object('sha256',repeat('b',64),'bytes',80000,'mime','image/jpeg','etag',x#>>'{target,etag}')t from target;
 grant select on target,proof to service_role;
 select pg_temp.ok((select photo_publication_resolve(actor,org,org,listing,(select output from ids),(select(x#>>'{evidence,provenance_id}')::uuid from evidence),(select t from proof))#>>'{evidence,id}'=(select x#>>'{evidence,id}'from evidence)from f),'real target and resolve preserve exact evidence');
@@ -71,6 +72,19 @@ create temp table finished as select photo_publication_finish(actor,org,org,list
 grant select on finished to service_role;
 select pg_temp.ok((select x#>>'{publication,photo_publication,phase}'='prepared'from finished)and photo_publication_metadata_valid((select(x#>>'{publication,id}')::uuid from finished)),'real finish verifies complete retained source copy');
 select pg_temp.ok(studio_presenter_media_access((select output from ids))and photo_publication_asset_valid((select output from ids)),'prepared output passes Presenter and publication readability');
+-- The real Studio client reads capture_assets under the authenticated JWT,
+-- rather than using the service-role validation used by publication RPCs.
+set local role authenticated;
+select set_config('request.jwt.claim.sub',(select actor::text from f),true);
+select pg_temp.ok(auth.uid()=(select actor from f),'prepared read uses exact authenticated owner');
+select pg_temp.ok(studio_presenter_media_access((select output from ids)),'authenticated prepared output passes Presenter access');
+select pg_temp.ok((select count(*)=1 from capture_assets where id=(select output from ids)),'authenticated prepared output is visible to Studio');
+select set_config('request.jwt.claim.sub',(select other::text from f),true);
+select pg_temp.ok(not studio_presenter_media_access((select output from ids)),'foreign actor cannot read prepared Presenter output');
+select pg_temp.ok((select count(*)=0 from capture_assets where id=(select output from ids)),'foreign actor cannot see prepared output asset');
+select set_config('request.jwt.claim.sub',(select actor::text from f),true);
+select pg_temp.ok((select count(*)=1 from capture_assets where id=(select output from ids)),'owner read remains available after foreign actor check');
+set local role service_role;
 create temp table attached as select studio_attach_photo_from_upload(actor,org,listing,(select output from ids),'Accepted saved photo',(select(x#>>'{publication,id}')::uuid from finished))x from f;
 select pg_temp.ok((select x->>'created'='true'and x#>>'{photo,id}'=(select output::text from ids)from attached),'actual final attach uses returned publication identity');
 select pg_temp.ok((select studio_attach_photo_from_upload(actor,org,listing,(select output from ids),'Replay',(select(x#>>'{publication,id}')::uuid from finished))->>'created'='false'from f),'attachment replay does not duplicate photo');
@@ -82,6 +96,6 @@ select pg_temp.ok((select to_jsonb(e)=b.evidence from photo_edit_evidence e cros
 select pg_temp.ok((select gallery_asset_ids='{}'::uuid[]and main_photo_key is null from listings where id=(select listing from f)),'attachment does not silently select or publish photo');
 select pg_temp.ok(not has_function_privilege('authenticated','photo_publication_reserve(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,jsonb,jsonb,uuid)','execute')and not has_function_privilege('anon','photo_publication_finish(uuid,uuid,uuid,uuid,uuid,jsonb,jsonb)','execute'),'publication orchestration remains service-only');
 select jsonb_build_object('passed',true,'suite','photo-publication-saved-output','assertions',(select count(*)from checks),'chain','upload/early-release/compliance/source/target/resolve/reserve/finish/attach/readability/replay');
-do $$begin if(select count(*)from checks)<>31 then raise exception'Incomplete publication fixture inventory';end if;end$$;
-select 'PASS saved-output publication: 31 assertions';
+do $$begin if(select count(*)from checks)<>38 then raise exception'Incomplete publication fixture inventory';end if;end$$;
+select 'PASS saved-output publication: 38 assertions';
 rollback;
