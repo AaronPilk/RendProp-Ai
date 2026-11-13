@@ -104,7 +104,15 @@ class RunnerCase(unittest.TestCase):
             if '--version' in command:
                 output = 'psql (synthetic mock, not an installed DB)\n'
             elif '-Atc' in command:
-                output = scenario.get('identity', str(case / 'cluster') + '||rendprop_audit\n')
+                if 'pg_get_functiondef' in command[-1]:
+                    output = json.dumps(scenario.get('worker_snapshot', {
+                        'definition': "CREATE OR REPLACE FUNCTION public.publish_worker_render() RETURNS void LANGUAGE sql AS 'select null';\n",
+                        'md5': subject.CURRENT_WORKER_NOTIFICATION_MD5,
+                    }))
+                elif command[-1].startswith('select md5(prosrc)'):
+                    output = scenario.get('worker_final_md5', subject.CURRENT_WORKER_NOTIFICATION_MD5 + '\n')
+                else:
+                    output = scenario.get('identity', str(case / 'cluster') + '||rendprop_audit\n')
             elif sqlfile == 'ci-bootstrap.sql':
                 if 'timeout' in scenario:
                     raise subprocess.TimeoutExpired(command, 300, output=scenario['timeout'])
@@ -142,6 +150,8 @@ class RunnerCase(unittest.TestCase):
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 25}\n', 0))
             elif sqlfile == 'trial_per_user_allowance.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 63}\n', 0))
+            elif sqlfile == 'tour_notification_access.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('PASS tour notification access: 31 assertions\n', 0))
             elif sqlfile == 'trial_hybrid_funded_serving.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 43}\n', 0))
             elif sqlfile == 'property_address_reservations_assert.sql':
@@ -180,7 +190,11 @@ class RunnerCase(unittest.TestCase):
                     (case / 'cluster/postmaster.pid').write_text('synthetic-not-a-real-pid\n')
                 rc = scenario.get('stop_exit', 0)
             elif kwargs.get('input') is not None:
-                if 'deliberate isolated ownership mutant' in kwargs['input']:
+                if kwargs['input'].startswith('CREATE OR REPLACE FUNCTION public.publish_worker_render('):
+                    self.assertEqual(kwargs['input'], scenario.get('worker_snapshot', {}).get('definition',
+                        "CREATE OR REPLACE FUNCTION public.publish_worker_render() RETURNS void LANGUAGE sql AS 'select null';\n"))
+                    self.assertEqual(publication_counts, {'worker_publish_transaction.sql': 7, 'negative_upload_publication.sql': 3})
+                elif 'deliberate isolated ownership mutant' in kwargs['input']:
                     self.assertEqual(kwargs['input'].count('deliberate isolated ownership mutant'), 2)
                 else:
                     self.assertRegex(kwargs['input'], r'-- deliberate isolated worker-(video|scalars) mutant')
@@ -323,7 +337,7 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19), ('reviewer_sandbox_shared_credit.sql', 42), ('trial_card_backed_authority.sql', 25), ('trial_per_user_allowance.sql', 63)]])
+            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19), ('reviewer_sandbox_shared_credit.sql', 42), ('trial_card_backed_authority.sql', 25), ('trial_per_user_allowance.sql', 63), ('tour_notification_access.sql', 31)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):
@@ -331,12 +345,27 @@ class InventoryTests(RunnerCase):
                 self.assertIn('reflection-' + phase + '-' + stem, commands)
 
     def test_reflection_missing_completion_marker_rejects(self):
-        for filename in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql', 'trial_full_window_admission.sql', 'trial_hybrid_funded_serving.sql', 'paid_media_budget_cap.sql', 'reviewer_sandbox_shared_credit.sql', 'trial_card_backed_authority.sql', 'trial_per_user_allowance.sql'):
+        for filename in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql', 'trial_full_window_admission.sql', 'trial_hybrid_funded_serving.sql', 'paid_media_budget_cap.sql', 'reviewer_sandbox_shared_credit.sql', 'trial_card_backed_authority.sql', 'trial_per_user_allowance.sql', 'tour_notification_access.sql'):
             with self.subTest(fixture=filename):
                 self.rejected(reflection={filename: ('ROLLBACK without acceptance marker\n', 0)})
 
     def test_reflection_wrong_assertion_count_rejects(self):
         self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 41 assertions\n', 0)})
+
+    def test_current_worker_definition_restored_after_historical_controls(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        self.assertEqual(result.receipt['workerNotificationDefinition'], {
+            'md5': subject_module().CURRENT_WORKER_NOTIFICATION_MD5, 'restoredAfterHistoricalControls': True})
+        commands = {row['name']: row for row in result.receipt['commands']}
+        self.assertIn('capture-current-worker-definition', commands)
+        self.assertIn('restore-current-worker-definition', commands)
+        self.assertIn('verify-current-worker-definition', commands)
+        self.assertLess(list(commands).index('restored-worker-scalars'), list(commands).index('restore-current-worker-definition'))
+
+    def test_current_worker_wrong_capture_or_final_definition_rejects(self):
+        self.rejected(worker_snapshot={'definition': 'not a definition', 'md5': 'wrong'})
+        self.rejected(worker_final_md5='bde4637bd3f1e50fbe3323f0e084b1f0\n')
 
     def test_reflection_marker_cannot_override_error_exit(self):
         self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 40 assertions\n', 3)})

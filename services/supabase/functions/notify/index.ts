@@ -49,6 +49,7 @@ import { hostingNoticeCurrent } from "../_shared/hosting-retention.ts";
 import { opsAlertCurrent } from "../_shared/ops-alert.ts";
 import {propertyVideoJob,propertyVideoNoticeCurrent,propertyVideoDeviceCurrent}from'./property-video.ts';
 import { leadNoticeCurrent } from "./lead-access.ts";
+import { tourNoticeCurrent, tourDeviceCurrent } from "./tour-access.ts";
 
 /** Same default as functions/me: the routed domain, never rendprop.app. */
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -195,6 +196,7 @@ async function handleDrain(limit: number): Promise<Response> {
       // An admin alert is re-validated at delivery: the finding must still be
       // present and the recipient must still be an admin, or SQL expires it.
       if(!await opsAlertCurrent(admin,row)){skipped++;continue;}
+      if(!await tourNoticeCurrent(admin,row)){await mark(row.id,"skipped","The published tour or account access changed, or its notification route is invalid.",null);skipped++;continue;}
       if(!await propertyVideoNoticeCurrent(admin,row)){await mark(row.id,"skipped","The private video job or account access changed.",null);skipped++;continue;}
       if(!await leadNoticeCurrent(admin,row)){await mark(row.id,"skipped","Inquiry or account access changed.",null);skipped++;continue;}
       let operationalEmailState: OperationalEmailState = "missing";
@@ -211,7 +213,7 @@ async function handleDrain(limit: number): Promise<Response> {
         }
       }
       const outcome = row.channel === "push"
-        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE,fetch,propertyVideoJob(row)?device=>propertyVideoDeviceCurrent(admin,row,device):row.category==="lead_received"?()=>leadNoticeCurrent(admin,row):undefined,operationalEmailState)
+        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE,fetch,propertyVideoJob(row)?device=>propertyVideoDeviceCurrent(admin,row,device):row.category==="render_ready"?device=>tourDeviceCurrent(admin,row,device):row.category==="lead_received"?()=>leadNoticeCurrent(admin,row):undefined,operationalEmailState)
         // to_email wins. An invitee has no profile to look an address up
         // from — that is precisely what is being invited — so the row carries
         // the destination itself (migration 0053). Ordinary rows leave it null
@@ -223,6 +225,10 @@ async function handleDrain(limit: number): Promise<Response> {
       // e-mail BEFORE closing the push, so a crash between the two leaves a
       // retryable `sending` row rather than a closed row with no fallback. The
       // e-mail is re-validated by its own drain (access, verified address).
+      if (pushNeedsEmailFallback(row, outcome) && !await tourNoticeCurrent(admin, row)) {
+        await mark(row.id, "skipped", "Tour or account access changed before email fallback.", null);
+        skipped++; continue;
+      }
       if (pushNeedsEmailFallback(row, outcome)) {
         const { error: fallbackError } = await admin.from("notification_outbox")
           .upsert(emailFallbackRow(row), { onConflict: "dedupe_key", ignoreDuplicates: true });

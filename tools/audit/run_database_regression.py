@@ -62,7 +62,10 @@ REFLECTION_FIXTURES = (
     # first-100 fixtures above are unchanged; this one switches the mode inside
     # its own rolled-back transaction.
     ("trial_per_user_allowance.sql", '"assertions": 63', 63),
+    ("tour_notification_access.sql", "PASS tour notification access: 31 assertions", 31),
 )
+
+CURRENT_WORKER_NOTIFICATION_MD5 = "31df14b830c092d0b22ea1f8bf94f4c7"
 
 # These already-shipped transactional Studio migrations intentionally create
 # their tables/policies once. Apply every listed file on BOTH fresh database paths, but
@@ -538,6 +541,18 @@ def main():
         # the real transaction/trigger fixtures, then deliberately remove each
         # relevant guard in THIS owned disposable database. A missing guard
         # must fail for the intended invariant, not merely a syntax/ACL error.
+        # Historical controls deliberately install the historical publisher.
+        # Keep its tests intact, then restore the exact current definition we
+        # actually verified above instead of leaving its old recipient policy.
+        worker_snapshot = json.loads(run("capture-current-worker-definition", psql + ["-Atc",
+            "select json_build_object('definition',pg_get_functiondef(oid),'md5',md5(prosrc)) "
+            "from pg_proc where oid='public.publish_worker_render(uuid,text,integer,jsonb,jsonb,jsonb)'::regprocedure"]))
+        require(isinstance(worker_snapshot, dict)
+                and worker_snapshot.get("md5") == CURRENT_WORKER_NOTIFICATION_MD5
+                and isinstance(worker_snapshot.get("definition"), str)
+                and worker_snapshot["definition"].startswith("CREATE OR REPLACE FUNCTION public.publish_worker_render("),
+                "Current worker notification definition did not match the reviewed source before historical controls")
+        receipt["workerNotificationDefinition"] = {"md5": worker_snapshot["md5"], "restoredAfterHistoricalControls": False}
         publication_specs = [
             ("worker", "worker_publish_transaction.sql", "0035_worker_publish_transaction.sql",
              "WORKER_PUBLISH_TRANSACTION_PASS_22", "stale A accepted", 22),
@@ -596,6 +611,12 @@ def main():
                     receipt["publicationFixtures"][-1]["runs"] += 1
                     receipt["workerInputNegativeControls"].append({"guard": guard_name,
                         "detected": True, "sourceRestored": True})
+        run("restore-current-worker-definition", psql, input_text=worker_snapshot["definition"])
+        current_worker_md5 = run("verify-current-worker-definition", psql + ["-Atc",
+            "select md5(prosrc) from pg_proc where oid='public.publish_worker_render(uuid,text,integer,jsonb,jsonb,jsonb)'::regprocedure"])
+        require(current_worker_md5.strip() == CURRENT_WORKER_NOTIFICATION_MD5,
+                "Current worker notification definition was not restored after historical controls")
+        receipt["workerNotificationDefinition"]["restoredAfterHistoricalControls"] = True
         # Break actual entitlement data in this synthetic database. A gate that
         # only prints results must not pass when the published contract is false.
         run("mutate-negative", psql + ["-c", "update public.plan_entitlements set seats=999 where plan='team';"])
