@@ -1382,13 +1382,12 @@ jobs:
           if-no-files-found: warn
 
   studio-media-export:
-    # Let the other Mac audit, photo, reel and Worker jobs finish before a
-    # real-time browser capture starts. These jobs use distinct hosted VMs, so
-    # shared host contention is unproven; their overlap is avoidable. Keep the
-    # media gate independent of their results so its coverage survives a failure.
+    # This isolated VM consumes only the same-run media cache. Native and
+    # Worker checks remain mandatory release gates; their results are not
+    # inputs to this job. Start media diagnosis when its actual inputs are ready.
     name: Studio media exports and native audio timing
     runs-on: macos-26
-    needs: [studio-media-tools, native-audit-required, worker-edge]
+    needs: [studio-media-tools]
     if: ${{ always() && !cancelled() && needs.studio-media-tools.result == 'success' }}
     env:
       MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -1491,7 +1490,7 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          node tests/cloud-editor-browser.mjs
+          node tests/cloud-editor-browser.mjs --media-trace
           node tests/conversation-browser.mjs
           node tests/finishing-audio-probe-controls.mjs
           node tests/finishing-browser.mjs
@@ -1641,6 +1640,7 @@ jobs:
             ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
             ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
             ${{ runner.temp }}/rendprop-cloud-editor-*/*.mp4
+            ${{ runner.temp }}/rendprop-cloud-editor-*/native-media-trace-*.private.json
             ${{ runner.temp }}/rendprop-conversation-*/receipt.json
             ${{ runner.temp }}/rendprop-conversation-*/*.png
             ${{ runner.temp }}/rendprop-conversation-*/*.mp4
@@ -1664,13 +1664,12 @@ jobs:
           if-no-files-found: warn
 
   studio-media-resume:
-    # Give the default-device MP4 clock gate a fresh hosted Mac and its own
-    # bounded admission. Start after the other Mac jobs and the cloud export
-    # job finish, even if one of those independent gates fails, so both media
-    # suites still report their own result without competing for capture time.
+    # Keep the two media suites ordered, each on a fresh VM with its own
+    # bounded admission. Unrelated native/Worker results are not runtime inputs;
+    # all their mandatory checks must still pass before any release.
     name: Studio MP4 resume and AAC native timing
     runs-on: macos-26
-    needs: [studio-media-tools, native-audit-required, worker-edge, studio-media-export]
+    needs: [studio-media-tools, studio-media-export]
     if: ${{ always() && !cancelled() && needs.studio-media-tools.result == 'success' }}
     env:
       MEDIA_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -1753,7 +1752,7 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          node tests/export-resume-browser.mjs
+          node tests/export-resume-browser.mjs --media-trace
           control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-resume-control.XXXXXX")
           set +e
           TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await > "$control_root/run.log" 2>&1
@@ -1788,7 +1787,7 @@ jobs:
           assert Path(run['output']).resolve() == outputs[0].resolve()
           expected_sources = {'tests/export-resume-browser.mjs', 'tests/export-baseline-refusal.mjs',
                               'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs',
-                              'tests/ci-failure-annotation.mjs'}
+                              'tests/ci-failure-annotation.mjs', 'tests/native-media-trace-observer.mjs'}
           expected_sources.update(f'src/editor/{name}.ts' for name in
                                   ('export', 'recording-clock', 'mp4-cadence', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
           assert set(receipt['sourceHashes']) == expected_sources
@@ -1840,6 +1839,7 @@ jobs:
             ${{ runner.temp }}/studio-media-resume-readiness.json
             ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
             ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-*/native-media-trace-*.private.json
             ${{ runner.temp }}/rendprop-export-resume-control.*/run.log
             ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/receipt.json
             ${{ runner.temp }}/rendprop-export-resume-control.*/rendprop-export-resume-*/*.mp4

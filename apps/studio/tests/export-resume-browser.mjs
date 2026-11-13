@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 import { NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
+import { startMediaTraceObserver, summarizeMediaTrace } from "./native-media-trace-observer.mjs";
 import {testExportDiagnosticsOption, startExportDiagnostics} from "./export-diagnostics.mjs";
 import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
@@ -16,7 +17,11 @@ import { emitFailureAnnotation } from "./ci-failure-annotation.mjs";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
 const {args: audioArgs, audioOutput} = testAudioOutputOption(process.argv.slice(2));
-const {args, diagnostics} = testExportDiagnosticsOption(audioArgs, ["--only-fixed", "--fault=omit-old-await"]);
+const mediaTraceFlags=audioArgs.filter(argument=>argument==="--media-trace");
+assert(mediaTraceFlags.length<=1,"Duplicate --media-trace option");
+const mediaTraceEnabled=mediaTraceFlags.length===1;
+const {args, diagnostics} = testExportDiagnosticsOption(audioArgs.filter(argument=>argument!=="--media-trace"), ["--only-fixed", "--fault=omit-old-await"]);
+assert(!(mediaTraceEnabled&&diagnostics.enabled),"Media and broad diagnostics cannot run together");
 const onlyFixed=args.includes('--only-fixed');
 const omitOldAwait=args.includes('--fault=omit-old-await');
 assert(args.every(argument=>argument==='--only-fixed'||argument==='--fault=omit-old-await'),"Unknown resume test option");
@@ -33,8 +38,8 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline
 const resumeNotificationDelayMs = 1000;
 const MAX_RECORDER_REQUESTS = 1024;
 const MAX_REJECTED_BLOB_BYTES = 4 * 1024 * 1024;
-const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/ci-failure-annotation.mjs", ...["export", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = { sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/native-media-trace-observer.mjs", "tests/ci-failure-annotation.mjs", ...["export", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const receipt = { sourceHashes, audioOutput, diagnostics, mediaTrace:{enabled:mediaTraceEnabled,optInFlag:"--media-trace",scope:"first-fixed-original-only",testOnly:true}, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 function requestTimingFacts(rows) {
@@ -465,10 +470,16 @@ document.querySelector("#run").onclick=async()=>{
       const observers = await startExportDiagnostics({diagnostics, context, page, scheduling: true, readLoad: quickLoad,
         native: ["cadence-baseline", "late-frames"].includes(variant) ? {artifacts, syncId: `${attemptName}-before-click`,
           rawFileName: `native-trace-${attemptName}.raw.private.json`, sourceHashes, limits: NATIVE_TRACE_EXPORT_LIMITS} : undefined});
+      const mediaTrace = mediaTraceEnabled && variant === "fixed" && !narrated ?
+        await startMediaTraceObserver({browser, page, artifacts, syncId: `${attemptName}-media-before-click`, sourceHashes}) : undefined;
       let attempt;
       try {
         await page.locator("#run").click();
-        const outcome = () => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending"));
+        const outcome = async () => {
+          const value = await page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending"));
+          if (value !== "pending") mediaTrace?.stopCapture("outcome-observed");
+          return value;
+        };
         if (["baseline", "clock-baseline", "cadence-baseline"].includes(variant)) await expect.poll(outcome, { timeout: 20000 }).not.toBe("pending");
         else await expect.poll(outcome, { timeout: 20000 }).toBe("done");
       } finally {
@@ -477,12 +488,18 @@ document.querySelector("#run").onclick=async()=>{
         // a genuine production stall refusal. Only the historical controls
         // may classify a fully evidenced refusal as a detected fault; every
         // current-exporter variant must finish and pass its media oracles.
+        mediaTrace?.stopCapture("poll-finished");
+        if (mediaTrace) await mediaTrace.finish();
         await observers.finish();
         attempt = await page.evaluate(() => ({ error: window.fixture.error, errorName: window.fixture.errorName, errorCause: window.fixture.errorCause, result: window.fixture.result,
           trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
           tracks: window.fixture.tracks.map(track => track.readyState) }));
         attempt = { ...attempt, variant, narrated, audioOutput: await verifyTestAudioOutput(page, audioOutput), diagnostics: observers.facts,
           schedulingProbe: observers.facts.schedulingProbe ?? {status: "disabled"}, ...(observers.facts.nativeTrace ? {nativeTrace: observers.facts.nativeTrace} : {}) };
+        if (mediaTrace) {
+          attempt.nativeMediaTrace = mediaTrace.facts;
+          attempt.nativeMediaTraceSummary = summarizeMediaTrace(mediaTrace.facts, attempt.trace);
+        }
         if (variant === "fixed" && !narrated) {
           try {
             const snapshot = await page.evaluate(() => window.fixture.snapshotCadence());
@@ -809,6 +826,7 @@ finally {
       cancelledFrames: trace.filter(value => value.event === "export.frame.cancelled").length,
       deliveredFrames: trace.filter(value => value.event === "export.frame.delivered").length})),
     failure: receipt.failure?.split("\n")[0], firstRecordedRefusal,
+    firstFixedNativeMediaTrace: receipt.attempts.find(value => value.variant === "fixed" && !value.narrated)?.nativeMediaTraceSummary ?? null,
     errors: receipt.errors, externalRequests: receipt.externalRequests }, null, 2));
   emitFailureAnnotation("export-resume", receipt);
 }

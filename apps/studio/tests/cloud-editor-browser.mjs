@@ -13,12 +13,16 @@ import { startNativeTraceObserver, summarizeRecordingSilence, NATIVE_TRACE_EXPOR
 import { startNodeSchedulingProbe } from "./scheduling-probe.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
 import { emitFailureAnnotation } from "./ci-failure-annotation.mjs";
+import { startMediaTraceObserver, summarizeMediaTrace } from "./native-media-trace-observer.mjs";
 const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
-assert.equal(args.length, 0, "Unknown cloud editor test option");
+const mediaTraceFlags=args.filter(argument=>argument==="--media-trace");
+assert(mediaTraceFlags.length<=1,"Duplicate --media-trace option");
+assert.equal(args.length,mediaTraceFlags.length,"Unknown cloud editor test option");
+const mediaTraceEnabled=mediaTraceFlags.length===1;
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
-const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs","tests/ci-failure-annotation.mjs","src/editor/VideoEditor.tsx","src/features/sync/CloudEditor.tsx","src/data/documents.ts",...['export','recording-clock','mp4-cadence','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
+const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs","tests/ci-failure-annotation.mjs","tests/native-media-trace-observer.mjs","src/editor/VideoEditor.tsx","src/features/sync/CloudEditor.tsx","src/data/documents.ts",...['export','recording-clock','mp4-cadence','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
 const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
-const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), audioOutput, runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
+const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), audioOutput, mediaTrace:{enabled:mediaTraceEnabled,optInFlag:"--media-trace",scope:"first-narrated-studio-only",testOnly:true}, runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
 const timingDevices=[];
 // Test-only observation: every wrapper returns the original native result and
@@ -227,6 +231,10 @@ try {
   await closeDevice(third); await second.bringToFront();
   receipt.checks.push("Fresh device restores narration by trusted result ID, exact video bytes, speed, styled captions and both transition choices");
   receipt.loadBeforeExport.push({export:"narrated-studio",attempt:1,...quickLoad()});
+  const narratedMediaTrace=mediaTraceEnabled ? await startMediaTraceObserver({browser,page:second,artifacts,
+    syncId:"cloud-narrated-media-before-click",sourceHashes:receipt.sourceHashes,
+    rawFileName:"native-media-trace-cloud-narrated.raw.private.json"}) : undefined;
+  try {
   await second.getByRole("button", { name: "Export MP4", exact: true }).click();
   const firstSave=second.getByRole("button", { name: "Save video to listing", exact: true });
   await expect.poll(async()=>{
@@ -234,11 +242,24 @@ try {
     const notice=(await second.locator(".rp-editor-notice").textContent())??"";
     return notice.includes("No download was created.")?"refused":"pending";
   },{timeout:20000,message:"Narrated Studio MP4 export should become available or report its refusal"}).toMatch(/^(ready|refused)$/);
+  narratedMediaTrace?.stopCapture("outcome-observed");
   if(!await firstSave.isVisible()){
     const notice=((await second.locator(".rp-editor-notice").textContent())??"").trim();
     const cadence=await second.evaluate(()=>(window.exportCadenceRefusals??[]).at(-1)?.cause??null);
     receipt.firstExportRefusal={notice,cadence,runner:quickLoad()};
     throw new Error(`Narrated Studio MP4 export refused: ${notice}; encoded cadence: ${JSON.stringify(cadence)}`);
+  }
+  } finally {
+    narratedMediaTrace?.stopCapture("poll-finished");
+    if(narratedMediaTrace){
+      await narratedMediaTrace.finish();
+      receipt.mediaTrace.facts=narratedMediaTrace.facts;
+      let recorderStart;
+      try { recorderStart=await second.evaluate(()=>window.mediaTimingFixture?.snapshot().events.find(event=>event.kind==="recorder.call.start")?.atMs); }
+      catch { receipt.mediaTrace.alignmentObservationError="existing-recorder-start-unavailable"; }
+      receipt.mediaTrace.summary=summarizeMediaTrace(narratedMediaTrace.facts,
+        Number.isFinite(recorderStart)?[{event:"start.call",at:recorderStart}]:[]);
+    }
   }
   const download = second.waitForEvent("download"); await second.getByRole("link",{name:/Download MP4/}).click(); const exported = join(artifacts,"narrated-studio.mp4"); await (await download).saveAs(exported);
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",exported],{encoding:"utf8"}));
@@ -454,5 +475,5 @@ finally { await captureMediaTiming();
   // Render silence inside each recording window of the traced device, edges
   // included. Evidence only; computed after the verdict above is final.
   if (receipt.nativeTrace?.renderGapSummary) try { receipt.renderSilenceInRecordings = summarizeRecordingSilence(receipt.nativeTrace, receipt.mediaTiming.find(entry => entry.id === receipt.nativeTraceDeviceId)); } catch (error) { receipt.renderSilenceInRecordings = {issue: error?.name ?? "Error"}; }
-  await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));
+  await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, mediaTrace:{enabled:mediaTraceEnabled,scope:receipt.mediaTrace.scope,...(receipt.mediaTrace.summary?{summary:receipt.mediaTrace.summary}:{})}, artifacts }, null, 2));
   emitFailureAnnotation("cloud-editor", receipt); }
