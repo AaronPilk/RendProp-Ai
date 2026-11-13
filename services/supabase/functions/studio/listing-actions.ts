@@ -1,4 +1,5 @@
-import { requireContentWrite } from "../_shared/library-access.ts";
+import { listingLibraryScope, requireContentWrite } from "../_shared/library-access.ts";
+import { ensureAcceptedPhotoPublication, type PublicationIO } from "../_shared/photo-publication.ts";
 import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 import { gallerySelectionRequest } from "./gallery-selection.ts";
@@ -15,6 +16,7 @@ export interface ListingActionContext {
   db: any;
   // deno-lint-ignore no-explicit-any
   admin?: any;
+  publicationIO?: PublicationIO;
   authorizeListing(listingId: string): Promise<void>;
   publicURL?: (key: string) => string | null;
 }
@@ -123,6 +125,39 @@ export async function handleListingActions(req: Request, context: ListingActionC
     return await editGallery(body, listingId, context);
   }
   assert(typeof assetId === "string" && UUID.test(assetId), 400, "Choose an uploaded photo.");
+  let provenanceId: string | null = null;
+  if (segments[0] === "photos" && body.provenance_id !== undefined) {
+    assert(typeof body.provenance_id === "string" && UUID.test(body.provenance_id), 400, "Invalid photo disclosure.");
+    provenanceId = body.provenance_id;
+    assert(context.admin, 503, "Gallery saving is temporarily unavailable.");
+    // The accepted edit's uploaded copy is deliberately hidden by RLS until
+    // its exact source publication is prepared. Resolve only this actor's
+    // retained evidence; the bridge verifies body bytes, original custody,
+    // upload receipt and current library authority before the ordinary read.
+    const { data: evidence, error: evidenceError } = await context.admin.from("photo_edit_evidence")
+      .select("id,actor_id,org_id,library_org_id,listing_id,state,purpose,output")
+      .eq("provenance_id", provenanceId).eq("actor_id", context.userId)
+      .eq("org_id", context.orgId).limit(2);
+    if (evidenceError) throw new HttpError(503, "Photo disclosure could not be checked.");
+    assert(Array.isArray(evidence) && evidence.length <= 1, 503, "Photo disclosure returned inconsistent history.");
+    const accepted = evidence[0];
+    if (accepted && accepted.state === "accept" && accepted.purpose === "prospective" &&
+      (accepted.listing_id === null || accepted.listing_id === listingId)) {
+      const scope = await listingLibraryScope(context.admin, context.userId, listingId, true);
+      assert(scope.org_id === context.orgId && accepted.library_org_id === scope.library_org_id,
+        404, "Photo disclosure is not available in this library.");
+      const output = accepted.output;
+      assert(output && typeof output === "object" && typeof output.sha256 === "string" && /^[a-f0-9]{64}$/.test(output.sha256) &&
+        Number.isSafeInteger(output.bytes) && output.bytes > 0, 503, "Photo disclosure returned incomplete output proof.");
+      const publication = await ensureAcceptedPhotoPublication(context.admin,
+        { orgId: context.orgId, libraryOrgId: scope.library_org_id, listingId }, context.userId, assetId,
+        { provenanceID: provenanceId, expected: { sha256: output.sha256, bytes: output.bytes }, signal: req.signal },
+        context.publicationIO);
+      assert(publication && publication.sourceProvenanceID === provenanceId && publication.listingID === listingId &&
+        publication.outputAssetID === assetId, 503, "The saved photo publication could not be confirmed.");
+      provenanceId = publication.id;
+    }
+  }
   const { data: asset, error: assetError } = await context.db.from("capture_assets")
     .select("id,listing_id,kind,bucket,uploaded,storage_key,content_type")
     .eq("id", assetId).eq("listing_id", listingId).maybeSingle();
@@ -161,13 +196,12 @@ export async function handleListingActions(req: Request, context: ListingActionC
   }
   const caption = typeof body.caption === "string" ? body.caption.trim().slice(0, 500) : "";
   assert(asset.bucket === "renders", 400, "Upload this photo to the gallery before publishing it.");
-  if (body.provenance_id !== undefined) assert(typeof body.provenance_id === "string" && UUID.test(body.provenance_id), 400, "Invalid photo disclosure.");
   assert(context.admin, 503, "Gallery saving is temporarily unavailable.");
   // The database derives the immutable photo keys and disclosure, and checks
   // current actor authority under locks. Browser metadata cannot set flags.
   const { data, error } = await context.admin.rpc("studio_attach_photo_from_upload", {
     p_actor: context.userId, p_org: context.orgId, p_listing: listingId,
-    p_asset: asset.id, p_caption: caption, p_provenance: body.provenance_id ?? null,
+    p_asset: asset.id, p_caption: caption, p_provenance: provenanceId,
   });
   photoRPCError(error);
   assert(data?.ok === true && typeof data.created === "boolean" && data.photo?.id === asset.id && data.photo?.listing_id === listingId,

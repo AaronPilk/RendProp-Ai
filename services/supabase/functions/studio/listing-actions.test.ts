@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { canonicalPhotoKey, galleryCaption, handleListingActions, photoRow } from "./listing-actions.ts";
 import { HttpError } from "../_shared/http.ts";
+import { publicationFixture } from "../_shared/photo-publication.fixture.ts";
 const org = "10000000-0000-4000-8000-000000000001", listing = "20000000-0000-4000-8000-000000000002", id = "30000000-0000-4000-8000-000000000003", user = "40000000-0000-4000-8000-000000000004";
 const asset = { id, listing_id: listing, uploaded: true, bucket: "renders", kind: "photo", content_type: "image/jpeg", storage_key: `renders/${org}/${listing}/gallery-${id}.jpg` };
 type Result = { data: unknown; error?: unknown };
@@ -196,6 +197,70 @@ Deno.test("photo service refusal after preliminary read preserves atomic authori
     assertEquals(f.calls.find(c => c.op === "rpc" && c.table !== "listing_library_scope")?.args[0], { p_actor: user, p_org: org, p_listing: listing, p_asset: id, p_caption: "Reviewed", p_provenance: null });
     assertEquals(f.calls.some(c => ["insert", "update"].includes(c.op)), false);
   }
+});
+
+Deno.test("accepted saved photo prepares exact publication before hidden asset read and attaches its returned id", async () => {
+  const f = await publicationFixture({ bound: true });
+  // Early release permits publication while the advisory check is still running.
+  f.state.q.state = "checking";
+  const evidence = { ...f.state.e, output: { sha256: f.outputSHA, bytes: f.output.length }, state: "accept", purpose: "prospective" };
+  const actions: string[] = [];
+  const scope = { actor_id: f.actor, org_id: f.org, library_org_id: f.library, listing_id: f.listing,
+    listing_owner_user_id: f.actor, library_owner_user_id: f.actor, role: "owner", access_mode: "own",
+    can_read: true, can_write: true, can_manage_subscription: false, billing_org_id: f.org, team_org_id: null };
+  const admin = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      if (name === "listing_library_scope") return { data: scope, error: null };
+      if (name === "studio_attach_photo_from_upload") {
+        actions.push("attach");
+        assertEquals(args, { p_actor: f.actor, p_org: f.org, p_listing: f.listing,
+          p_asset: f.asset, p_caption: "Edited kitchen", p_provenance: f.pub });
+        assertEquals(f.state.phase, "prepared");
+        return { data: { ok: true, created: true, photo: { id: f.asset, listing_id: f.listing } }, error: null };
+      }
+      return await f.client.rpc(name, args);
+    },
+    from: (table: string) => {
+      assertEquals(table, "photo_edit_evidence");
+      const filters: Record<string, unknown> = {};
+      const query = {
+        select: (_columns: string) => query,
+        eq: (key: string, value: unknown) => { filters[key] = value; return query; },
+        limit: (count: number) => { assertEquals(count, 2); return query; },
+        then: (resolve: (value: unknown) => void) => {
+          actions.push("evidence");
+          assertEquals(filters, { provenance_id: f.original, actor_id: f.actor, org_id: f.org });
+          resolve({ data: [evidence], error: null });
+        },
+      };
+      return query;
+    },
+  };
+  const db = { from: (table: string) => {
+    assertEquals(table, "capture_assets");
+    const query = {
+      select: (_columns: string) => query,
+      eq: (_column: string, _value: string) => query,
+      maybeSingle: async () => {
+        actions.push("asset-read");
+        assertEquals(f.state.phase, "prepared");
+        return { data: { id: f.asset, listing_id: f.listing, uploaded: true,
+          bucket: "renders", kind: "photo", content_type: "image/jpeg", storage_key: f.targetKey }, error: null };
+      },
+    };
+    return query;
+  } };
+  const req = request("photos", { listing_id: f.listing, asset_id: f.asset,
+    provenance_id: f.original, caption: "Edited kitchen", original_key: "client-invented" });
+  const response = await handleListingActions(req, { userId: f.actor, orgId: f.org,
+    authorizeListing: async (value) => assertEquals(value, f.listing), admin, db, publicationIO: f.io });
+  assertEquals(response?.status, 201);
+  assertEquals(actions, ["evidence", "asset-read", "attach"]);
+  assertEquals(f.state.claims, 1);
+  assertEquals(f.state.writes, 1);
+  assertEquals(f.state.reads.includes(f.inputKey), true);
+  assertEquals(f.state.reads.includes(f.outputKey), true);
+  assertEquals(f.state.reads.includes(f.targetKey), true);
 });
 Deno.test("old unverified saved copy cannot attach through Studio even if the client asks to use it", async () => {
   const message = "RP409: This older saved copy needs its original or verified edit history before it can be added to listing photos";
