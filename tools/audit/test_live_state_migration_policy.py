@@ -18,32 +18,46 @@ MIGRATIONS = Path(__file__).resolve().parents[2] / "services/supabase/migrations
 ROOT = MIGRATIONS.parents[2]
 
 
+# Review names and bytes independently of the runner classification. Preserve
+# all six historical entries when adding the release148 controller adoption.
+EXPECTED_LIVE_STATE_ADOPTIONS = {
+    "20261023044520_photo_motion_bfb1_fixed_recovery_controller.sql": "127ff57bfac508e47d32bda54719bbb69e261136d6d8f96a85c83da020622b25",
+    "20261023141755_photo_motion_c74_terminal_reconciliation_controller.sql": "aa95bcc947c7aa60367f0e15bf7b883c2b101676d415808529237b944c132ef4",
+    "20261023144319_photo_motion_a1bb_empty_queue_terminal_cleanup_controller.sql": "a58465b97a5f36f82ff951591f1af4563be40008c5d39a396fa861e2a2458bd0",
+    "20261023173823_aerial_omni_reference_prospective_route_20261023.sql": "9f63c1faeae5cbf8bc81a19dfcba7336132e634f9afd99fcfa889db8bf5c1fef",
+    "20261023185845_photo_motion_cf7_concurrent_scheduler_history_20261023.sql": "13456ba634895717892380a556f51b734e394df1381d43cbd51c0dd065494c9a",
+    "20261023215829_studio_current_reviewed_photo_motion_kit_20261023.sql": "f93481224aa3a93331a20e028097507e263650064c514380a414a65d7801d0e0",
+    "20261113011309_photo_motion_release148_controller_adoption.sql": "c99e4e9258d3d5e31f55b7051c7fb26e1bb4d586ded3ec1171586f5c8e425327",
+}
+
+
 class LiveStateMigrationPolicyTests(unittest.TestCase):
     def setUp(self):
         self.paths = sorted(MIGRATIONS.glob("*.sql"))
 
-    def test_only_six_pinned_live_adoptions_are_excluded(self):
+    def test_only_seven_pinned_live_adoptions_are_excluded(self):
+        self.assertEqual(LIVE_STATE_ONLY_MIGRATIONS, EXPECTED_LIVE_STATE_ADOPTIONS)
         schema, live_state = partition_fresh_migrations(self.paths)
         self.assertEqual({path.name for path in live_state}, set(LIVE_STATE_ONLY_MIGRATIONS))
         self.assertEqual(len(schema) + len(live_state), len(self.paths))
-        self.assertEqual(len(live_state), 6)
+        self.assertEqual(len(live_state), 7)
         for path in live_state:
             self.assertFalse(replayable_migration(path.name))
         self.assertTrue(replayable_migration("20261023999999_future_schema_change.sql"))
 
     def test_changed_classified_sql_is_rejected(self):
-        source = next(path for path in self.paths if path.name in LIVE_STATE_ONLY_MIGRATIONS)
-        with tempfile.TemporaryDirectory(prefix="rp-migration-policy-") as owned:
-            changed = Path(owned) / source.name
-            changed.write_bytes(source.read_bytes() + b"\n-- deliberate source change\n")
-            paths = [changed if path == source else path for path in self.paths]
-            with self.assertRaisesRegex(RuntimeError, "Classified live-state migration changed"):
-                partition_fresh_migrations(paths)
+        for source in (path for path in self.paths if path.name in EXPECTED_LIVE_STATE_ADOPTIONS):
+            with self.subTest(migration=source.name), tempfile.TemporaryDirectory(prefix="rp-migration-policy-") as owned:
+                changed = Path(owned) / source.name
+                changed.write_bytes(source.read_bytes() + b"\n-- deliberate source change\n")
+                paths = [changed if path == source else path for path in self.paths]
+                with self.assertRaisesRegex(RuntimeError, "Classified live-state migration changed"):
+                    partition_fresh_migrations(paths)
 
     def test_missing_classified_sql_is_rejected(self):
-        source = next(path for path in self.paths if path.name in LIVE_STATE_ONLY_MIGRATIONS)
-        with self.assertRaisesRegex(RuntimeError, "Classified live-state migrations missing"):
-            partition_fresh_migrations(path for path in self.paths if path != source)
+        for source in (path for path in self.paths if path.name in EXPECTED_LIVE_STATE_ADOPTIONS):
+            with self.subTest(migration=source.name), self.assertRaisesRegex(RuntimeError, "Classified live-state migrations missing"):
+                partition_fresh_migrations(path for path in self.paths if path != source)
 
     def test_photo_publication_is_once_per_fresh_database(self):
         name = "20261020212328_accepted_photo_publication_host_compatible.sql"

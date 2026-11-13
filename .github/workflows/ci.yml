@@ -2204,6 +2204,27 @@ jobs:
           set -euo pipefail
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 tools/audit/run_database_regression.py
+      - name: Guarded release148 controller adoption preserves saved producer history
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          mkdir -p "$RUNNER_TEMP/rendprop-photo-motion-controller-adoption"
+          python3 tools/audit/test_photo_motion_saved_identity_handoff.py \
+            --adoption-sql services/supabase/migrations/20261113011309_photo_motion_release148_controller_adoption.sql \
+            --adoption-sql-sha256 c99e4e9258d3d5e31f55b7051c7fb26e1bb4d586ded3ec1171586f5c8e425327 \
+            --module-sha256 59db892e3debdbc6625b659f30a20c971a3547a47dd9a38cdba2916887d6b1eb \
+            --receipt "$RUNNER_TEMP/rendprop-photo-motion-controller-adoption/receipt.json" \
+            2>&1 | tee "$RUNNER_TEMP/rendprop-photo-motion-controller-adoption/run.log"
+          python3 - "$RUNNER_TEMP/rendprop-photo-motion-controller-adoption/receipt.json" <<'PY_ADOPTION'
+          import json, sys
+          receipt = json.load(open(sys.argv[1]))
+          assert receipt['passed'] is True and receipt['owned_cluster_stopped'] is True
+          assert receipt['historical_phase_passed'] is True
+          assert receipt['module_sha256'] == '59db892e3debdbc6625b659f30a20c971a3547a47dd9a38cdba2916887d6b1eb'
+          assert receipt['adoption_sql_sha256'] == 'c99e4e9258d3d5e31f55b7051c7fb26e1bb4d586ded3ec1171586f5c8e425327'
+          PY_ADOPTION
       - name: Replay customer credits, trial, and Team billing invariants
         shell: bash
         run: |
@@ -2309,6 +2330,8 @@ jobs:
             /tmp/rendprop-privacy-receipt-*/**/*.log
             /tmp/rendprop-photographer-client-*/*.json
             ${{ runner.temp }}/rendprop-workspace-inventory/receipt.json
+            ${{ runner.temp }}/rendprop-photo-motion-controller-adoption/receipt.json
+            ${{ runner.temp }}/rendprop-photo-motion-controller-adoption/run.log
             build/pr-*/receipt.json
             build/pr-*/server.log
             build/pres-*/receipt.json

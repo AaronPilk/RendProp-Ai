@@ -190,6 +190,7 @@ LIVE_STATE_ONLY_MIGRATIONS = {
     "20261023173823_aerial_omni_reference_prospective_route_20261023.sql": "9f63c1faeae5cbf8bc81a19dfcba7336132e634f9afd99fcfa889db8bf5c1fef",
     "20261023185845_photo_motion_cf7_concurrent_scheduler_history_20261023.sql": "13456ba634895717892380a556f51b734e394df1381d43cbd51c0dd065494c9a",
     "20261023215829_studio_current_reviewed_photo_motion_kit_20261023.sql": "f93481224aa3a93331a20e028097507e263650064c514380a414a65d7801d0e0",
+    "20261113011309_photo_motion_release148_controller_adoption.sql": "c99e4e9258d3d5e31f55b7051c7fb26e1bb4d586ded3ec1171586f5c8e425327",
 }
 
 # Each of these source migrations has been applied successfully once in a
@@ -198,7 +199,7 @@ LIVE_STATE_ONLY_MIGRATIONS = {
 # changed, or a one-time object already exists. Pin the exact source bytes and
 # first refusal so an edited migration cannot silently inherit this exception.
 # These remain schema migrations on BOTH fresh databases, unlike the separate
-# six live-state adoptions above. Unknown migrations still replay twice.
+# seven live-state adoptions above. Unknown migrations still replay twice.
 GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261020212328_accepted_photo_publication_host_compatible.sql": ("c49716cb9efe6f07f6e31c2f77e4ba2bc10fba246ae568352932e58c3810e442", "Review changed photo publication dependency: public.studio_presenter_media_access_inner(uuid)"),
     "20261020212445_private_video_source_prepare.sql": ("96739271ae3034a252f7fc6649fc29bc68977f831dfda3e87aa540ccb0eac523", "Review private video-source schema/dependency installation"),
