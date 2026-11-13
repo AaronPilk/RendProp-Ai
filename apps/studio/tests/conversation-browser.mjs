@@ -5,6 +5,7 @@ import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
@@ -12,10 +13,77 @@ const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
 assert.equal(args.length, 0, "Unknown conversation test option");
 
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-conversation-")), dist = join(artifacts, "dist");
-const receipt = { proof: "Actual VideoEditor conversation UI, original synthetic media, real canvas preview and MP4 encoding. Only injected deferred text-plan and prompt-enhancement fixtures; no live account, model, generation or external requests.", audioOutput, checks: [], externalRequests: [], errors: [], status: "running" };
+const sourcePaths = ["tests/conversation-browser.mjs", "tests/conversation-fixture.tsx", "tests/conversation-fixture.html", "tests/export-audio-output.mjs", "src/editor/VideoEditor.tsx", ...["export", "export-canvas-ready", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)];
+const sourceHashes = async () => Object.fromEntries(await Promise.all(sourcePaths.map(async name => [name, createHash("sha256").update(await readFile(join(root, name))).digest("hex")])));
+const receipt = { proof: "Actual VideoEditor conversation UI, original synthetic media, real canvas preview and MP4 encoding. Only injected deferred text-plan and prompt-enhancement fixtures; no live account, model, generation or external requests.", sourceHashes: await sourceHashes(), audioOutput, checks: [], externalRequests: [], errors: [], status: "running" };
+// BEGIN failure-only conversation observation. No success-path instrumentation.
+const exportFailureAnchor = `    } catch (error) {
+      notice(errorText(error));
+    } finally {
+      if (exportAbort.current === controller) {
+        exportAbort.current = null;
+        setExporting(false);
+      }
+    }
+  };
+  const handleFileInput = (event: ChangeEvent<HTMLInputElement>) => {`;
+const exportFailureInsertion = `
+      // Test-only: retain scalar refusal evidence before the unchanged notice.
+      try {
+        const own = (value, key) => value && (typeof value === "object" || typeof value === "function")
+          ? Object.getOwnPropertyDescriptor(value, key) : undefined;
+        const data = (value, key) => { const descriptor = own(value, key); return descriptor && "value" in descriptor ? descriptor.value : undefined; };
+        const text = value => typeof value === "string" ? value.replace(/(?:https?|blob|data):[^\\s]+/gi, "[redacted-url]").slice(0, 512) : null;
+        const descriptor = own(error, "cause"), cause = data(error, "cause"), fields = {};
+        for (const key of ["gapMilliseconds", "maxGapMilliseconds", "maxTransitionGapMilliseconds", "transitionMilliseconds", "framesCaptured", "minFrames", "windowMilliseconds", "frameIndex", "frameCount", "observed", "limit", "maxLossSeconds"]) {
+          const value = data(cause, key); if (typeof value === "number" && Number.isFinite(value)) fields[key] = value;
+        }
+        for (const [key, allowed] of [["kind", ["encoded-frame-cadence"]], ["rule", ["sample-duration", "start-gap", "density"]], ["unit", ["milliseconds", "frames-per-500ms"]]]) {
+          const value = data(cause, key); if (allowed.includes(value)) fields[key] = value;
+        }
+        const readings = data(cause, "readings");
+        if (Array.isArray(readings)) fields.readings = readings.slice(-8).map(row => Object.fromEntries(["wall", "timeline", "audio", "drift"].flatMap(key => {
+          const value = data(row, key); return typeof value === "number" && Number.isFinite(value) ? [[key, value]] : [];
+        })));
+        const causeStatus = !descriptor ? "not-supplied" : !("value" in descriptor) ? "accessor-not-read" : cause === null ? "null" : Object.keys(fields).length ? "whitelisted-fields" : "no-whitelisted-fields";
+        const observation = {stage: "startExport.catch", message: text(data(error, "message")), causeStatus, cause: fields};
+        const previous = data(globalThis, "__conversationExportFailures");
+        if (Array.isArray(previous)) { if (previous.length < 4) previous.push(observation); }
+        else Reflect.defineProperty(globalThis, "__conversationExportFailures", {value: [observation], configurable: true});
+      } catch { /* Observation must never replace the original export failure. */ }
+`;
+const exportFailureReceiptPlugin = {name: "conversation-export-failure-receipt", enforce: "pre", transform(code, id) {
+  if (!id.split("?")[0].endsWith("/src/editor/VideoEditor.tsx")) return;
+  assert.equal(code.split(exportFailureAnchor).length, 2, "Exact startExport failure anchor must occur once");
+  assert.equal(receipt.exportFailureTransform, undefined, "VideoEditor failure transform must run once");
+  const inputSha256 = createHash("sha256").update(code).digest("hex");
+  assert.equal(inputSha256, receipt.sourceHashes["src/editor/VideoEditor.tsx"], "Transform must consume the exact recorded product source");
+  const output = code.replace(exportFailureAnchor, exportFailureAnchor.replace("      notice(errorText(error));", exportFailureInsertion + "      notice(errorText(error));"));
+  assert.equal(output.replace(exportFailureInsertion, ""), code, "Removing only the diagnostic must restore exact product bytes");
+  receipt.exportFailureTransform = {inputSha256, outputSha256: createHash("sha256").update(output).digest("hex"), exactRemovalRestoresInput: true, failureOnly: true};
+  return output;
+}};
+function conversationFailureDOM(body) {
+  const text = value => typeof value === "string" ? value.replace(/(?:https?|blob|data):[^\s]+/gi, "[redacted-url]").slice(0, 512) : null;
+  const editor = body.querySelector(".rp-editor"), exportArea = editor?.querySelector(".rp-editor-export");
+  const button = exportArea?.querySelector(".rp-editor-export-button"), progress = exportArea?.querySelector("progress"), link = exportArea?.querySelector(".rp-editor-download");
+  const failures = Object.getOwnPropertyDescriptor(globalThis, "__conversationExportFailures")?.value;
+  const draft = globalThis.conversationFixture?.snapshot()?.draft;
+  return {status: "captured-after-failure", notice: text(editor?.querySelector(".rp-editor-notice")?.textContent),
+    exportButton: {present: !!button, disabled: button ? button.disabled : null, label: ["Export MP4", "Export WebM", "Export video"].includes(button?.textContent?.trim()) ? button.textContent.trim() : null},
+    progress: {present: !!progress, value: progress && Number.isFinite(progress.value) ? progress.value : null},
+    cancelPresent: [...(exportArea?.querySelectorAll("button") ?? [])].slice(0, 8).some(node => node.textContent?.trim() === "Cancel export"),
+    download: {present: !!link, hasHref: !!link?.getAttribute("href"), blobHref: !!link?.getAttribute("href")?.startsWith("blob:")},
+    draft: {revision: Number.isSafeInteger(draft?.revision) ? draft.revision : null, clips: Array.isArray(draft?.clips) ? draft.clips.slice(0, 12).map(clip => {
+      const duration = (clip?.end - clip?.start) / (clip?.source?.kind === "video" ? clip.speed ?? 1 : 1);
+      return {kind: ["image", "video"].includes(clip?.source?.kind) ? clip.source.kind : null, duration: Number.isFinite(duration) ? duration : null};
+    }) : []},
+    exportFailures: Array.isArray(failures) ? {status: "captured", rows: failures.slice(0, 4)} : {status: "not-captured"}};
+}
+// END failure-only conversation observation.
 let browser, server, page;
 try {
-  await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/conversation-fixture.html") } } });
+  await build({ configFile: false, root, publicDir: false, logLevel: "error", plugins: [exportFailureReceiptPlugin], build: { outDir: dist, rollupOptions: { input: join(root, "tests/conversation-fixture.html") } } });
   server = createServer(async (request, response) => {
     const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`);
     if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end();
@@ -228,9 +296,15 @@ try {
   assert.deepEqual(receipt.externalRequests, []); assert.deepEqual(receipt.errors, []); receipt.status = "passed";
 } catch (error) {
   receipt.status = "failed"; receipt.failure = error.stack ?? String(error);
+  if (page) {
+    try { receipt.failureObservation = await page.locator("body").evaluate(conversationFailureDOM, undefined, {timeout: 1000}); }
+    catch { receipt.failureObservation = {status: "unavailable-after-failure"}; }
+  }
   if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {});
   throw error;
 } finally {
+  try { receipt.sourceBoundAtEnd = JSON.stringify(await sourceHashes()) === JSON.stringify(receipt.sourceHashes); }
+  catch { receipt.sourceBindingStatus = "unavailable-at-end"; }
   await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   await browser?.close(); await new Promise(done => server ? server.close(done) : done());
   console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));

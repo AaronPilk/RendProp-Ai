@@ -825,6 +825,13 @@ finally {
       if (!control) return null;
       const numeric = (value, keys) => Object.fromEntries(keys.flatMap(key =>
         Number.isFinite(value?.[key]) ? [[key, value[key]]] : []));
+      const trace = Array.isArray(control.trace) ? control.trace : [];
+      const openingEvents = new Set(["clip.clock.start", "clip.clock.read", "export.frame.delivered"]);
+      const lifecycleEvents = new Set(["start.call", "start.return", "start.native",
+        "resume.call", "resume.return", "resume.native", "pause.call", "pause.native",
+        "stop.call", "stop.native"]);
+      const opening = trace.filter(value => openingEvents.has(value?.event) && value.index === 0);
+      const lifecycle = trace.filter(value => lifecycleEvents.has(value?.event));
       return {
         cause: numeric(control.cause, ["gapMilliseconds", "maxGapMilliseconds",
           "maxTransitionGapMilliseconds", "transitionMilliseconds", "framesCaptured", "minFrames",
@@ -833,9 +840,19 @@ finally {
         downloadHidden: control.downloadHidden === true,
         tracks: Array.isArray(control.tracks) ? control.tracks.slice(0, 4).map(value =>
           typeof value === "string" ? value.slice(0, 16) : "unknown") : [],
-        injections: (Array.isArray(control.trace) ? control.trace : [])
-          .filter(value => value?.event === "capture.sparse.injected").slice(-12)
+        injections: trace.filter(value => value?.event === "capture.sparse.injected").slice(-12)
           .map(value => ({event: value.event, ...numeric(value, ["at", "index", "milliseconds"])})),
+        // These are existing fixture observations, not capture or encoder acknowledgments.
+        ...(receipt.status === "failed" ? {
+          openingTraceRows: opening.length,
+          openingTraceTail: opening.slice(-40).map(value => ({event: value.event,
+            ...numeric(value, ["at", "index", "time", "wall", "timeline"]),
+            ...numeric(value.diagnostics, ["interReadMs", "frameWaitElapsedMs", "remainingAtWaitMs"])})),
+          recorderLifecycleRows: lifecycle.length,
+          recorderLifecycleTail: lifecycle.slice(-10).map(value => ({event: value.event,
+            ...numeric(value, ["at"]),
+            ...(["inactive", "recording", "paused"].includes(value.state) ? {state: value.state} : {})})),
+        } : {}),
       };
     } catch { return {status: "summary-unavailable"}; }
   })();
