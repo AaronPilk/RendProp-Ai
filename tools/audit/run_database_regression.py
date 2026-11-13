@@ -62,7 +62,7 @@ REFLECTION_FIXTURES = (
     # first-100 fixtures above are unchanged; this one switches the mode inside
     # its own rolled-back transaction.
     ("trial_per_user_allowance.sql", '"assertions": 63', 63),
-    ("tour_notification_access.sql", "PASS tour notification access: 31 assertions", 31),
+    ("tour_notification_access.sql", "PASS tour notification access: 52 assertions", 52),
 )
 
 CURRENT_WORKER_NOTIFICATION_MD5 = "31df14b830c092d0b22ea1f8bf94f4c7"

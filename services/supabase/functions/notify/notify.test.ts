@@ -623,3 +623,31 @@ Deno.test("build 148: an undeliverable push falls back to e-mail, an access refu
     assertEquals(pushNeedsEmailFallback(row({ channel: "email" }), dead), false);
   } finally { clearSecrets(); }
 });
+
+Deno.test("a rejected device plus an authorization denial never becomes all-tokens-rejected fallback", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const second = { ...device, device_token: "second-current-token" };
+    let calls = 0;
+    const dead: typeof fetch = () => { calls++; return Promise.resolve(apnsResponse(410, "Unregistered")); };
+    const denied = await deliverPush(row(), [device, second], BASE, dead, async (d) => d.device_token === device.device_token);
+    assertEquals(calls, 1); assertEquals(denied.state, "skipped");
+    assertEquals(denied.reason, "the current account or device enrollment changed");
+    assertEquals(denied.deadTokens, [device.device_token]); assertEquals(pushNeedsEmailFallback(row(), denied), false);
+    calls = 0;
+    const allDead = await deliverPush(row(), [device, second], BASE, dead, async () => true);
+    assertEquals(calls, 2); assertEquals(allDead.state, "skipped");
+    assertEquals(pushNeedsEmailFallback(row(), allDead), true);
+  } finally { clearSecrets(); }
+});
+
+Deno.test("one authorized device success still wins after another device is denied", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const second = { ...device, device_token: "second-current-token" };
+    let calls = 0;
+    const sent: typeof fetch = () => { calls++; return Promise.resolve(apnsResponse(200)); };
+    const result = await deliverPush(row(), [device, second], BASE, sent, async (d) => d.device_token === second.device_token);
+    assertEquals(calls, 1); assertEquals(result.state, "sent"); assertEquals(pushNeedsEmailFallback(row(), result), false);
+  } finally { clearSecrets(); }
+});

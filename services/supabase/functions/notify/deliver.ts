@@ -118,8 +118,9 @@ export async function deliverPush(
   let lastReason: string | null = null;
 
   let authorizedDevices=0;
+  let authorizationDenied = false;
   for (const device of ownDevices) {
-    if(authorizeDevice&&!await authorizeDevice(device))continue;
+    if(authorizeDevice&&!await authorizeDevice(device)){authorizationDenied = true;continue;}
     authorizedDevices++;
     const result = await apns.send({
       deviceToken: device.device_token,
@@ -145,7 +146,7 @@ export async function deliverPush(
   // EVERY token this person has is gone. Retrying cannot help, so the row is
   // closed as skipped rather than left to burn its five attempts against
   // phones that no longer exist.
-  if(authorizedDevices===0)return {state:"skipped",reason:"the current account or device enrollment changed",providerId:null,deadTokens};
+  if(authorizationDenied||authorizedDevices===0)return {state:"skipped",reason:"the current account or device enrollment changed",providerId:null,deadTokens};
   if (deadTokens.length > 0 && deadTokens.length === authorizedDevices) {
     return {
       state: "skipped",

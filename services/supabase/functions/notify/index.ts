@@ -43,7 +43,7 @@ import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts"
 import { adminClient, isServiceRole } from "../_shared/supabase.ts";
 import * as apns from "./apns.ts";
 import * as email from "./email.ts";
-import { deliverEmail, deliverPush, emailFallbackRow, pushNeedsEmailFallback, type DeviceRow, type OperationalEmailState, type OutboxRow } from "./deliver.ts";
+import { deliverEmail, deliverPush, pushNeedsEmailFallback, type DeviceRow, type OperationalEmailState, type OutboxRow } from "./deliver.ts";
 import { prepareClientMessage } from "./client-delivery.ts";
 import { hostingNoticeCurrent } from "../_shared/hosting-retention.ts";
 import { opsAlertCurrent } from "../_shared/ops-alert.ts";
@@ -149,13 +149,14 @@ async function handleDrain(limit: number): Promise<Response> {
   )];
 
   const devicesByUser = new Map<string, DeviceRow[]>();
+  let deviceLookupFailed = false;
   if (pushUsers.length > 0 && apns.configured()) {
     const { data, error } = await admin
       .from("notification_devices")
       .select("user_id, device_token, environment")
       .in("user_id", pushUsers)
       .is("disabled_at", null);
-    if (error) console.error("device lookup failed:", error.message);
+    if (error) { deviceLookupFailed = true; console.error("device lookup failed"); }
     for (const d of (data ?? []) as DeviceRow[]) {
       const list = devicesByUser.get(d.user_id) ?? [];
       list.push(d);
@@ -183,6 +184,7 @@ async function handleDrain(limit: number): Promise<Response> {
   const disabledTokens: string[] = [];
 
   for (const row of rows) {
+    let fallbackAttempted = false;
     try {
       if (["first_tour_nudge", "free_week_ending"].includes(row.category)) {
         await mark(row.id, "skipped", "Promotional lifecycle messages are disabled until explicit marketing opt-in is supported.", null);
@@ -212,6 +214,9 @@ async function handleDrain(limit: number): Promise<Response> {
           operationalEmailState = pair.state as OperationalEmailState;
         }
       }
+      if (row.channel === "push" && row.category !== "ops_alert" && deviceLookupFailed) {
+        throw new HttpError(503, "Current notification devices could not be read.");
+      }
       const outcome = row.channel === "push"
         ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE,fetch,propertyVideoJob(row)?device=>propertyVideoDeviceCurrent(admin,row,device):row.category==="render_ready"?device=>tourDeviceCurrent(admin,row,device):row.category==="lead_received"?()=>leadNoticeCurrent(admin,row):undefined,operationalEmailState)
         // to_email wins. An invitee has no profile to look an address up
@@ -225,14 +230,21 @@ async function handleDrain(limit: number): Promise<Response> {
       // e-mail BEFORE closing the push, so a crash between the two leaves a
       // retryable `sending` row rather than a closed row with no fallback. The
       // e-mail is re-validated by its own drain (access, verified address).
-      if (pushNeedsEmailFallback(row, outcome) && !await tourNoticeCurrent(admin, row)) {
-        await mark(row.id, "skipped", "Tour or account access changed before email fallback.", null);
-        skipped++; continue;
-      }
       if (pushNeedsEmailFallback(row, outcome)) {
-        const { error: fallbackError } = await admin.from("notification_outbox")
-          .upsert(emailFallbackRow(row), { onConflict: "dedupe_key", ignoreDuplicates: true });
-        if (fallbackError) console.error(`notify row ${row.id}: e-mail fallback was not queued`);
+        // SQL owns the saved claim, current access, derived twin and atomic
+        // close. A stale response cannot close a later attempt by ID alone.
+        fallbackAttempted = true;
+        const { data: fallback, error: fallbackError } = await admin.rpc("notification_email_fallback_enqueue", {
+          p_push: row.id, p_attempt: row.attempts, p_reason: outcome.reason,
+          p_expected: { outbox_id: row.id, org_id: row.org_id, recipient_user_id: row.user_id,
+            category: row.category, channel: row.channel, dedupe_key: row.dedupe_key,
+            payload: row.payload, to_email: row.to_email ?? null },
+        });
+        if (fallbackError || typeof fallback !== "string" || !["queued", "duplicate", "denied", "stale", "retry"].includes(fallback)) {
+          throw new HttpError(503, "Notification email fallback outcome could not be verified.");
+        }
+        if (fallback === "retry") failed++; else skipped++;
+        continue;
       }
 
       await mark(row.id, outcome.state, outcome.reason, outcome.providerId);
@@ -248,7 +260,10 @@ async function handleDrain(limit: number): Promise<Response> {
       const reason = e instanceof Error ? e.message : String(e);
       console.error(`notify row ${row.id} threw:`, reason);
       failed++;
-      await mark(row.id, "failed", `unexpected: ${reason}`.slice(0, 400), null).catch(() => {});
+      // The RPC may already have committed, or another claim may now own the
+      // row. Leave uncertain Sending work to notification_sweep's verified
+      // lease recovery; never overwrite a later attempt by ID-only marking.
+      if (!fallbackAttempted) await mark(row.id, "failed", `unexpected: ${reason}`.slice(0, 400), null).catch(() => {});
     }
   }
 

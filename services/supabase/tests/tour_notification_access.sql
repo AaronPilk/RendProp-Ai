@@ -35,6 +35,9 @@ create temp table tn_actors as select u.id actor,m.org_id from auth.users u join
 update public.orgs set plan='pro',plan_source='manual',plan_expires_at=null where id in(select org_id from tn_actors);
 update public.orgs set plan='team' where id=(select org_id from tn_actors where actor='e0170000-0000-4000-8000-000000000001');
 update public.plan_entitlements set seats=8 where plan='team';
+-- Synthetic reachable-at-enqueue device; no provider call is made here.
+insert into public.notification_devices(user_id,device_token,environment)
+ values('e0170000-0000-4000-8000-000000000006',repeat('e',64),'production');
 grant all on tn_checks,tn_actors to service_role;
 set local role service_role;
 select public.create_org_invite('e0170000-0000-4000-8000-000000000001',
@@ -105,15 +108,23 @@ select pg_temp.tn_ok((select count(*)=5 and bool_and(o.payload->>'deep_link'='/f
  where o.category='render_ready'and r.id in(select render_id from tn_jobs)),'publication commits exact route facts and existing dedupe');
 select pg_temp.tn_publish(1);
 select pg_temp.tn_ok((select count(*)=5 from public.notification_outbox where category='render_ready'and payload#>>'{data,render_id}' in(select render_id::text from tn_jobs)),'exact publication replay does not duplicate notifications');
+reset role;
+-- Only fixture setup writes this table directly. The production service role
+-- intentionally has SELECT plus the narrow notification RPCs, not UPDATE.
 update public.notification_outbox set state='sending',attempts=1,claimed_at=clock_timestamp()
  where category='render_ready'and payload#>>'{data,render_id}' in(select render_id::text from tn_jobs);
+set local role service_role;
 select pg_temp.tn_ok((select count(*)=5 and bool_and(pg_temp.tn_current(id)) from public.notification_outbox
  where category='render_ready'and payload#>>'{data,render_id}' in(select render_id::text from tn_jobs)),'all current intended recipients pass the real claimed-row scope');
 reset role;
 create temp table tn_saved as select * from public.notification_outbox where category='render_ready'
  and payload#>>'{data,render_id}'='e0173000-0000-4000-8000-000000000001';
 grant select on tn_saved to service_role;
-create function pg_temp.tn_changed(p_sql text,label text) returns void language plpgsql as $$begin
+-- A transaction-local fixture helper owns the synthetic outbox mutations.
+-- Its service-role caller still exercises the real RPC's role guard; no
+-- permanent table privilege or production function is changed.
+create function pg_temp.tn_changed(p_sql text,label text) returns void language plpgsql
+security definer set search_path='pg_temp' as $$begin
  execute p_sql;
  perform pg_temp.tn_ok(not pg_temp.tn_current((select id from tn_saved)),label);
  update public.notification_outbox o set org_id=s.org_id,user_id=s.user_id,payload=s.payload,state=s.state from tn_saved s where o.id=s.id;
@@ -173,6 +184,130 @@ reset role;
 do $$declare definition text;begin select t.definition into strict definition from tn_definition t;execute definition;end$$;
 select pg_temp.tn_ok((select md5(prosrc)='31df14b830c092d0b22ea1f8bf94f4c7'from pg_proc
  where oid='public.publish_worker_render(uuid,text,integer,jsonb,jsonb,jsonb)'::regprocedure),'predicate control restores the exact current worker definition');
-do $$begin if(select count(*)from tn_checks)<>31 then raise exception 'Tour notification assertion inventory changed';end if;end$$;
-select 'PASS tour notification access: 31 assertions';
+
+-- Real table ACLs and fallback transaction, not a PostgREST write mock.
+select pg_temp.tn_ok(has_table_privilege('service_role','public.notification_outbox','SELECT')
+ and not has_table_privilege('service_role','public.notification_outbox','INSERT,UPDATE,DELETE'),'outbox remains SELECT-only for service role');
+select pg_temp.tn_ok(not has_function_privilege('anon','public.notification_email_fallback_enqueue(uuid,integer,jsonb,text)','execute')
+ and not has_function_privilege('authenticated','public.notification_email_fallback_enqueue(uuid,integer,jsonb,text)','execute')
+ and has_function_privilege('service_role','public.notification_email_fallback_enqueue(uuid,integer,jsonb,text)','execute')
+ and(select prosecdef and proconfig=array['search_path=""']::text[] from pg_proc
+ where oid='public.notification_email_fallback_enqueue(uuid,integer,jsonb,text)'::regprocedure),'fallback capability has exact service-only authority');
+create temp table tn_fallback_saved as select * from public.notification_outbox where category='render_ready'
+ and payload#>>'{data,render_id}'='e0173000-0000-4000-8000-000000000004';
+grant select on tn_fallback_saved to service_role;
+create function pg_temp.tn_fallback(p_id uuid,p_attempt integer default null,p_patch jsonb default '{}',
+ p_reason text default 'no live device for this user') returns text language plpgsql as $$declare o public.notification_outbox;begin
+ select *into strict o from public.notification_outbox where id=p_id;
+ return public.notification_email_fallback_enqueue(o.id,coalesce(p_attempt,o.attempts),jsonb_build_object('outbox_id',o.id,
+  'org_id',o.org_id,'recipient_user_id',o.user_id,'category',o.category,'channel',o.channel,'dedupe_key',o.dedupe_key,
+  'payload',o.payload,'to_email',o.to_email)||p_patch,p_reason);
+end$$;
+create function pg_temp.tn_reclaim(p_id uuid,p_attempt integer,p_state text default 'sending')returns void
+language plpgsql security definer set search_path='pg_temp' as $$begin
+ update public.notification_outbox set state=p_state,attempts=p_attempt,claimed_at=clock_timestamp()
+  where id=p_id and user_id in(select actor from tn_actors);
+end$$;
+-- Separate RPC completion from the subsequent state read. SQL expression
+-- evaluation order must not decide whether this fixture sees its own write.
+create function pg_temp.tn_fallback_is(p_id uuid,p_status text,p_state text)returns boolean language plpgsql as $$
+declare outcome text;actual_state text;begin
+ outcome:=pg_temp.tn_fallback(p_id);
+ select state into strict actual_state from public.notification_outbox where id=p_id;
+ return outcome=p_status and actual_state=p_state;
+end$$;
+set local role service_role;
+select pg_temp.tn_ok(pg_temp.tn_fallback_is(id,'queued','skipped'),
+ 'actual fallback RPC queues and closes the same claim atomically')from tn_fallback_saved s;
+select pg_temp.tn_ok((select count(*)=1 and bool_and(e.org_id=s.org_id and e.user_id=s.user_id and e.category=s.category
+ and e.channel='email'and e.payload=s.payload and e.to_email is null and e.client_delivery_id is null and e.client_verification_id is null)
+ from public.notification_outbox e where e.dedupe_key=s.dedupe_key||':email-fallback'),'twin fields derive only from the saved claim')from tn_fallback_saved s;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id)='stale'and(select state='skipped'from public.notification_outbox where id=s.id),
+ 'replayed completed claim is untouched')from tn_fallback_saved s;
+select pg_temp.tn_reclaim(id,2)from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id)='duplicate'and(select count(*)=1 from public.notification_outbox where dedupe_key=s.dedupe_key||':email-fallback'),
+ 'recovered later claim reuses one exact email twin')from tn_fallback_saved s;
+select pg_temp.tn_reclaim(id,3)from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id,2)='stale'and(select state='sending'and attempts=3 from public.notification_outbox where id=s.id),
+ 'stale attempt cannot close or enqueue for a newer claim')from tn_fallback_saved s;
+select pg_temp.tn_reclaim(id,3,'queued')from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id)='stale'and(select state='queued'from public.notification_outbox where id=s.id),
+ 'unclaimed push cannot request a fallback')from tn_fallback_saved s;
+select pg_temp.tn_reclaim(id,3)from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id,null,jsonb_build_object('recipient_user_id','e0170000-0000-4000-8000-000000000003'))='stale',
+ 'caller cannot select another fallback recipient')from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id,null,jsonb_build_object('payload',jsonb_build_object('injected',true)))='stale',
+ 'caller cannot inject fallback payload')from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id,null,jsonb_build_object('to_email','injected@fixture.invalid'))='stale',
+ 'caller cannot inject a fallback address')from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id,null,'{}','account access changed')='stale',
+ 'access refusal is not an eligible fallback transport outcome')from tn_fallback_saved;
+reset role;
+update public.notification_outbox set category='allowance_low'where id=(select id from tn_fallback_saved);
+set local role service_role;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id)='stale','only the three original fallback categories are eligible')from tn_fallback_saved;
+reset role;
+update public.notification_outbox set category='render_ready'where id=(select id from tn_fallback_saved);
+update public.notification_outbox set payload='{"conflict":true}'where dedupe_key=(select dedupe_key||':email-fallback'from tn_fallback_saved);
+set local role service_role;
+select pg_temp.tn_ok(pg_temp.tn_fallback_is(id,'retry','queued')
+ and(select payload='{"conflict":true}'::jsonb from public.notification_outbox where dedupe_key=s.dedupe_key||':email-fallback'),
+ 'conflicting twin is not accepted or mutated and original claim retries')from tn_fallback_saved s;
+reset role;
+update public.notification_outbox set payload=s.payload,to_email='wrong@fixture.invalid'from tn_fallback_saved s
+ where notification_outbox.dedupe_key=s.dedupe_key||':email-fallback';
+set local role service_role;
+select pg_temp.tn_reclaim(id,3)from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback(id)='retry'and(select to_email='wrong@fixture.invalid'from public.notification_outbox where dedupe_key=s.dedupe_key||':email-fallback'),
+ 'conflicting twin address cannot be treated as idempotent success')from tn_fallback_saved s;
+reset role;
+delete from public.notification_outbox where dedupe_key=(select dedupe_key||':email-fallback'from tn_fallback_saved);
+create function pg_temp.tn_fail_fallback()returns trigger language plpgsql as $$begin
+ if new.dedupe_key=(select dedupe_key||':email-fallback'from tn_fallback_saved)then raise exception 'synthetic fallback insert failure';end if;return new;
+end$$;
+create trigger tn_fallback_failure before insert on public.notification_outbox for each row execute function pg_temp.tn_fail_fallback();
+set local role service_role;
+select pg_temp.tn_reclaim(id,3)from tn_fallback_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback_is(id,'retry','queued')
+ and not exists(select 1 from public.notification_outbox where dedupe_key=s.dedupe_key||':email-fallback'),
+ 'actual insert failure rolls back twin and retries the exact claim')from tn_fallback_saved s;
+reset role;
+drop trigger tn_fallback_failure on public.notification_outbox;
+set local role authenticated;
+do $$begin
+ begin perform public.notification_email_fallback_enqueue('e0175000-0000-4000-8000-000000000001',1,'{}','no live device for this user');
+  raise exception 'Authenticated caller was allowed to enqueue fallback';
+ exception when insufficient_privilege then null;end;
+end$$;
+reset role;
+select pg_temp.tn_ok(true,'actual authenticated caller is refused by fallback authority');
+-- The lead and upload cases exercise the two other already-eligible kinds.
+insert into public.leads(id,org_id,listing_id,render_id,name)select 'e0175000-0000-4000-8000-000000000001',l.org_id,l.listing,j.render_id,'Fictional fallback inquiry'
+ from tn_listings l join tn_jobs j using(n)where n=4;
+insert into public.upload_reservations(asset_id,org_id,listing_id,actor_id,day,spec,held_bytes,expires_at)
+ select 'e0175000-0000-4000-8000-000000000002',org_id,listing,agent,current_date,'{}',0,now()-interval '1 hour'from tn_listings where n=4;
+set local role service_role;
+select public.notification_enqueue(org_id,agent,'upload_stuck',jsonb_build_object('deep_link',null,'data',jsonb_build_object('asset_id','e0175000-0000-4000-8000-000000000002')),
+ 'tour-fixture-upload-stuck',null)from tn_listings where n=4;
+select pg_temp.tn_reclaim(id,1)from public.notification_outbox where category='lead_received'and payload#>>'{data,lead_id}'='e0175000-0000-4000-8000-000000000001';
+select pg_temp.tn_ok(pg_temp.tn_fallback(id)='queued','current lead fallback uses the same recipient and listing scope')
+ from public.notification_outbox where category='lead_received'and payload#>>'{data,lead_id}'='e0175000-0000-4000-8000-000000000001'and channel='push';
+select pg_temp.tn_reclaim(id,1)from public.notification_outbox where dedupe_key='tour-fixture-upload-stuck';
+select pg_temp.tn_ok(pg_temp.tn_fallback(id)='queued','current actor-owned stuck upload keeps its existing fallback')
+ from public.notification_outbox where dedupe_key='tour-fixture-upload-stuck';
+select public.notification_enqueue(org_id,agent,'render_ready',jsonb_build_object('data',jsonb_build_object('property_video_job_id','e0175000-0000-4000-8000-000000000003',
+ 'reel_job_id','e0175000-0000-4000-8000-000000000003','listing_id',listing)),'tour-fixture-unavailable-private-video',null)from tn_listings where n=4;
+select pg_temp.tn_reclaim(id,1)from public.notification_outbox where dedupe_key='tour-fixture-unavailable-private-video';
+select pg_temp.tn_ok(pg_temp.tn_fallback_is(id,'denied','skipped'),
+ 'unavailable private video cannot fall back to another route')from public.notification_outbox o where dedupe_key='tour-fixture-unavailable-private-video';
+reset role;
+update public.notification_outbox set channel='push'where id=(select id from tn_saved);
+set local role service_role;
+select pg_temp.tn_reclaim(id,1)from tn_saved;
+select pg_temp.tn_ok(pg_temp.tn_fallback_is(id,'denied','skipped')
+ and not exists(select 1 from public.notification_outbox where dedupe_key=s.dedupe_key||':email-fallback'),
+ 'revoked tour access atomically skips without a fallback twin')from tn_saved s;
+reset role;
+do $$begin if(select count(*)from tn_checks)<>52 then raise exception 'Tour notification assertion inventory changed';end if;end$$;
+select 'PASS tour notification access: 52 assertions';
 rollback;
