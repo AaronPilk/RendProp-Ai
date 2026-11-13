@@ -2998,13 +2998,16 @@ begin
             -- Callable RPCs and trigger functions have different privilege models.
             -- Redaction is deliberately SECURITY INVOKER; it can only be fired
             -- through its terminal-state outbox trigger, never called as an RPC.
-            (select count(*)=14 and bool_and(p.prosecdef
+            (select count(*)=15 and bool_and(p.prosecdef
                     and not has_function_privilege('authenticated',p.oid,'EXECUTE')
                     and not has_function_privilege('anon',p.oid,'EXECUTE')
                     and has_function_privilege('service_role',p.oid,'EXECUTE'))
                from pg_proc p where p.pronamespace='public'::regnamespace
                  and p.proname like 'notification\_%'
                  and p.prorettype<>'trigger'::regtype)
+              and exists(select 1 from pg_proc p
+                    where p.oid='public.notification_email_fallback_enqueue(uuid,integer,jsonb,text)'::regprocedure
+                      and p.proconfig=array['search_path=""']::text[])
               and (select not p.prosecdef and p.prorettype='trigger'::regtype
                      from pg_proc p where p.oid='public.notification_redact_code()'::regprocedure)
               and exists(select 1 from pg_trigger t where t.tgrelid='public.notification_outbox'::regclass
