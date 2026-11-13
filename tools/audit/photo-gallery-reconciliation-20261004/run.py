@@ -12,7 +12,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
-parser.add_argument('--inject-fault', choices=['drop-legacy-reconciliation', 'bypass-stage-review', 'latest-as-cover', 'blank-family-badges', 'forget-reviewed-stage'])
+parser.add_argument('--inject-fault', choices=['drop-legacy-reconciliation', 'bypass-stage-reference-review', 'latest-as-cover', 'blank-family-badges', 'forget-reviewed-stage'])
 parser.add_argument('--output-dir', type=Path)
 args = parser.parse_args()
 output = args.output_dir or Path(tempfile.mkdtemp(prefix='rendprop-photo-reconciliation-', dir=os.environ.get('RUNNER_TEMP')))
@@ -37,16 +37,18 @@ if args.inject_fault == 'drop-legacy-reconciliation':
     _, opening, end = method_span(body, 'private static func loadUnlocked(')
     body = body[:opening] + '{ return try readIndex(directory: directory) }' + body[end:]
     expected = 'first capture reconciles every pre-history gallery sibling'
-elif args.inject_fault == 'bypass-stage-review':
-    guard = '        guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }\n'
-    assert body.count(guard) == 2
-    body = body.replace(guard, '')
-    expected = 'staging cannot bypass review through cover selection'
+elif args.inject_fault == 'bypass-stage-reference-review':
+    start, _, end = method_span(body, 'static func stagingReference(')
+    section = body[start:end]
+    guard = '              version.stagingReviewed == true, !index.hiddenFamilies.contains(version.familyID)'
+    assert section.count(guard) == 1
+    body = body[:start] + section.replace(guard, '              !index.hiddenFamilies.contains(version.familyID)') + body[end:]
+    expected = 'unreviewed staging cannot be a furnishing reference'
 elif args.inject_fault == 'forget-reviewed-stage':
-    reviewed = ' || version.stagingReviewed == true'
-    assert body.count(reviewed) == 2
-    body = body.replace(reviewed, '')
-    expected = 'previously reviewed staging can be reselected for publication'
+    marker = '        if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }\n'
+    assert body.count(marker) == 2
+    body = body.replace(marker, '')
+    expected = 'explicit source/access/room review persists for reference eligibility'
 elif args.inject_fault == 'latest-as-cover':
     start, _, end = method_span(body, 'static func availableCoverVersion(')
     section = body[start:end]

@@ -1,5 +1,6 @@
 // LIVE SUPPORT
     var requests: [URLRequest] = []
+    var invalidationsAtDispatch: [Int] = []
     var response = Data()
     var onExecute: (() -> Void)?
     var brand: CloudBrand!
@@ -10,12 +11,20 @@
         return request
     }
     func execute(_ request: URLRequest) async throws -> Data {
-        requests.append(request); await Task.yield(); onExecute?(); return response
+        requests.append(request); invalidationsAtDispatch.append(MeReadCoalescer.shared.invalidations)
+        await Task.yield(); onExecute?(); return response
     }
     func decodeExact<T: Decodable>(_ data: Data) throws -> T { try JSONDecoder().decode(T.self, from: data) }
     func cloudBrand() async throws -> CloudBrand { await Task.yield(); onExecute?(); return brand }
 // END LIVE SUPPORT
 // FIXTURE START
+// Cache storage/network behavior has its own actual coalescer harness. This
+// boundary counts invalidations made by the unchanged profile write methods.
+@MainActor final class MeReadCoalescer {
+    static let shared = MeReadCoalescer()
+    private(set) var invalidations = 0
+    func invalidate() { invalidations += 1 }
+}
 @MainActor final class WorkspaceStore {
     static let shared = WorkspaceStore()
     func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID }
@@ -167,7 +176,9 @@ enum FileStore {
         let live = ClosedLive()
         live.response = try JSONEncoder().encode(retry)
         let wireOperation = UUID()
+        let beforeLogoUpload = MeReadCoalescer.shared.invalidations
         _ = try await live.uploadBusinessLogo(image: image, contentType: "image/png", expectedLogoURL: nil, operationID: wireOperation, orgID: org)
+        try expect(live.invalidationsAtDispatch.last == beforeLogoUpload + 1 && MeReadCoalescer.shared.invalidations == beforeLogoUpload + 2, "Actual logo upload invalidates shared reads before and after its write")
         let request = live.requests[0], body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
         try expect(request.url?.path == "/me/brand/logo" && request.httpMethod == "POST", "Actual upload method uses dedicated logo route")
         try expect(request.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Actual upload method dispatches captured org header")
@@ -181,7 +192,9 @@ enum FileStore {
         try await rejects("Actual upload rejects oversized raster before dispatch") { _ = try await live.uploadBusinessLogo(image: Data(repeating: 0, count: 512 * 1024 + 1), contentType: "image/png", expectedLogoURL: nil, operationID: wireOperation, orgID: org) }
         try expect(live.requests.count == previousCalls, "Invalid raster does not dispatch")
         live.response = try JSONEncoder().encode(BusinessLogoReceipt(ok: true, orgID: org, businessLogoURL: nil))
+        let beforeLogoRemoval = MeReadCoalescer.shared.invalidations
         _ = try await live.removeBusinessLogo(expectedLogoURL: retry.businessLogoURL, orgID: org)
+        try expect(live.invalidationsAtDispatch.last == beforeLogoRemoval + 1 && MeReadCoalescer.shared.invalidations == beforeLogoRemoval + 2, "Actual logo removal invalidates shared reads before and after its write")
         let deletion = live.requests.last!, deletionBody = try JSONSerialization.jsonObject(with: deletion.httpBody!) as! [String: Any]
         try expect(deletion.httpMethod == "POST" && deletion.url?.path == "/me/brand/logo/clear" && deletionBody["expected_logo_url"] as? String == retry.businessLogoURL, "Actual removal uses safe dedicated CAS POST with previous hosted URL")
 
@@ -248,7 +261,9 @@ enum FileStore {
         try PersonalCardStore.accept(.init(ok: true, userID: owner, spaceType: SpaceType.realEstate.rawValue, publicCard: ["name": "Older hosted name"]))
         try expect(AgentCard.current.brandFields == savedBeforeForeign, "Hosted read cannot replace pending personal edit")
         live.response = try JSONEncoder().encode(personalSaved)
+        let beforePersonalSave = MeReadCoalescer.shared.invalidations
         _ = try await live.savePersonalCard(personalFields, spaceType: SpaceType.realEstate.rawValue, expected: empty)
+        try expect(live.invalidationsAtDispatch.last == beforePersonalSave + 1 && MeReadCoalescer.shared.invalidations == beforePersonalSave + 2, "Actual personal Save invalidates shared reads before and after its write")
         let personalRequest = live.requests.last!, personalBody = try JSONSerialization.jsonObject(with: personalRequest.httpBody!) as! [String:Any]
         let changes = personalBody["changes"] as! [String:Any], expected = personalBody["expected"] as! [String:[String:Any]]
         try expect(personalRequest.url?.path == "/me/card" && personalRequest.httpMethod == "PATCH", "Explicit personal Save uses account-only card route")

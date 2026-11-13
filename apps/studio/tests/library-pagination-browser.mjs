@@ -14,6 +14,7 @@ const faultArg=process.argv.find(x=>x.startsWith("--fault="));
 const fault=faultArg?.split("=")[1]??null;
 assert(process.argv.slice(2).every(x=>x===beforeArg||x===faultArg));
 const FAULTS={
+ "keep-aging-links":["Date.parse(expiresAt) - now >= LINK_KEEP_MS","true"],
  "clear-same-scope":["    const depth = mediaDepth.current.pages;","    setMedia(null);\n    const depth = mediaDepth.current.pages;"],
  "forget-pending-depth":["    mediaDepth.current.pages++;","    // omitted pending page depth"],
  "retain-unverified":[
@@ -24,7 +25,7 @@ const FAULTS={
 assert(!fault||Object.hasOwn(FAULTS,fault));assert(!(beforeArg&&fault));
 const artifacts=await mkdtemp(join(tmpdir(),"rendprop-library-pagination-")),dist=join(artifacts,"dist");
 const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
-const files=["src/App.tsx","src/data/services.ts","src/data/contracts.ts","tests/fixtures/library-pagination.tsx","tests/fixtures/library-pagination.html","tests/library-pagination-browser.mjs"];
+const files=["src/App.tsx","src/data/services.ts","src/data/contracts.ts","src/data/media-cache.ts","tests/fixtures/library-pagination.tsx","tests/fixtures/library-pagination.html","tests/library-pagination-browser.mjs"];
 const sourceHashes=Object.fromEntries(await Promise.all(files.map(async n=>[n,sha(await readFile(join(root,n)))])));
 const receipt={status:"running",fault,baseline:!!beforeArg,artifacts,sourceHashes,checks:[],errors:[],externalRequests:[],proof:"Actual App + createStudioServices; closed Auth/fetch and existing synthetic thumbnails; no provider, writes, media export or deployed claim."};
 let browser,server,page,context,changed=false;
@@ -59,7 +60,7 @@ try{
  const before=beforeArg?await readFile(beforeArg.slice("--baseline-app=".length),"utf8"):null;
  if(before)receipt.baselineAppSHA256=sha(before);
  await build({configFile:false,root,publicDir:"public",logLevel:"error",plugins:[{name:"closed-library-pagination-control",enforce:"pre",transform(code,id){
-  if(!id.endsWith("/src/App.tsx"))return;
+  if(!id.endsWith(fault==="keep-aging-links"?"/src/data/media-cache.ts":"/src/App.tsx"))return;
   if(before){changed=true;return before;}
   if(fault){const specs=Array.isArray(FAULTS[fault][0])?FAULTS[fault]:[FAULTS[fault]];for(const[a,b]of specs){assert.equal(code.split(a).length-1,1,"Exact pagination omission anchor");code=code.replace(a,b);}changed=true;return code;}
  }}],build:{outDir:dist,rollupOptions:{input:join(root,"tests/fixtures/library-pagination.html")}}});
@@ -85,9 +86,30 @@ try{
  await expect(page.locator(".media-card strong").last()).toHaveText("A Own House photo101");
  check("User can open the third page beyond100 without a permanent page-size cap or reordering");
  const initialSrc=await page.locator(".media-card img").first().getAttribute("src");
+ const orderedCaptions=await page.locator(".media-card strong").allTextContents();
+ const beforePassive=(await mediaCalls()).length;
  await control("renew");await control("holdDirectory");await focus();await expect(page.getByText("Connecting…",{exact:true})).toBeVisible();await expect(cards()).toHaveCount(101);await control("releaseDirectory");await settled();await expect(page.getByText("Loading media…",{exact:true})).toHaveCount(0);await expect(cards()).toHaveCount(101);
- await expect.poll(()=>page.locator(".media-card img").first().getAttribute("src")).not.toBe(initialSrc);
- check("Completed depth and ordered rows survive passive refresh while private URLs renew atomically");
+ await expect.poll(async()=> (await mediaCalls()).length).toBeGreaterThanOrEqual(beforePassive+3);
+ await expect(page.locator(".media-card img").first(),"FRESH_PRIVATE_LINK_RETENTION: a still-good link must not download twice").toHaveAttribute("src",initialSrc);
+ assert.deepEqual(await page.locator(".media-card strong").allTextContents(),orderedCaptions);
+ check("Completed depth and ordered rows survive passive refresh; all three pages are read while still-fresh private URLs remain stable");
+ const initialExpiry=JSON.parse(Buffer.from(new URL(initialSrc).pathname.split("/").at(-1).split(".")[0],"base64url").toString()).exp;
+ assert(Number.isSafeInteger(initialExpiry));
+ assert(initialExpiry*1000-await page.evaluate(()=>Date.now())>=240_000,"Displayed link is still inside the four-minute keep policy");
+ const agingNow=initialExpiry*1000-120_000;
+ assert(agingNow>await page.evaluate(()=>Date.now()),"Fixture link must initially be outside the renewal margin");
+ // Date-only emulation keeps real timers and all existing wait limits running.
+ await page.clock.setFixedTime(agingNow);
+ receipt.agingClock={remainingLinkLifeMs:initialExpiry*1000-await page.evaluate(()=>Date.now()),timers:"real; Date only"};
+ assert.equal(receipt.agingClock.remainingLinkLifeMs,120_000);
+ const beforeAging=(await mediaCalls()).length;
+ await control("renew");await control("holdDirectory");await focus();await expect(page.getByText("Connecting…",{exact:true})).toBeVisible();await expect(cards()).toHaveCount(101);await control("releaseDirectory");await settled();await expect(page.getByText("Loading media…",{exact:true})).toHaveCount(0);await expect(cards()).toHaveCount(101);
+ await expect.poll(async()=> (await mediaCalls()).length).toBeGreaterThanOrEqual(beforeAging+3);
+ await expect.poll(()=>page.locator(".media-card img").first().getAttribute("src"),{message:"AGING_PRIVATE_LINK_RENEWAL: replace a private link inside its renewal margin"}).not.toBe(initialSrc);
+ const renewedSrc=await page.locator(".media-card img").first().getAttribute("src");
+ assert(JSON.parse(Buffer.from(new URL(renewedSrc).pathname.split("/").at(-1).split(".")[0],"base64url").toString()).exp>initialExpiry,"Renewal supplies a later expiry, not just a different URL");
+ assert.deepEqual(await page.locator(".media-card strong").allTextContents(),orderedCaptions);
+ check("A private link with two minutes left is replaced after all three fresh pages arrive;101 ordered rows remain intact");
  const beforeExplicit=(await mediaCalls()).length;await page.getByRole("button",{name:"Refresh library",exact:true}).click();await expect.poll(async()=> (await mediaCalls()).length).toBeGreaterThanOrEqual(beforeExplicit+3);await settled();await expect(page.getByText("Loading media…",{exact:true})).toHaveCount(0);await expect(cards()).toHaveCount(101);
  check("Explicit Refresh library also renews all previously loaded pages");
  await page.screenshot({path:join(artifacts,"library-desktop.png")});

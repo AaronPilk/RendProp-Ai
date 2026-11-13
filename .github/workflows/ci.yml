@@ -368,7 +368,7 @@ jobs:
             python3 tools/audit/apple-code-session-20261004/run.py --inject-fault "$fault"
           done
           python3 tools/audit/native-media-export-20261004/run.py
-          for fault in drop-permission-context drop-listing-binding drop-csv-context drop-completion-context drop-presentation-actor drop-presentation-workspace drop-custom-download-review; do
+          for fault in drop-permission-context drop-listing-binding drop-csv-context drop-completion-context drop-presentation-actor drop-presentation-workspace replace-custom-file; do
             python3 tools/audit/native-media-export-20261004/run.py --inject-fault "$fault"
           done
       - name: Ordinary listing intent and shared-version review
@@ -397,7 +397,7 @@ jobs:
       - name: Legacy photo galleries, cover review and per-family selection
         run: |
           python3 tools/audit/photo-gallery-reconciliation-20261004/run.py
-          for fault in drop-legacy-reconciliation bypass-stage-review latest-as-cover blank-family-badges; do
+          for fault in drop-legacy-reconciliation bypass-stage-reference-review latest-as-cover blank-family-badges; do
             python3 tools/audit/photo-gallery-reconciliation-20261004/run.py --inject-fault "$fault"
           done
       - name: Listing unit fields and real estate metadata survive editing

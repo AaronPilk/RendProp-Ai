@@ -14,7 +14,7 @@ is copied with only its SwiftUI `@State` wrapper removed. Source and extracted-b
 hashes, compiler/runtime logs and receipts are retained. The only filesystem
 operations use synthetic source files and the operation's own temporary outputs.
 
-The 110 assertions check valid original/photo/video/CSV exports; rejection of a
+The assertions check valid original/photo/video/CSV exports; rejection of a
 previous screen scheduling new requests after an account or workspace change; account,
 session and workspace changes during a download or permission prompt; exact
 listing/server/workspace binding changes; deletion and lost listing access;
@@ -22,6 +22,12 @@ cancellation; permission denial; unchanged original source bytes; removal of
 owned returned downloads; and silent completion after Photos has already begun.
 CSVs use a unique owned directory so another export with the same filename cannot
 replace a share sheet's attachment.
+
+Saved custom edits can be downloaded without a mandatory review, matching the
+12 November 2026 owner policy. The fixture records the exact image-file URL
+passed to Photos and checks that saving does not rewrite the source, the stored
+review marker, or the listing/editing selection. The same saved custom file is
+used for the photo permission and identity-change cases.
 
 Each fault must compile and then fail its named runtime assertion:
 
@@ -32,6 +38,7 @@ python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-csv-
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-completion-context
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-presentation-actor
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-presentation-workspace
+python3 tools/audit/native-media-export-20261004/run.py --inject-fault replace-custom-file
 ```
 
 Passing these offline checks does not certify real Files/Photos delivery or

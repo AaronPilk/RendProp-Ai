@@ -28,7 +28,7 @@ def block(source, marker):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--inject-fault", choices=["drop-permission-context", "drop-listing-binding", "drop-csv-context", "drop-completion-context", "drop-presentation-actor", "drop-presentation-workspace", "drop-custom-download-review"])
+    parser.add_argument("--inject-fault", choices=["drop-permission-context", "drop-listing-binding", "drop-csv-context", "drop-completion-context", "drop-presentation-actor", "drop-presentation-workspace", "replace-custom-file"])
     args = parser.parse_args()
     raw = SOURCE.read_bytes()
     source = raw.decode()
@@ -56,11 +56,12 @@ def main():
         assert bodies["__SAVER__"].count(needle) == 5
         bodies["__SAVER__"] = bodies["__SAVER__"].replace(needle, "        // injected missing permission admission")
         expected = "permission change prevents Photos transaction"
-    elif args.inject_fault == "drop-custom-download-review":
-        needle = "        try PhotoVersionHistory.requireDownloadReview(imageURL: url)"
-        assert bodies["__SAVER__"].count(needle) == 2
-        bodies["__SAVER__"] = bodies["__SAVER__"].replace(needle, "        // injected missing persisted custom download review")
-        expected = "unreviewed custom raw save never requests a Photos write"
+    elif args.inject_fault == "replace-custom-file":
+        needle = "_ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)"
+        assert bodies["__SAVER__"].count(needle) == 1
+        bodies["__SAVER__"] = bodies["__SAVER__"].replace(needle,
+            '_ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url.deletingLastPathComponent().appendingPathComponent("orig-capture.jpg"))')
+        expected = "Photos receives the exact intended custom file"
     elif args.inject_fault == "drop-listing-binding":
         needle = "            return current.serverID == snapshot.serverID && current.serverOrgID == snapshot.serverOrgID"
         assert bodies["__ADMISSION__"].count(needle) == 1

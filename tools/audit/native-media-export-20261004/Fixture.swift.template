@@ -15,10 +15,11 @@ final class PhotoBoundary {
     private var write: CheckedContinuation<Void, Error>?
     private var holdWrite = false, failWrite = false
     private var attempts = 0, creations = 0, successes = 0
+    private var imageFiles: [URL] = []
     private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
     func reset(_ status: PHAuthorizationStatus = .authorized, hold: Bool = false, fail: Bool = false) {
         locked { precondition(permission == nil && write == nil); self.status = status
-            holdWrite = hold; failWrite = fail; attempts = 0; creations = 0; successes = 0 }
+            holdWrite = hold; failWrite = fail; attempts = 0; creations = 0; successes = 0; imageFiles = [] }
     }
     var authorization: PHAuthorizationStatus { locked { status } }
     var waitingPermission: Bool { locked { permission != nil } }
@@ -26,6 +27,7 @@ final class PhotoBoundary {
     var writeAttempts: Int { locked { attempts } }
     var creationRequests: Int { locked { creations } }
     var completedWrites: Int { locked { successes } }
+    var imageFileURLs: [URL] { locked { imageFiles } }
     func request(_ continuation: CheckedContinuation<PHAuthorizationStatus, Never>) { locked { permission = continuation } }
     func permit(_ status: PHAuthorizationStatus) {
         let continuation = locked { let c = permission; permission = nil; self.status = status; return c }
@@ -33,6 +35,7 @@ final class PhotoBoundary {
     }
     func beginWrite() { locked { attempts += 1 } }
     func create() { locked { creations += 1 } }
+    func createImage(at url: URL) { locked { creations += 1; imageFiles.append(url) } }
     func finish(_ continuation: CheckedContinuation<Void, Error>) {
         let flags = locked { () -> (Bool, Bool) in
             if holdWrite { write = continuation }
@@ -62,7 +65,7 @@ final class PHPhotoLibrary {
 }
 enum PHAssetChangeRequest {
     static func creationRequestForAsset(from image: UIImage) -> Int { PhotoBoundary.shared.create(); return 1 }
-    static func creationRequestForAssetFromImage(atFileURL url: URL) -> Int? { PhotoBoundary.shared.create(); return 1 }
+    static func creationRequestForAssetFromImage(atFileURL url: URL) -> Int? { PhotoBoundary.shared.createImage(at: url); return 1 }
     static func creationRequestForAssetFromVideo(atFileURL url: URL) -> Int { PhotoBoundary.shared.create(); return 1 }
 }
 @MainActor enum Haptics { static var successes = 0; static func selection() {}; static func success() { successes += 1 } }
@@ -203,18 +206,26 @@ __FILENAME__
         let custom = try PhotoVersionHistory.saveEdit(jpeg: Data("synthetic-custom-preview".utf8), id: "custom", parentID: "capture", sourceID: "capture",
             edit: "custom", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: historyDirectory)
         let customURL = historyDirectory.appendingPathComponent(custom.imageFile)
+        let beforeSave = try PhotoVersionHistory.load(directory: historyDirectory)
         reset(); let unreviewed = Harness(); unreviewed.local(customURL)
         await until("unreviewed raw save") { !unreviewed.isSavingFile }
-        check(boundary.writeAttempts == 0 && unreviewed.savedFiles.isEmpty, "unreviewed custom raw save never requests a Photos write")
-        check(unreviewed.filesNoteOK == false && unreviewed.filesNote?.contains("Compare this edit") == true,
-              "unreviewed raw download gives the comparison action without success feedback")
+        check(boundary.writeAttempts == 1 && boundary.completedWrites == 1 && unreviewed.savedFiles.count == 1,
+              "saved custom raw file completes once without mandatory review")
+        check(boundary.imageFileURLs == [customURL], "Photos receives the exact intended custom file")
+        check(unreviewed.filesNoteOK && unreviewed.filesNote != nil,
+              "saved custom raw download reports its actual successful write")
         check(try PhotoVersionHistory.load(directory: historyDirectory).versions[custom.id]?.customReviewed == false,
-              "failed raw download cannot approve the custom result")
+              "raw download does not rewrite the stored custom review marker")
+        let afterSave = try PhotoVersionHistory.load(directory: historyDirectory)
+        check(beforeSave.current == afterSave.current && beforeSave.listingSelections == afterSave.listingSelections,
+              "raw custom download does not change listing or editing selection")
+        check(try Data(contentsOf: customURL) == Data("synthetic-custom-preview".utf8),
+              "raw custom download preserves the exact stored output bytes")
         reset(); let retainedOriginal = Harness(); retainedOriginal.local(historyDirectory.appendingPathComponent("orig-capture.jpg"))
         await until("original raw save") { !retainedOriginal.isSavingFile }
         check(boundary.completedWrites == 1 && retainedOriginal.savedFiles.count == 1, "retained original still saves without approving a custom edit")
         check(try PhotoVersionHistory.load(directory: historyDirectory).versions[custom.id]?.customReviewed == false,
-              "raw original save preserves the custom review requirement")
+              "raw original save preserves the stored custom review marker")
         let beforeReview = try PhotoVersionHistory.load(directory: historyDirectory)
         try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: custom.imageFile, sourceFile: "orig-capture.jpg",
             review: .init(comparedSource: true, fixedFeaturesMatch: true, colorsAndMaterialsMatch: true, onlyRequestedChange: true), directory: historyDirectory)
@@ -260,9 +271,10 @@ __FILENAME__
         check(URLSession.shared.downloads == 0 && boundary.writeAttempts == 0, "stale loaded provenance cannot start a download")
 
         for video in [false, true] {
+            let localURL = video ? original! : customURL
             for mode in ["account", "session", "workspace", "listing", "org", "deleted", "unavailable"] {
                 reset(); boundary.reset(.notDetermined); let changed = Harness()
-                changed.local(original, video: video)
+                changed.local(localURL, video: video)
                 await until("local permission") { boundary.waitingPermission }
                 change(mode, changed); boundary.permit(.authorized)
                 await until("local denied context") { !changed.isSavingFile }
@@ -270,14 +282,14 @@ __FILENAME__
                 check(changed.savedFiles.isEmpty && changed.filesNote == nil && Haptics.successes == 0, "stale local completion remains silent")
                 try sourceSafe()
             }
-            reset(); let normalFile = Harness(); normalFile.local(original, video: video)
+            reset(); let normalFile = Harness(); normalFile.local(localURL, video: video)
             await until("normal file") { !normalFile.isSavingFile }
             check(boundary.completedWrites == 1 && normalFile.savedFiles.count == 1, "valid photo/video writes and confirms once")
-            reset(); boundary.reset(.notDetermined); let denied = Harness(); denied.local(original, video: video)
+            reset(); boundary.reset(.notDetermined); let denied = Harness(); denied.local(localURL, video: video)
             await until("denied permission") { boundary.waitingPermission }; boundary.permit(.denied)
             await until("denied completion") { !denied.isSavingFile }
             check(boundary.writeAttempts == 0 && denied.filesNoteOK == false && denied.filesNote != nil, "permission denial reports failure without writing")
-            reset(); boundary.reset(.authorized, hold: true); let begun = Harness(); begun.local(original, video: video)
+            reset(); boundary.reset(.authorized, hold: true); let begun = Harness(); begun.local(localURL, video: video)
             await until("begun write") { boundary.waitingWrite }; change("session", begun); boundary.completeWrite()
             await until("begun completion") { !begun.isSavingFile }
             check(boundary.completedWrites == 1 && begun.savedFiles.isEmpty && Haptics.successes == 0, "already begun Photos completion cannot mark replacement session saved")

@@ -12,6 +12,7 @@ import { NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
 import {testExportDiagnosticsOption, startExportDiagnostics} from "./export-diagnostics.mjs";
 import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
 import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
+import { emitFailureAnnotation } from "./ci-failure-annotation.mjs";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
 const {args: audioArgs, audioOutput} = testAudioOutputOption(process.argv.slice(2));
@@ -30,7 +31,7 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
-const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", ...["export", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/ci-failure-annotation.mjs", ...["export", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
 const receipt = { sourceHashes, audioOutput, diagnostics, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
@@ -616,4 +617,5 @@ finally {
       deliveredFrames: trace.filter(value => value.event === "export.frame.delivered").length})),
     failure: receipt.failure?.split("\n")[0], firstRecordedRefusal,
     errors: receipt.errors, externalRequests: receipt.externalRequests }, null, 2));
+  emitFailureAnnotation("export-resume", receipt);
 }
