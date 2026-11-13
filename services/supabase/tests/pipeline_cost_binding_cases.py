@@ -232,7 +232,17 @@ class PipelineCostTests(unittest.TestCase):
   # The funded-slice authority is the gross hold, unchanged by the binding; only the ceiling projection discounts.
   self.assertEqual((gross,s['ledger_count'],s['links']),(4,1,1))
   pins=query("select jsonb_build_object('reserve',(select md5(prosrc)from pg_proc where oid='public.serving_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,text)'::regprocedure),'trial',(select md5(prosrc)from pg_proc where oid='public.trial_sponsor_spent_cents()'::regprocedure),'envelope',(select md5(prosrc)from pg_proc where oid='public.library_serving_envelope_admit(uuid,uuid,numeric,text)'::regprocedure))",False)
-  self.assertEqual(pins,{'reserve':'ad74fc3661a01265782e8b743e0cfb99','trial':'69a9c6f22be06ded89cf6d9aaa82b1e6','envelope':'6aa21e77680f2e8f4b479b9a9b24fc7b'},'funded-slice, trial-gross and envelope authorities must be byte-identical to the current hybrid-trial head')
+  self.assertEqual(pins,{'reserve':'ad74fc3661a01265782e8b743e0cfb99','trial':'69a9c6f22be06ded89cf6d9aaa82b1e6','envelope':'140343fe91d6affb661ce14aadda02e5'},'funded-slice and trial-gross authorities stay exact; envelope includes only the reviewed per-user trial allowance')
+  # 20261112223000 changes this one trial conditional, not funded/gross authority.
+  old_trial=" if kind='trial' then\n  perform pg_advisory_xact_lock(hashtextextended('serving:trial-sponsor',72452));"
+  per_user_trial=""" -- Per-user trial allowance (owner decision 2026-11-12): the workspace's own
+ -- trial ceiling above is the bound. In that mode the shared sponsor window
+ -- and cap refuse nobody; ops_health_findings() reports total trial spend.
+ if kind='trial' and public.subscription_trial_admission_mode()<>'per_user' then
+  perform pg_advisory_xact_lock(hashtextextended('serving:trial-sponsor',72452));"""
+  envelope=query("select to_jsonb(prosrc)from pg_proc where oid='public.library_serving_envelope_admit(uuid,uuid,numeric,text)'::regprocedure",False)
+  self.assertEqual(envelope.count(per_user_trial),1,'the exact reviewed per-user trial replacement occurs once')
+  self.assertEqual(hashlib.md5(envelope.replace(per_user_trial,old_trial,1).encode()).hexdigest(),'6aa21e77680f2e8f4b479b9a9b24fc7b','reversing only the approved trial conditional restores every legacy authority byte')
  def test_new_relation_and_rpc_are_service_only_and_unique(self):
   rel='public.pipeline_provider_cost_bindings';rec='public.pipeline_record_provider_cost(uuid,uuid,uuid,text,text,text,text,text,uuid,text,numeric,numeric,numeric,jsonb)';cov='public.pipeline_cost_covered_cents(uuid,timestamptz,timestamptz)'
   acl=query("select jsonb_build_object('anon_table',has_table_privilege('anon',"+lit(rel)+",'SELECT,INSERT,UPDATE,DELETE'),'authenticated_table',has_table_privilege('authenticated',"+lit(rel)+",'SELECT,INSERT,UPDATE,DELETE'),'service_write',has_table_privilege('service_role',"+lit(rel)+",'INSERT,UPDATE,DELETE'),'service_select',has_table_privilege('service_role',"+lit(rel)+",'SELECT'),'rls',(select relrowsecurity from pg_class where oid="+lit(rel)+"::regclass),'policies',(select count(*)from pg_policy where polrelid="+lit(rel)+"::regclass),'anon_rpc',has_function_privilege('anon',"+lit(rec)+",'execute')or has_function_privilege('anon',"+lit(cov)+",'execute'),'authenticated_rpc',has_function_privilege('authenticated',"+lit(rec)+",'execute')or has_function_privilege('authenticated',"+lit(cov)+",'execute'),'service_rpc',has_function_privilege('service_role',"+lit(rec)+",'execute')and has_function_privilege('service_role',"+lit(cov)+",'execute'),'definer',(select bool_and(prosecdef and proconfig=array['search_path=\"\"'])from pg_proc where oid in("+lit(rec)+"::regprocedure,"+lit(cov)+"::regprocedure)))",False)

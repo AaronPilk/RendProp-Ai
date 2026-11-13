@@ -160,9 +160,12 @@ EXECUTOR
 
 test('actual team transport fences invite and join identity and retains selected workspace headers', () => {
   const source = readFileSync(new URL('../../apps/ios/Rendprop/Team/TeamAPI.swift', import.meta.url), 'utf8');
+  const config = readFileSync(new URL('../../apps/ios/Rendprop/Config.swift', import.meta.url), 'utf8');
+  assert.ok(config.includes('static let edgeFunctionRegion = "us-west-2"'));
+  assert.ok(config.includes('static let edgeFunctionRegionHeader = "x-region"'));
   const scaffold = String.raw`
 import Foundation
-enum Config { static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1"); static let supabaseAnonKey = "fixture" }
+enum Config { static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1"); static let supabaseAnonKey = "fixture"; static let edgeFunctionRegion = "us-west-2"; static let edgeFunctionRegionHeader = "x-region" }
 enum CloudSyncError: Error { case identityChanged }
 // The selected content library and stable account purchase root are separate.
 // This fixture never derives parent billing authority from a display role.
@@ -203,6 +206,7 @@ enum CloudSyncError: Error { case identityChanged }
    let invite = try await TeamAPI.invite(email: nil)
    try check(invite.emailQueued == true, "Queued delivery decodes without claiming delivered")
    try check(URLSession.shared.requests.first?.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Team write pins selected workspace")
+   try check(URLSession.shared.requests.first?.value(forHTTPHeaderField: "x-region") == "us-west-2", "Team invite selects the production edge region")
    auth.reset(a); auth.onToken = { auth.change(b) }; try await denied()
    try check(URLSession.shared.requests.isEmpty, "Initial refresh switch sends nothing")
    auth.reset(a); URLSession.shared.onSend = { auth.change(b) }; try await denied()
@@ -213,6 +217,7 @@ enum CloudSyncError: Error { case identityChanged }
    let summary = try await TeamAPI.summary()
    try check(UUID(uuidString: summary.orgId) == billing, "Team summary binds stable purchase root while viewing another library")
    try check(URLSession.shared.requests.last?.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Team summary keeps logical content header instead of granting parent content")
+   try check(URLSession.shared.requests.last?.value(forHTTPHeaderField: "x-region") == "us-west-2", "Team summary selects the production edge region")
    auth.reset(a); URLSession.shared.responseJSON = summaryJSON(actor: b, content: org, billing: billing)
    try await deniedSummary("Other actor's parent summary was accepted")
    auth.reset(a); URLSession.shared.responseJSON = summaryJSON(actor: a, content: b, billing: billing)

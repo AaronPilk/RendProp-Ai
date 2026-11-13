@@ -46,7 +46,7 @@ try:
    out=run('own-boundary-replay',[*PSQL,'-Atq','-f',FIX]);receipt['ownBoundaryReplay']=next(json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x)
  catalog="select jsonb_agg(jsonb_build_object('oid',p.oid,'definition',pg_get_functiondef(p.oid),'acl',p.proacl)order by p.oid)from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'and p.prokind in('f','p')"
  before=run('catalog-before-ancestor-replay',[*PSQL,'-Atq','-c',catalog])
- run('current-head-refuses-ancestor-replay',[*PSQL,'-q','-1','-f',CANDIDATE],refuses='Review changed ordinary assembly Resume')
+ run('current-head-refuses-ancestor-replay',[*PSQL,'-q','-1','-f',CANDIDATE],refuses='Review changed retained assembly snapshot authority')
  after=run('catalog-after-ancestor-replay',[*PSQL,'-Atq','-c',catalog]);assert before==after,'Ancestor replay changed current function catalog'
  receipt['ancestorReplay']={'refused':True,'fullPublicFunctionCatalogUnchanged':True,'catalogSHA256':hashlib.sha256(after.encode()).hexdigest()}
  receipt['functionMD5s']=json.loads(run('function-hashes',[*PSQL,'-Atq','-c',"select json_object_agg(p.oid::regprocedure::text,md5(p.prosrc))from pg_proc p where p.oid in('public.property_video_compose_history_guard()'::regprocedure,'public.property_video_job_claim(uuid,text)'::regprocedure,'public.property_video_job_resume(uuid,uuid,numeric)'::regprocedure)"]))

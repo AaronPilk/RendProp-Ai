@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 test('actual workspace state preserves per-account choices, validates membership and fences late replies', () => {
  const base = new URL('../../apps/ios/Rendprop/Workspace/', import.meta.url);
+ const config = readFileSync(new URL('../../apps/ios/Rendprop/Config.swift', import.meta.url), 'utf8');
+ assert.ok(config.includes('static let edgeFunctionRegion = "us-west-2"'));
+ assert.ok(config.includes('static let edgeFunctionRegionHeader = "x-region"'));
  const out = mkdtempSync(join(tmpdir(), 'rendprop-workspace-'));
  const fixture = String.raw`
 import Foundation
@@ -23,7 +26,7 @@ final class UserDefaults {
  func removeObject(forKey key: String) { storage.removeObject(forKey: key) }
  static func clear() { Foundation.UserDefaults(suiteName: suite)!.removePersistentDomain(forName: suite) }
 }
-enum Config { static let useLiveBackend = true; static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1"); static let supabaseAnonKey = "fixture" }
+enum Config { static let useLiveBackend = true; static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1"); static let supabaseAnonKey = "fixture"; static let edgeFunctionRegion = "us-west-2"; static let edgeFunctionRegionHeader = "x-region" }
 enum CloudSyncError: Error { case identityChanged, invalidResponse }
 enum APIError: Error { case notConfigured, badResponse(Int), decoding, server(status: Int, code: String?, message: String) }
 enum UserFacingError { static func message(_ error: Error, fallback: String) -> String { fallback } }
@@ -67,6 +70,7 @@ extension Notification.Name { static let rendpropPlanChanged = Notification.Name
    try check(auth.syncSessionRevision == revision + 1 && WorkspaceContext.selectedOrgID == b, "Selection advances shared response epoch")
    let body = try JSONSerialization.jsonObject(with: transport.requests.last!.httpBody!) as! [String: String]
    try check(body["org_id"] == b.uuidString.lowercased(), "Server selection writes only requested workspace")
+   try check(transport.requests.last?.value(forHTTPHeaderField: "x-region") == "us-west-2", "Workspace selection uses the production edge region")
    let reopened = WorkspaceStore()
    try check(reopened.snapshot?.selectedOrgID == b && reopened.selected == nil, "Relaunch retains choice but cached delegation cannot reopen another agent's cards")
    try transport.answer(directory(active: a)); await reopened.refresh()

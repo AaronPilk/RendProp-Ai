@@ -88,6 +88,20 @@ grant select on snapshot to service_role,authenticated;
 create function pg_temp.available()returns boolean language plpgsql security definer as $$begin return property_video_compose_resume_available((select id from cj));end$$;
 create function pg_temp.deny_change(command text,label text)returns void language plpgsql as $$declare denied boolean;begin
  begin execute'set local session_replication_role=replica';execute command;execute'set local session_replication_role=origin';execute'set local role service_role';begin denied:=not pg_temp.available();exception when sqlstate'P0001'then if sqlerrm not like'RP404:%'and sqlerrm not like'RP409:%'then raise;end if;denied:=true;end;execute'reset role';raise exception using errcode='PZ001',message='rollback synthetic mutation';exception when sqlstate'PZ001'then null;end;perform pg_temp.ok(denied,label);end$$;
+-- Advisory quality changes may not veto assembly; each synthetic mutation must
+-- touch exactly one row and is rolled back before the next authority check.
+create function pg_temp.allow_change(command text,label text)returns void language plpgsql as $$declare allowed boolean;mutated integer;begin
+ begin execute'set local session_replication_role=replica';execute command;get diagnostics mutated=row_count;if mutated<>1 then raise exception'Expected exactly one advisory fixture row, got %',mutated;end if;execute'set local session_replication_role=origin';execute'set local role service_role';allowed:=pg_temp.available();execute'reset role';raise exception using errcode='PZ001',message='rollback synthetic mutation';exception when sqlstate'PZ001'then null;end;perform pg_temp.ok(allowed,label);end$$;
+-- This fixture also runs at its historical migration boundary, where paid QC
+-- approval was still mandatory. Pin the actual snapshot body in both eras.
+create function pg_temp.quality_change(command text,label text)returns void language plpgsql as $$declare body_md5 text;begin
+ select md5(prosrc)into body_md5 from pg_proc where oid='public.property_video_compose_snapshot(uuid)'::regprocedure;
+ if body_md5='2dd963d6784041fdd2a26e5cde8ce913'then perform pg_temp.deny_change(command,'historical paid approval required: '||label);
+ elsif body_md5='ce6dfb696e4a70ef81c30e79f3d811ce'then perform pg_temp.allow_change(command,'advisory quality does not veto assembly: '||label);
+ -- The runner's exact no-uncertain-output mutant changes only output admission;
+ -- all advisory QC checks must still pass before its output oracle runs.
+ elsif body_md5='f1cc81902441fe41103a300ce7e0f9e3'then perform pg_temp.allow_change(command,'advisory quality under output-guard mutant: '||label);
+ else raise exception'Unreviewed compose snapshot body: %',body_md5;end if;end$$;
 set local role service_role;
 select pg_temp.ok(pg_temp.available(),'all reviewed paid clips plus certified fallback permit one explicit pre-output recovery');
 select pg_temp.ok((select compose_recoveries=0 and compose_attempts=3 and state='failed'from property_video_jobs where id=(select id from cj)),'GET availability never changes assembly or source state');
@@ -103,8 +117,10 @@ select pg_temp.deny_change($q$update property_video_job_sources set source=jsonb
 select pg_temp.deny_change($q$update capture_assets set uploaded=false where id=(select asset_id from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'withdrawn source cannot resume');
 select pg_temp.deny_change($q$update app_video_cost_reservations set settled_at=null,cost_ledger_id=null,provider_request_id=null where idempotency_key=(select request_key from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'unsettled generation cannot resume');
 select pg_temp.deny_change($q$update cost_ledger set meta=meta-'request_id'where feature='reel'$q$,'paid ledger request identity required');
-select pg_temp.deny_change($q$update media_provenance set qc=jsonb_set(qc,'{publishable}','false')where id=(select generation_provenance_id from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'unknown or refused quality cannot resume as ready');
-select pg_temp.deny_change($q$delete from cost_ledger where feature='qc'and meta->'publishable'='true'::jsonb$q$,'paid quality approval required');
+select pg_temp.quality_change($q$update media_provenance set qc=jsonb_set(qc,'{publishable}','false')where id=(select generation_provenance_id from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'refused QC verdict');
+select pg_temp.quality_change($q$update media_provenance set qc='{}'::jsonb where id=(select generation_provenance_id from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'unknown QC verdict');
+select pg_temp.quality_change($q$delete from cost_ledger where feature='qc'and meta->>'request_id'=(select receipt->>'request_id'from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'absent QC approval ledger');
+select pg_temp.deny_change($q$update property_video_sources set input_sha256=repeat('f',64)where request_id=(select receipt->>'request_id'from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'bound paid generation source digest remains mandatory');
 select pg_temp.deny_change($q$update property_video_job_sources set fallback_evidence='{}'where job_id=(select id from cj)and state='original_photo'$q$,'fallback must retain its exact paid structural refusal');
 select pg_temp.deny_change($q$insert into capture_assets(id,listing_id,kind,bucket,storage_key,bytes,sha256,uploaded)select output_asset_id,listing_id,'video','renders','synthetic/uncertain.mp4',1,repeat('b',64),false from property_video_jobs where id=(select id from cj)$q$,'any reserved output asset blocks uncertain overwrite');
 select pg_temp.deny_change($q$insert into property_video_job_outputs(asset_id,job_id,lease_token,kind,storage_key,bytes,sha256,content_type)select s.asset_id,j.id,j.compose_lease,'video','synthetic/prior-admission.mp4',100,repeat('b',64),'video/mp4'from property_video_jobs j join property_video_job_sources s on s.job_id=j.id and s.position=0 where j.id=(select id from cj)$q$,'any job output journal blocks uncertain overwrite');

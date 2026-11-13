@@ -89,7 +89,7 @@ try {
   await openKit(); await expect(page.getByLabel("Headline", { exact: true })).toHaveValue("Unsaved office headline must stay");
   await expect(page.getByRole("button", { name: "Download ZIP", exact: true })).toBeDisabled();
   await expect(page.getByLabel("Include Reviewed office reel", { exact: true })).not.toBeChecked();
-  await page.getByText("2 item(s) unavailable for this kit", { exact: true }).click(); await expect(page.getByText("Video needing review: completion", { exact: false })).toBeVisible();
+  await page.getByText("2 item(s) unavailable for this kit", { exact: true }).click(); await expect(page.getByText("Video needing review: left out because it is not finished, or its AI-edit label or accuracy check is missing.", { exact: true })).toBeVisible();
   await page.getByLabel("Include Reviewed office reel", { exact: true }).check(); await review().check();
   const downloadPromise = page.waitForEvent("download"); await page.getByRole("button", { name: "Download ZIP", exact: true }).click(); const download = await downloadPromise;
   const zip = join(artifacts, "listing-kit.zip"); await download.saveAs(zip); assert.equal(download.suggestedFilename(), "10-Oak-Street-listing-kit.zip");

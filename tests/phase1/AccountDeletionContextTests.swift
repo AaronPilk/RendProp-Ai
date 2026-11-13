@@ -33,6 +33,8 @@ import Foundation
 enum Config {
     static let apiBaseURL = URL(string: "https://account-deletion.fixture.invalid")
     static let supabaseAnonKey = "synthetic-public"
+    static let edgeFunctionRegion = "us-west-2"
+    static let edgeFunctionRegionHeader = "x-region"
 }
 @MainActor final class URLSession {
     static let shared = URLSession()
@@ -119,6 +121,8 @@ enum Haptics { static func success() {} }
             try await wait("current dispatch", until: { URLSession.shared.pending != nil })
             let request = URLSession.shared.requests[0]
             try check(request.httpMethod == "DELETE" && request.url?.path == "/me", "Current deletion uses exact DELETE /me")
+            try check(request.value(forHTTPHeaderField: Config.edgeFunctionRegionHeader) == Config.edgeFunctionRegion,
+                      "Current deletion preserves its edge-region routing header")
             try check(AuthStore.jwtSubject(String(request.value(forHTTPHeaderField: "Authorization")!.dropFirst(7))) == "account-a", "Current deletion bearer belongs to original actor")
             URLSession.shared.finish(body: body); await task.value
             try check(h.wipeCalls == 1 && h.wipedOwner == "account-a" && h.auth.signOutCalls == 1, "Current success wipes only its original session")

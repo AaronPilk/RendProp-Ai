@@ -90,6 +90,15 @@ grant select on snapshot to service_role,authenticated;
 create function pg_temp.available()returns boolean language plpgsql security definer as $$begin return property_video_static_repair_available((select id from cj));end$$;
 create function pg_temp.deny_change(command text,label text)returns void language plpgsql as $$declare denied boolean;begin
  begin execute'set local session_replication_role=replica';execute command;execute'set local session_replication_role=origin';execute'set local role service_role';begin denied:=not pg_temp.available();exception when sqlstate'P0001'then if sqlerrm not like'RP404:%'and sqlerrm not like'RP409:%'then raise;end if;denied:=true;end;execute'reset role';raise exception using errcode='PZ001',message='rollback synthetic mutation';exception when sqlstate'PZ001'then null;end;perform pg_temp.ok(denied,label);end$$;
+-- Run the same real QC-only mutation at the historical and advisory boundaries.
+-- Exactly one row must change; all fixture data is restored before the next check.
+create function pg_temp.quality_change(command text,label text)returns void language plpgsql as $$declare body_md5 text;expected boolean;allowed boolean;mutated integer;begin
+ select md5(prosrc)into body_md5 from pg_proc where oid='public.property_video_compose_snapshot(uuid)'::regprocedure;
+ if body_md5='2dd963d6784041fdd2a26e5cde8ce913'then expected:=false;
+ elsif body_md5='ce6dfb696e4a70ef81c30e79f3d811ce'then expected:=true;
+ else raise exception'Unreviewed compose snapshot body: %',body_md5;end if;
+ begin execute'set local session_replication_role=replica';execute command;get diagnostics mutated=row_count;if mutated<>1 then raise exception'Expected exactly one quality fixture row, got %',mutated;end if;execute'set local session_replication_role=origin';execute'set local role service_role';allowed:=pg_temp.available();execute'reset role';raise exception using errcode='PZ001',message='rollback synthetic mutation';exception when sqlstate'PZ001'then null;end;
+ perform pg_temp.ok(allowed is not distinct from expected,case when expected then'advisory quality does not veto repair: 'else'historical paid approval required: 'end||label);end$$;
 set local role service_role;
 select pg_temp.ok(not pg_temp.available(),'repair defaults OFF before verified image');
 select pg_temp.refuse(format('select property_video_job_repair_static_compose(%L,%L,%L)',(select actor from bf),(select id from cj),'fe000000-0000-4000-8000-000000000001'),'RP409','no repair before fixed renderer policy activation');
@@ -114,8 +123,10 @@ select pg_temp.deny_change($q$update property_video_job_sources set source=jsonb
 select pg_temp.deny_change($q$update capture_assets set uploaded=false where id=(select asset_id from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'withdrawn source cannot repair');
 select pg_temp.deny_change($q$update app_video_cost_reservations set settled_at=null,cost_ledger_id=null,provider_request_id=null where idempotency_key=(select request_key from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'unsettled generation cannot repair');
 select pg_temp.deny_change($q$update cost_ledger set meta=meta-'request_id'where feature='reel'$q$,'paid ledger request identity required');
-select pg_temp.deny_change($q$update media_provenance set qc=jsonb_set(qc,'{publishable}','false')where id=(select generation_provenance_id from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'unknown or refused quality cannot repair as ready');
-select pg_temp.deny_change($q$delete from cost_ledger where feature='qc'and meta->'publishable'='true'::jsonb$q$,'paid quality approval required');
+select pg_temp.quality_change($q$update media_provenance set qc=jsonb_set(qc,'{publishable}','false')where id=(select generation_provenance_id from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'refused QC verdict');
+select pg_temp.quality_change($q$update media_provenance set qc='{}'::jsonb where id=(select generation_provenance_id from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'unknown QC verdict');
+select pg_temp.quality_change($q$delete from cost_ledger where feature='qc'and meta->>'request_id'=(select receipt->>'request_id'from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'absent QC approval ledger');
+select pg_temp.deny_change($q$update property_video_sources set input_sha256=repeat('f',64)where request_id=(select receipt->>'request_id'from property_video_job_sources where job_id=(select id from cj)and position=0)$q$,'bound paid generation source digest remains mandatory');
 select pg_temp.deny_change($q$update property_video_job_sources set fallback_evidence='{}'where job_id=(select id from cj)and state='original_photo'$q$,'fallback retains exact paid structural refusal');
 select pg_temp.deny_change($q$update property_video_jobs set compose_recovery_history=jsonb_set(compose_recovery_history,'{0,sources_sha256}',to_jsonb(repeat('f',64)))where id=(select id from cj)$q$,'prior recovery source snapshot must match');
 select pg_temp.deny_change($q$insert into capture_assets(id,listing_id,kind,bucket,storage_key,bytes,sha256,uploaded)select output_asset_id,listing_id,'video','renders','synthetic/uncertain.mp4',1,repeat('b',64),false from property_video_jobs where id=(select id from cj)$q$,'any reserved output asset blocks uncertain overwrite');

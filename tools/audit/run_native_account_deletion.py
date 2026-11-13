@@ -37,10 +37,16 @@ def main():
     root = Path(__file__).resolve().parents[2]
     settings = root / "apps/ios/Rendprop/Screens/SettingsView.swift"
     auth = root / "apps/ios/Rendprop/Auth/AuthStore.swift"
+    config = root / "apps/ios/Rendprop/Config.swift"
     fixture = root / "tests/phase1/AccountDeletionContextTests.swift"
-    inputs = [settings, auth, fixture, Path(__file__).resolve()]
+    inputs = [settings, auth, config, fixture, Path(__file__).resolve()]
     hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
     source = settings.read_text()
+    config_source = config.read_text()
+    for definition in ('static let edgeFunctionRegion = "us-west-2"',
+                       'static let edgeFunctionRegionHeader = "x-region"'):
+        require(config_source.count(definition) == 1,
+                "Fixture region setting differs from the production Config: " + definition)
     require("@State private var accountDeletionContext: AccountDeletionContext?" in source,
             "Confirmation must retain its captured account context")
     for label, action in [("Delete", 'Button("Delete", role: .destructive)'), ("Retry", 'Button("Retry")')]:
