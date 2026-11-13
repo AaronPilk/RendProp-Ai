@@ -579,6 +579,33 @@ document.querySelector("#run").onclick=async()=>{
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); throw error; }
 finally {
   await persist(); await browser?.close(); await new Promise(done => server ? server.close(done) : done());
+  // The full receipt is retained privately. A bounded failure summary makes
+  // the already-recorded capture refusal distinguishable in hosted job logs.
+  const firstRecordedRefusal = (() => {
+    try {
+      const attempt = receipt.attempts.find(value => value?.error);
+      if (!attempt) return null;
+      const numeric = (value, keys) => Object.fromEntries(keys.flatMap(key =>
+        Number.isFinite(value?.[key]) ? [[key, value[key]]] : []));
+      const events = new Set(["clip.clock.start", "clip.clock.read", "start.call", "start.return",
+        "resume.call", "resume.return", "pause.call", "pause.native", "play.call", "play.resolved",
+        "media.waiting", "media.stalled", "media.playing", "media.pause", "original.audio.loss",
+        "original.audio.refusal"]);
+      return { variant: attempt.variant, narrated: attempt.narrated,
+        mayBeExpectedControl: ["baseline", "clock-baseline", "cadence-baseline"].includes(attempt.variant),
+        errorName: typeof attempt.errorName === "string" ? attempt.errorName.slice(0, 60) : null,
+        errorCause: numeric(attempt.errorCause, ["gapMilliseconds", "maxGapMilliseconds",
+          "maxTransitionGapMilliseconds", "transitionMilliseconds", "framesCaptured", "minFrames",
+          "windowMilliseconds", "maxLossSeconds"]),
+        traceTail: (Array.isArray(attempt.trace) ? attempt.trace : [])
+          .filter(value => events.has(value?.event)).slice(-16)
+          .map(value => ({event: value.event, ...numeric(value, ["at", "index", "wall", "timeline",
+            "audio", "media", "sourceTime", "loss", "time", "rate", "readyState", "networkState"]) })),
+        downloadHidden: attempt.downloadHidden === true,
+        tracks: Array.isArray(attempt.tracks) ? attempt.tracks.slice(0, 4).map(value =>
+          typeof value === "string" ? value.slice(0, 16) : "unknown") : [] };
+    } catch { return {status: "summary-unavailable"}; }
+  })();
   // Persist every decoded frame, pixel and trace in the receipt; keep CI output
   // compact enough that an intended-control failure remains visible.
   console.log(JSON.stringify({ artifacts, receipt: join(artifacts, "receipt.json"), status: receipt.status,
@@ -587,5 +614,6 @@ finally {
       heldFrames: trace.filter(value => value.event === "export.frame.held").length,
       cancelledFrames: trace.filter(value => value.event === "export.frame.cancelled").length,
       deliveredFrames: trace.filter(value => value.event === "export.frame.delivered").length})),
-    failure: receipt.failure?.split("\n")[0], errors: receipt.errors, externalRequests: receipt.externalRequests }, null, 2));
+    failure: receipt.failure?.split("\n")[0], firstRecordedRefusal,
+    errors: receipt.errors, externalRequests: receipt.externalRequests }, null, 2));
 }
