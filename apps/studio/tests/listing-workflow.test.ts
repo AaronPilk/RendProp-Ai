@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { File } from "node:buffer";
+import { createHash } from "node:crypto";
 import { canPublishAsset, decodeListingState, listingPayload, parseChapterText, tourLinks, websiteDesignPreviews } from "../src/features/listings/model";
 import type { Asset } from "../src/features/listings/model";
 import { cancelListingUpload, fingerprintFile, uploadListingAsset, validateUpload } from "../src/features/listings/uploads";
@@ -42,6 +43,24 @@ test("single upload persists reservation before PUT and confirms same server ass
   assert.equal(calls[0].options.orgId, org); assert.match(String(calls[0].options.idempotencyKey), /^studio-upload:/);
   assert.ok(journals.some((j) => j.assetId === asset)); assert.ok(!JSON.stringify(journals).includes("https://"));
   assert.equal(calls[1].options.idempotencyKey, `complete:${asset}`);
+  assert.equal(Object.hasOwn(calls[0].options.body as object, "sha256"), false, "large video remains on the bounded fingerprint path");
+  assert.equal(Object.hasOwn(calls[1].options.body as object, "sha256"), false);
+});
+test("photo upload sends the raw file SHA-256 at reservation and completion, never its journal fingerprint", async () => {
+  const bytes = new Uint8Array([255, 216, 255, 5, 7, 9, 11]);
+  const file = new File([bytes], "edited.jpg", { type: "image/jpeg" });
+  const expected = createHash("sha256").update(bytes).digest("hex");
+  const photoKey = `renders/${org}/${listing}/gallery-${asset}.jpg`;
+  const { service, calls, transfers } = fixture(path => path.endsWith("/complete")
+    ? { ...completed, storage_key: photoKey, sha256: expected }
+    : { asset_id: asset, storage_key: photoKey, mode: "single", uploaded: false, put_url: "https://uploads.rendprop.com/v2/test" });
+  const journals: UploadJournal[] = [];
+  await uploadListingAsset(service, { ...options(file), role: "gallery", onJournal: journal => journals.push(journal) });
+  assert.equal(transfers.length, 1);
+  assert.deepEqual(new Uint8Array(await transfers[0].arrayBuffer()), bytes);
+  assert.equal((calls[0].options.body as { sha256: string }).sha256, expected);
+  assert.equal((calls[1].options.body as { sha256: string }).sha256, expected);
+  assert.notEqual(journals[0].fingerprint, expected);
 });
 test("lost completion response leaves the same reservation available and does not automatically retry", async () => {
   let journal: UploadJournal | undefined;

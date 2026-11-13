@@ -51,6 +51,15 @@ export async function fingerprintFile(file: Blob, signal?: AbortSignal): Promise
   const final = await crypto.subtle.digest("SHA-256", new Uint8Array(hashes));
   return [...new Uint8Array(final)].map((v) => v.toString(16).padStart(2, "0")).join("");
 }
+/** Photo uploads are bounded to 50 MiB; provenance needs the SHA-256 of the actual file bytes. */
+async function photoSha256(file: File, signal?: AbortSignal): Promise<string> {
+  stopped(signal);
+  const bytes = await file.arrayBuffer();
+  stopped(signal);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  stopped(signal);
+  return [...new Uint8Array(digest)].map((v) => v.toString(16).padStart(2, "0")).join("");
+}
 function receiptParts(value: unknown, count: number) {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error("We could not check the parts of this upload. Resume the upload to try again.");
@@ -85,6 +94,7 @@ export async function uploadListingAsset(services: StudioServices, options: Uplo
   const role = options.role ?? "capture";
   const { kind, contentType } = validateUpload(file, role);
   const fingerprint = await fingerprintFile(file, signal);
+  const sha256 = kind === "photo" ? await photoSha256(file, signal) : undefined;
   assertActor();
   let journal: UploadJournal = options.resume ?? { version: 1, userId, orgId, listingId, filename: file.name, bytes: file.size, contentType, role, fingerprint, operationId: crypto.randomUUID(), parts: [], updatedAt: new Date().toISOString() };
   if (journal.version !== 1 || journal.userId !== userId || journal.orgId !== orgId || journal.listingId !== listingId || journal.bytes !== file.size || journal.contentType !== contentType || journal.role !== role || journal.fingerprint !== fingerprint) throw new Error("This file does not match the paused upload. Select the original file to resume.");
@@ -93,7 +103,7 @@ export async function uploadListingAsset(services: StudioServices, options: Uplo
   const api = (path: string, body: unknown, idempotencyKey?: string) => services.api(`/functions/v1/uploads${path}`, { method: "POST", orgId, body, signal, idempotencyKey, timeoutMs: 120_000 });
   const raw = journal.assetId
     ? await api(`/${uuid(journal.assetId)}/renew`, {})
-    : await api("", { listing_id: listingId, filename: file.name, bytes: file.size, kind, role, content_type: contentType }, `studio-upload:${journal.operationId}`);
+    : await api("", { listing_id: listingId, filename: file.name, bytes: file.size, kind, role, content_type: contentType, ...(sha256 ? { sha256 } : {}) }, `studio-upload:${journal.operationId}`);
   assertActor();
   const current = ticket(raw, options);
   let completedStorageKey = current.storageKey;
@@ -130,7 +140,7 @@ export async function uploadListingAsset(services: StudioServices, options: Uplo
         onProgress?.(loaded, file.size);
       }
     }
-    const completed = object(await api(`/${current.assetId}/complete`, { ...(current.mode === "multipart" ? { parts: journal.parts } : {}), bytes: file.size, ...options.metadata }, `complete:${current.assetId}`));
+    const completed = object(await api(`/${current.assetId}/complete`, { ...(current.mode === "multipart" ? { parts: journal.parts } : {}), bytes: file.size, ...options.metadata, ...(sha256 ? { sha256 } : {}) }, `complete:${current.assetId}`));
     assertActor();
     // Single-part completion promotes the object to an immutable operation key.
     // Trust the confirmed same-asset receipt, not the reservation's earlier key.
