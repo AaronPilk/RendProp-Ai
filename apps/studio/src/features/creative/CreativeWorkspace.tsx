@@ -706,7 +706,6 @@ function ListingCreative(
         signal,
         method: "PATCH",
         body: {
-          original_asset_id: photoResult.originalAssetId,
           altered_asset_id: result.assetId,
         },
       },

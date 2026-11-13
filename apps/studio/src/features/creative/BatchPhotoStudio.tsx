@@ -224,7 +224,7 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
         finished:async(entry)=>{const rows=await savedPhotoRequests(identity);assertScope();const row=rows.find(r=>r.requestKey===entry.requestKey);if(row)await finishPhotoRequest(row);},
         attach: async (entry, signal) => {
           if ((entry.photo.caption?.length ?? 0) > 400) throw new Error("This edit history is too long for a gallery caption. Download its complete photo package instead.");
-          await services.api(`/functions/v1/me/compliance/${entry.result!.provenanceId}`, { orgId: workspace.org.id, signal, method: "PATCH", body: { original_asset_id: entry.result!.originalAssetId, altered_asset_id: entry.output!.assetId } });
+          await services.api(`/functions/v1/me/compliance/${entry.result!.provenanceId}`, { orgId: workspace.org.id, signal, method: "PATCH", body: { altered_asset_id: entry.output!.assetId } });
           assertScope();
           const attached = record(await dispatch("studio/photos", { listing_id: listing.id, asset_id: entry.output!.assetId, caption: entry.photo.caption?.slice(0, 400) || PRESETS.find(p => p.id === edit)?.name, provenance_id: entry.result!.provenanceId }, signal));
           const photo = record(attached.photo);
