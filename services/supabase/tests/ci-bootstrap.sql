@@ -49,6 +49,7 @@ create table if not exists auth.users (
   aud                text,
   role               text,
   email              text,
+  email_confirmed_at timestamptz,
   is_anonymous       boolean not null default false,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
   raw_app_meta_data  jsonb not null default '{}'::jsonb,
@@ -56,6 +57,14 @@ create table if not exists auth.users (
   updated_at         timestamptz not null default now()
 );
 grant all on auth.users to supabase_auth_admin;
+
+-- The platform owns this table in production. Only these live column types
+-- are mirrored for legacy notification recovery; created_at is nullable.
+create table if not exists auth.sessions (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz
+);
 
 -- Verbatim semantics of Supabase's auth helpers (request.jwt.claims is a GUC
 -- PostgREST sets per request; tests set it with set_config(..., true)).

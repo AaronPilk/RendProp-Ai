@@ -1,12 +1,12 @@
 // leads — PUBLIC lead capture from the tour end-card + the agent's inbox (owner).
 //
-//   POST  /leads                        PUBLIC { slug, name, phone, email?, extra?, _hp? } -> { ok, id }
+//   POST  /leads                        PUBLIC { slug, name, phone, email?, extra?, _hp? } -> { ok, accepted } (honeypot: { ok })
 //   GET   /leads?listing_id=&since=&limit=   OWNER -> { leads: [ … ] }   (member-scoped via RLS)
 //   PATCH /leads/:id  { status }        OWNER -> { ok, lead }             (new|contacted|won|lost)
 //
 // POST resolves render(slug) -> listing -> org, inserts a `leads` row (service
-// role; there is no public RLS insert policy by design), then optionally
-// upserts the contact to GoHighLevel when GHL_API_KEY + GHL_LOCATION_ID are set.
+// role; there is no public RLS insert policy by design). CRM exports require a
+// tenant-isolated connection; a global contact upsert is never performed.
 //
 // GET/PATCH are what make lead capture a real feature for every tenant (audit
 // F-supabase-02, decision A13): the app lists leads per listing and marks them
@@ -27,11 +27,20 @@
 // Errors carry { error, code } (see _shared/http.ts).
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, clientIp, json, pathSegments, readJson, respondError, throwRpc } from "../_shared/http.ts";
-import { ghlOrgTag } from "../_shared/ghl.ts";
-import { durableRateLimit } from "../_shared/ratelimit.ts";
-import { adminClient, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { HttpError, assert, clientIp, json, pathSegments, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
+import { publicRateLimit } from "../_shared/ratelimit.ts";
+import { adminClient, getUser, userClient } from "../_shared/supabase.ts";
 import { verifyTurnstile } from "./turnstile.ts";
+import { deliverySummaries, resendClientLead } from "./client-delivery.ts";
+import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
+import { requestClientVerification, verifyClientRecipient } from "./recipient-verification.ts";
+import { deleteLead } from "./deletion.ts";
+import { leadLibraryScope, listLibraryLeads } from "../_shared/library-leads.ts";
+import { listingLibraryScope } from "../_shared/library-access.ts";
+
+async function authenticatedOrg(req:Request,user:string):Promise<string> {
+  return (await workspaceDirectory(adminClient(),user,requestedWorkspace(req))).active_org_id;
+}
 
 interface LeadBody {
   slug: string;
@@ -46,54 +55,6 @@ interface LeadBody {
 const LEAD_STATUSES = ["new", "contacted", "won", "lost"];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_LIST = 500;
-
-/** Upsert the lead to GoHighLevel. Returns true on success; never throws. */
-async function pushToGHL(
-  lead: { name?: string; email?: string; phone?: string },
-  attribution: { org_id: string | null; listing_id: string | null; slug: string; address?: string | null },
-): Promise<boolean> {
-  const key = Deno.env.get("GHL_API_KEY");
-  const locationId = Deno.env.get("GHL_LOCATION_ID");
-  if (!key || !locationId) return false;
-  try {
-    const [firstName, ...rest] = (lead.name ?? "").trim().split(/\s+/);
-    // Tag the contact with the tenant/listing so a shared CRM location can be
-    // attributed (and deletion can target only this org's contacts —
-    // F-supabase-23 / external release audit P0). The org tag is built by
-    // ghlOrgTag() — functions/me/index.ts reads contacts back through the same
-    // helper, so a deletion can never drift from what this write actually set.
-    const tags = ["rendprop", "tour", `rendprop_slug:${attribution.slug}`];
-    if (attribution.org_id) tags.push(ghlOrgTag(attribution.org_id));
-    if (attribution.listing_id) tags.push(`rendprop_listing:${attribution.listing_id}`);
-    const resp = await fetch("https://services.leadconnectorhq.com/contacts/upsert", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        Version: "2021-07-28",
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        locationId,
-        name: lead.name || undefined,
-        firstName: firstName || undefined,
-        lastName: rest.join(" ") || undefined,
-        email: lead.email || undefined,
-        phone: lead.phone || undefined,
-        source: attribution.address ? `Rendprop Tour — ${attribution.address}`.slice(0, 120) : "Rendprop Tour",
-        tags,
-      }),
-    });
-    if (!resp.ok) {
-      console.error("GHL upsert failed:", resp.status, await resp.text());
-      return false;
-    }
-    return true;
-  } catch (e) {
-    console.error("GHL upsert error:", e);
-    return false;
-  }
-}
 
 /** The lead shape the app decodes (contract B4). `message` is lifted out of extra. */
 function shapeLead(row: Record<string, unknown>): Record<string, unknown> {
@@ -127,11 +88,38 @@ Deno.serve(async (req) => {
   try {
     const seg = pathSegments(req, "leads");
 
+    if (req.method === "DELETE" && seg.length === 1) {
+      const user = await getUser(req);
+      const scope = await leadLibraryScope(adminClient(), user.id, seg[0], requestedWorkspace(req), true);
+      return json(await deleteLead(adminClient(), user.id, scope.org_id, seg[0]));
+    }
+
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "verify-client-recipient") {
+      if (!(await publicRateLimit(`client-verification:${clientIp(req)}`, 20, 60))) {
+        throw new HttpError(429, "Too many requests, slow down", "rate_limited");
+      }
+      return json(await verifyClientRecipient(adminClient(), await readJsonLimited(req, 256)));
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "client-recipient-verification") {
+      const user = await getUser(req);
+      const body = await readJsonLimited<Record<string, unknown>>(req, 256);
+      assert(typeof body.listing_id === "string" && UUID_RE.test(body.listing_id), 400, "Choose a saved listing contact.");
+      const scope = await listingLibraryScope(adminClient(), user.id, body.listing_id, true);
+      const selected = requestedWorkspace(req);
+      assert(selected === null || selected === scope.org_id || selected === scope.library_org_id, 404, "Listing not found in this library.");
+      return json(await requestClientVerification(adminClient(), user.id, scope.org_id, body));
+    }
+
+    if(req.method === "POST" && seg.length === 2 && seg[1] === "send-to-client") {
+      const user=await getUser(req);
+      const scope=await leadLibraryScope(adminClient(),user.id,seg[0],requestedWorkspace(req),true);
+      return json(await resendClientLead(adminClient(),user.id,scope.org_id,seg[0],await readJsonLimited(req,1024)));
+    }
+
     // ---- GET /leads (owner) ----
     if (req.method === "GET") {
       const user = await getUser(req);
-      const db = userClient(req); // RLS: "org leads" select policy (member)
-      const orgId = await orgForUser(user.id, preferredOrg(req));
+      const orgId = await authenticatedOrg(req,user.id);
       const params = new URL(req.url).searchParams;
 
       const listingId = params.get("listing_id");
@@ -148,28 +136,29 @@ Deno.serve(async (req) => {
       const status = params.get("status");
       if (status) assert(LEAD_STATUSES.includes(status), 400, `status must be one of ${LEAD_STATUSES.join(", ")}`);
 
-      let q = db
-        .from("leads")
-        .select("id, listing_id, render_id, name, phone, email, extra, source, status, synced_crm, created_at, listings(address, space_type)")
-        .eq("org_id", orgId)
-        .order("created_at", { ascending: false })
-        .limit(limit);
-      if (listingId) q = q.eq("listing_id", listingId);
-      if (sinceIso) q = q.gte("created_at", sinceIso);
-      if (status) q = q.eq("status", status);
-
-      const { data, error } = await q;
-      if (error) throw new HttpError(400, `Leads lookup failed: ${error.message}`);
-      return json({ leads: (data ?? []).map((r) => shapeLead(r as Record<string, unknown>)) });
+      const admin = adminClient();
+      const data = await listLibraryLeads(admin, user.id, orgId, {limit, since: sinceIso, status, listing: listingId});
+      const summaries: Record<string, unknown> = {};
+      // Each delivery snapshot retains its physical source org. SQL rechecks
+      // the exact lead's current library access rather than broad membership.
+      const groups = new Map<string, string[]>();
+      for (const row of data) {
+        const org = row.org_id as string, ids = groups.get(org) ?? [];
+        ids.push(row.id as string); groups.set(org, ids);
+      }
+      for (const [org, ids] of groups) Object.assign(summaries, await deliverySummaries(admin, user.id, org, ids));
+      return json({ leads: data.map((r) => ({...shapeLead(r), client_delivery: summaries[String(r.id)] ?? null})) });
     }
 
     // ---- PATCH /leads/:id (owner) ----
     if (req.method === "PATCH" && seg.length === 1) {
-      await getUser(req);
+      const user=await getUser(req);
       const db = userClient(req);
       const leadId = seg[0];
       assert(UUID_RE.test(leadId), 400, "lead id must be a UUID");
-      const body = await readJson<{ status?: string }>(req);
+      const scope=await leadLibraryScope(adminClient(),user.id,leadId,requestedWorkspace(req),true);
+      const org=scope.org_id;
+      const body = await readJsonLimited<{ status?: string }>(req, 1024);
       const status = String(body.status ?? "").trim().toLowerCase();
       assert(LEAD_STATUSES.includes(status), 400, `status must be one of ${LEAD_STATUSES.join(", ")}`);
 
@@ -178,25 +167,31 @@ Deno.serve(async (req) => {
       if (error) throwRpc(error.message);
 
       // Read back in the same shape as GET (with the listing address).
-      const { data: row } = await db
+      const { data: row, error: readError } = await db
         .from("leads")
         .select("id, listing_id, render_id, name, phone, email, extra, source, status, synced_crm, created_at, listings(address, space_type)")
         .eq("id", leadId)
+        .eq("org_id", org)
         .maybeSingle();
-      return json({ ok: true, lead: shapeLead((row ?? updated ?? {}) as Record<string, unknown>) });
+      if (readError || !row || row.id !== leadId) throw new HttpError(503, "Inquiry update could not be read back. Please refresh.");
+      await leadLibraryScope(adminClient(),user.id,leadId,requestedWorkspace(req));
+      const shaped=shapeLead(row as Record<string, unknown>);
+      const summaries=await deliverySummaries(adminClient(),user.id,org,[leadId]);
+      return json({ ok: true, lead: {...shaped,client_delivery:summaries[leadId]??null} });
     }
 
     if (req.method !== "POST") throw new HttpError(405, "Only POST (public capture), GET and PATCH are supported");
+    assert(seg.length === 0,404,"Lead route not found.");
 
     // ---- POST /leads (public) ----
 
     // Durable per-IP limit (Postgres-backed, shared across instances; falls
     // back to the in-memory limiter if the RPC is unavailable).
-    if (!(await durableRateLimit(`leads:${clientIp(req)}`, 20, 60))) {
+    if (!(await publicRateLimit(`leads:${clientIp(req)}`, 20, 60))) {
       throw new HttpError(429, "Too many requests, slow down", "rate_limited");
     }
 
-    const body = await readJson<LeadBody>(req);
+    const body = await readJsonLimited<LeadBody>(req, 8192);
 
     // Honeypot: pretend success so bots don't learn anything.
     if (body._hp) return json({ ok: true });
@@ -215,7 +210,7 @@ Deno.serve(async (req) => {
     const clip = (s: unknown, n: number) =>
       typeof s === "string" ? s.trim().slice(0, n) : undefined;
     body.name = clip(body.name, 120);
-    body.email = clip(body.email, 200);
+    body.email = clip(body.email, 200)?.toLowerCase();
     body.phone = clip(body.phone, 40);
     if (body.email) {
       assert(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email), 400, "email is not valid");
@@ -233,15 +228,14 @@ Deno.serve(async (req) => {
 
     const admin = adminClient();
 
-    // The public demo tour (rendprop.com/f/estate-demo) has no DB render row —
-    // it's rendered from a hardcoded Tour. Still capture its leads (they route to
-    // GHL like any other), tagged source "tour-demo", with null render/listing.
+    // Demo tours have no workspace recipient. Never collect an inquiry which
+    // cannot reach an agent or be managed/deleted through a workspace inbox.
     const isDemo = body.slug === "estate-demo" || body.slug === "demo";
+    assert(!isDemo, 400, "This is a sample tour. Contact the agent from a published listing.");
 
     let renderId: string | null = null;
     let listingId: string | null = null;
     let orgId: string | null = null;
-    let address: string | null = null;
 
     if (!isDemo) {
       // Resolve the published render for this slug.
@@ -251,7 +245,7 @@ Deno.serve(async (req) => {
         .eq("slug", body.slug)
         .not("published_at", "is", null)
         .maybeSingle();
-      if (rErr) throw new HttpError(500, `Render lookup failed: ${rErr.message}`);
+      if (rErr) throw new HttpError(503, "This tour could not be verified. Please retry.");
       if (!render) throw new HttpError(404, "Tour not found");
       renderId = render.id as string;
       listingId = render.listing_id as string;
@@ -259,19 +253,19 @@ Deno.serve(async (req) => {
       // org via the listing; a deleted listing takes no leads.
       const { data: listing } = await admin
         .from("listings")
-        .select("id, org_id, address, deleted_at")
+        .select("id, org_id, deleted_at")
         .eq("id", render.listing_id)
         .maybeSingle();
       if (!listing || listing.deleted_at) throw new HttpError(404, "Tour not found");
       orgId = (listing.org_id as string | null) ?? null;
-      address = (listing.address as string | null) ?? null;
+      assert(orgId && UUID_RE.test(orgId), 404, "Tour not found");
 
       // Dedupe a double-tap: same contact on the same tour within 10 minutes.
       const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
       let dq = admin.from("leads").select("id").eq("render_id", renderId).gte("created_at", tenMinAgo).limit(1);
       dq = body.email ? dq.eq("email", body.email) : dq.eq("phone", body.phone as string);
       const { data: dup } = await dq.maybeSingle();
-      if (dup?.id) return json({ ok: true, id: dup.id, deduplicated: true });
+      if (dup?.id) return json({ ok: true, accepted: true });
     }
 
     const { data: lead, error: insErr } = await admin
@@ -284,21 +278,16 @@ Deno.serve(async (req) => {
         phone: body.phone ?? null,
         email: body.email ?? null,
         extra: body.extra ?? {},
-        source: isDemo ? "tour-demo" : "tour",
+        source: "tour",
         synced_crm: false,
       })
       .select("id")
       .single();
-    if (insErr) throw new HttpError(500, `Lead insert failed: ${insErr.message}`);
+    if (insErr) throw new HttpError(503, "Your inquiry could not be saved. Please retry.");
 
-    // Optional CRM sync — never blocks/breaks lead capture.
-    const synced = await pushToGHL(
-      { name: body.name, email: body.email, phone: body.phone },
-      { org_id: orgId, listing_id: listingId, slug: body.slug, address },
-    );
-    if (synced) {
-      await admin.from("leads").update({ synced_crm: true }).eq("id", lead.id);
-    }
+    // An inquiry belongs to this workspace. A global CRM contact upsert merges
+    // competing agencies' buyers by email/phone, so it is deliberately absent.
+    // Legacy exported contacts remain in the account-deletion inventory.
 
     // The agent is TOLD. Migration 0047 puts an AFTER INSERT trigger on `leads`
     // that queues a `lead_received` message — carrying the buyer's name and the
@@ -310,7 +299,7 @@ Deno.serve(async (req) => {
     // (This replaces decision A13's "the Leads screen is the delivery channel
     // for now" — GET /leads is still where the details live, but silence until
     // the agent happens to open the app is no longer how they find out.)
-    return json({ ok: true, id: lead.id }, 201);
+    return json({ ok: true, accepted: true }, 201);
   } catch (err) {
     return respondError(err);
   }

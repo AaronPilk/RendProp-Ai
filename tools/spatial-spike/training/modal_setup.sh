@@ -17,7 +17,7 @@ test "$(git -C /opt/gsplat-phase-a rev-parse HEAD)" = 937e29912570c372bed6747a5c
 git -C /opt/gsplat-phase-a submodule update --init --recursive --depth 1
 test "$(git -C /opt/gsplat-phase-a/gsplat/cuda/csrc/third_party/glm rev-parse HEAD)" = 33b4a621a697a305bc3a7610d290677b96beb181
 test -f /opt/gsplat-phase-a/gsplat/cuda/csrc/third_party/glm/glm/gtc/type_ptr.hpp
-python -m pip install --no-build-isolation -r /opt/gsplat-phase-a/examples/requirements.txt numpy==1.26.4 Pillow==12.1.1 tyro==0.9.35 ninja
+python -m pip install --no-build-isolation -r /opt/gsplat-phase-a/examples/requirements.txt numpy==1.26.4 Pillow==13.0.0 tyro==0.9.35 ninja
 python -m pip install --no-build-isolation -e /opt/gsplat-phase-a
 python -m pip check
 python /opt/gsplat-phase-a/examples/simple_trainer.py --help >/opt/room-experiment/trainer-help.txt

@@ -1,0 +1,69 @@
+-- Actual RPCs/grants, synthetic identities only. No provider or price mutation.
+begin;
+create temporary table checks(n int);insert into checks values(0);grant all on checks to service_role,authenticated;
+create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'ATTEMPT FAIL: %',label;end if;update checks set n=n+1;end$$;
+create function pg_temp.refuse(command text,needle text,label text)returns void language plpgsql as $$begin begin execute command;exception when others then if position(needle in sqlerrm)>0 then perform pg_temp.ok(true,label);return;end if;raise;end;raise exception 'ATTEMPT FAIL: allowed %',label;end$$;
+insert into auth.users(id,email,is_anonymous)values('a9100000-0000-4000-8000-000000000011','attempt-owner@fixture.invalid',false),('a9100000-0000-4000-8000-000000000012','attempt-other@fixture.invalid',false),('a9100000-0000-4000-8000-000000000013','attempt-erase@fixture.invalid',false);
+create temporary table scope as select 'a9100000-0000-4000-8000-000000000011'::uuid actor,'a9100000-0000-4000-8000-000000000012'::uuid other,'a9100000-0000-4000-8000-000000000013'::uuid erase_actor,
+ (select org_id from memberships where user_id='a9100000-0000-4000-8000-000000000011'and role='owner'limit 1)org,
+ (select org_id from memberships where user_id='a9100000-0000-4000-8000-000000000012'and role='owner'limit 1)other_org,
+ (select org_id from memberships where user_id='a9100000-0000-4000-8000-000000000013'and role='owner'limit 1)erase_org;
+grant select on scope to service_role,authenticated;
+select pg_temp.ok((select relrowsecurity from pg_class where oid='public.provider_attempt_receipts'::regclass),'receipt RLS enabled');
+select pg_temp.ok(not has_table_privilege('authenticated','public.provider_attempt_receipts','select')and not has_table_privilege('anon','public.provider_attempt_receipts','select'),'tenant reads revoked');
+select pg_temp.ok(not has_table_privilege('service_role','public.provider_attempt_receipts','insert')and not has_table_privilege('service_role','public.provider_attempt_receipts','update')and not has_table_privilege('service_role','public.provider_attempt_receipts','delete'),'service table writes revoked');
+select pg_temp.ok(has_table_privilege('service_role','public.provider_attempt_receipts','select'),'service evidence read retained');
+select pg_temp.ok(not has_function_privilege('authenticated','public.provider_attempt_begin(uuid,uuid,text,text)','execute')and not has_function_privilege('anon','public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,numeric,text)','execute'),'tenant RPC grants revoked');
+select pg_temp.ok((select bool_and(prosecdef and proconfig=array['search_path=""'])from pg_proc where oid in('public.provider_attempt_begin(uuid,uuid,text,text)'::regprocedure,'public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,numeric,text)'::regprocedure)),'two service RPCs have fixed empty search path');
+select pg_temp.refuse($q$select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('a',64),repeat('b',64))$q$,'insufficient_privilege','owner role cannot bypass explicit service role');
+set local role authenticated;
+select pg_temp.refuse('select count(*)from public.provider_attempt_receipts','permission denied','tenant cannot inspect receipts');
+select pg_temp.refuse($q$select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('a',64),repeat('b',64))$q$,'permission denied','tenant cannot forge attempt');
+reset role;set local role service_role;
+select pg_temp.refuse($q$insert into public.provider_attempt_receipts(actor_id,org_id,billing_org_id,operation_sha256,input_sha256)select actor,org,org,repeat('a',64),repeat('b',64)from scope$q$,'permission denied','service cannot bypass receipt RPC');
+select pg_temp.refuse($q$select public.provider_attempt_begin((select actor from scope),(select other_org from scope),repeat('a',64),repeat('b',64))$q$,'RP403:','foreign library intent refused');
+select pg_temp.refuse($q$select public.provider_attempt_begin((select actor from scope),(select org from scope),'PRIVATE-ADDRESS-SENTINEL',repeat('b',64))$q$,'RP400:','raw operation payload refused');
+create temporary table first_attempt as select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('a',64),repeat('b',64))r;
+select pg_temp.ok((select r->>'dispatch'='true'and r->>'outcome'='intent'from first_attempt),'first durable intent grants one dispatch');
+select pg_temp.ok((select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('a',64),repeat('b',64))->>'dispatch'='false'),'duplicate intent cannot dispatch');
+select pg_temp.ok((select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('a',64),repeat('b',64))->>'attempt_id'=r->>'attempt_id'from first_attempt),'duplicate intent retains exact identity');
+select pg_temp.refuse($q$select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('a',64),repeat('c',64))$q$,'RP409:','altered input cannot reuse operation');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select other from scope),(select org from scope),(select(r->>'attempt_id')::uuid from first_attempt),'hit',200,null,7,'recorded')$q$,'RP404:','foreign actor cannot finish receipt');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select actor from scope),(select other_org from scope),(select(r->>'attempt_id')::uuid from first_attempt),'hit',200,null,7,'recorded')$q$,'RP404:','foreign org cannot finish receipt');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from first_attempt),'hit',500,null,7,'recorded')$q$,'RP400:','HTTP failure cannot become a priced hit');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from first_attempt),'transport_unknown',null,null,7,'recorded')$q$,'RP400:','unknown outcome cannot invent supplier amount');
+select pg_temp.ok((select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from first_attempt),'hit',200,null,7,'unconfirmed')->>'saved'='true'),'valid answer retains modeled estimate even with unconfirmed ledger');
+select pg_temp.ok((select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from first_attempt),'hit',200,null,7,'unconfirmed')->>'replay'='true'),'identical terminal receipt replays');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from first_attempt),'hit',200,null,6,'unconfirmed')$q$,'RP409:','terminal receipt cannot change estimate');
+select pg_temp.ok((select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('a',64),repeat('b',64))->>'dispatch'='false'),'completed receipt cannot dispatch');
+select pg_temp.ok((select estimated_cents=7 and actual_cents is null and price_basis='configured_catalog_estimate_not_invoice'and ledger_status='unconfirmed'and billing_org_id=(select org from scope)from provider_attempt_receipts where id=(select(r->>'attempt_id')::uuid from first_attempt)),'estimate stays distinct from actual invoice and exact billing org');
+-- Supplier reference (20261017190000): RentCast's Google Frontend trace id is
+-- 32 hex, never a UUID; it is stored beside the untouched uuid column.
+select pg_temp.ok(not has_function_privilege('authenticated','public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,text,numeric,text)','execute')and not has_function_privilege('anon','public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,text,numeric,text)','execute')and has_function_privilege('service_role','public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,text,numeric,text)','execute'),'reference RPC grants match service-only');
+select pg_temp.ok((select prosecdef and proconfig=array['search_path=""']from pg_proc where oid='public.provider_attempt_finish(uuid,uuid,uuid,text,integer,uuid,text,numeric,text)'::regprocedure),'reference RPC has fixed empty search path');
+select pg_temp.ok((select provider_request_id is null and provider_request_ref is null from provider_attempt_receipts where id=(select(r->>'attempt_id')::uuid from first_attempt)),'legacy writer stores no invented supplier reference');
+create temporary table ref_attempt as select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('1',64),repeat('2',64))r;
+select pg_temp.refuse($q$select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from ref_attempt),'hit',200,null,'https://private.invalid/PRIVATE-URL-SENTINEL',7,'recorded')$q$,'RP400:','unbounded supplier reference refused');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from ref_attempt),'hit',200,null,upper('0f1e2d3c4b5a49688776655443322110'),7,'recorded')$q$,'RP400:','unnormalized supplier reference refused');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select other from scope),(select org from scope),(select(r->>'attempt_id')::uuid from ref_attempt),'hit',200,null,'0f1e2d3c4b5a49688776655443322110',7,'recorded')$q$,'RP404:','foreign actor cannot finish reference receipt');
+select pg_temp.ok((select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from ref_attempt),'hit',200,null,'0f1e2d3c4b5a49688776655443322110',7,'recorded')->>'saved'='true'),'supplier trace reference retained');
+select pg_temp.ok((select provider_request_ref='0f1e2d3c4b5a49688776655443322110'and provider_request_id is null and outcome='hit'and estimated_cents=7 from provider_attempt_receipts where id=(select(r->>'attempt_id')::uuid from ref_attempt)),'trace reference stored beside the null uuid column');
+select pg_temp.ok((select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from ref_attempt),'hit',200,null,'0f1e2d3c4b5a49688776655443322110',7,'recorded')->>'replay'='true'),'identical reference receipt replays');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from ref_attempt),'hit',200,null,'ffffffffffffffffffffffffffffffff',7,'recorded')$q$,'RP409:','terminal receipt cannot change supplier reference');
+select pg_temp.refuse($q$select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from ref_attempt),'hit',200,null,null,7,'recorded')$q$,'RP409:','terminal receipt cannot drop supplier reference');
+select pg_temp.ok((select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('1',64),repeat('2',64))->>'dispatch'='false'),'referenced receipt cannot dispatch');
+create temporary table unknown_attempt as select public.provider_attempt_begin((select actor from scope),(select org from scope),repeat('d',64),repeat('e',64))r;
+select pg_temp.ok((select public.provider_attempt_finish((select actor from scope),(select org from scope),(select(r->>'attempt_id')::uuid from unknown_attempt),'transport_unknown',null,null,null,'not_booked')->>'saved'='true'),'lost transport remains unknown without guessed bill');
+select pg_temp.ok((select estimated_cents is null and actual_cents is null and price_basis='unknown'from provider_attempt_receipts where id=(select(r->>'attempt_id')::uuid from unknown_attempt)),'unknown amount is NULL not zero');
+create temporary table erasing_attempt as select public.provider_attempt_begin((select erase_actor from scope),(select erase_org from scope),repeat('f',64),repeat('e',64))r;
+reset role;delete from auth.users where id=(select erase_actor from scope);
+select pg_temp.ok(not exists(select 1 from provider_attempt_receipts where id=(select(r->>'attempt_id')::uuid from erasing_attempt)),'actor erasure cascades metadata');
+create temporary table erased_org as with made as(insert into public.orgs(name)values('Synthetic erased receipt org')returning id)select id from made;
+insert into public.memberships(org_id,user_id,role)select id,(select other from scope),'owner'from erased_org;
+grant select on erased_org to service_role;set local role service_role;
+create temporary table org_attempt as select public.provider_attempt_begin((select other from scope),(select id from erased_org),repeat('f',64),repeat('e',64))r;
+reset role;delete from public.orgs where id=(select id from erased_org);
+select pg_temp.ok(not exists(select 1 from provider_attempt_receipts where id=(select(r->>'attempt_id')::uuid from org_attempt)),'org erasure cascades metadata');
+select pg_temp.ok(not exists(select 1 from cost_ledger where meta?'provider_attempt_id'),'receipt RPCs never create priced ledger rows');
+select jsonb_build_object('passed',true,'assertions',n)from checks;
+rollback;

@@ -1,0 +1,124 @@
+-- Prospective c74 controller adoption; root applies only after exact CPU25 readback and fresh current-authority review.
+-- Exact retained after-bfb1 authority c4ee925d; alignment14c7ee7f. Adds one full tuple to each saved identity list.
+-- Only three existing config controller fields change. Existing V1/604b/c36/f985/bfb1 history, image, renderer, rates, quotes, jobs and costs remain exact.
+-- Actual 63-character function name/OID are preserved; no owner/ACL/role/search_path change.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+DO $adoption$
+DECLARE
+ expected_functions jsonb := $functions$[{"signature":"public.property_video_photo_motion_saved_identity_before_opening_20261(text,jsonb)","body_md5":"50fb0c3adee66919f35af11fdd774e8e","definition":"CREATE OR REPLACE FUNCTION public.property_video_photo_motion_saved_identity_before_opening_20261(p_profile text, p_identity jsonb)\n RETURNS boolean\n LANGUAGE plpgsql\n STABLE SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nbegin\n if p_profile='photo-motion-v1-cfr24' then\n  return p_identity is not distinct from public.property_video_photo_motion_identity_for(p_profile);\n end if;\n if p_profile is distinct from 'photo-motion-v2-cfr24' then return false;end if;\n return p_identity is not distinct from '{\"algorithm\":\"fractional-bicubic-cosine-12pct-four-directions\",\"composition_profile\":\"photo-motion-v2-cfr24\",\"fps\":24,\"max_audio_attempts\":3,\"max_compose_attempts\":3,\"max_processing_wall_ms\":1260000,\"producer_identity\":{\"controller_sha256\":\"604b92b2c8b6a3ccfd49ac6bec6ff81993e52062c71ba6f910f057d1e2cb3db6\",\"image_uri\":\"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:f8bf65d52390bdd4470c36638b141251ec9fe924aa30bb7218fdbcba09a809ec\",\"renderer_source_sha256\":\"a98b48825fbd819dbf49fd4c2cca4b836cdd81d57bedda5bf2de7774a42d98be\"},\"rate_evidence_sha256\":\"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a\",\"source_mode\":\"photo_motion_v1\",\"transition\":\"cut\",\"visible_frames\":[48,72,96,120]}'::jsonb\n     or p_identity is not distinct from '{\"algorithm\":\"fractional-bicubic-cosine-12pct-four-directions\",\"composition_profile\":\"photo-motion-v2-cfr24\",\"fps\":24,\"max_audio_attempts\":3,\"max_compose_attempts\":3,\"max_processing_wall_ms\":1260000,\"producer_identity\":{\"controller_sha256\":\"c36d9aba8975401865aacb6c58ad4026c9eff810050957435a53e55035705e64\",\"image_uri\":\"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:f8bf65d52390bdd4470c36638b141251ec9fe924aa30bb7218fdbcba09a809ec\",\"renderer_source_sha256\":\"a98b48825fbd819dbf49fd4c2cca4b836cdd81d57bedda5bf2de7774a42d98be\"},\"rate_evidence_sha256\":\"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a\",\"source_mode\":\"photo_motion_v1\",\"transition\":\"cut\",\"visible_frames\":[48,72,96,120]}'::jsonb\n     or p_identity is not distinct from '{\"algorithm\":\"fractional-bicubic-cosine-12pct-four-directions\",\"composition_profile\":\"photo-motion-v2-cfr24\",\"fps\":24,\"max_audio_attempts\":3,\"max_compose_attempts\":3,\"max_processing_wall_ms\":1260000,\"producer_identity\":{\"controller_sha256\":\"f985e25fea30e9a1d29268dfc0cd984ffebb7b039e124cc5e328768b5401a467\",\"image_uri\":\"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186\",\"renderer_source_sha256\":\"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9\"},\"rate_evidence_sha256\":\"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a\",\"source_mode\":\"photo_motion_v1\",\"transition\":\"cut\",\"visible_frames\":[48,72,96,120]}'::jsonb\n     or p_identity is not distinct from '{\"algorithm\":\"fractional-bicubic-cosine-12pct-four-directions\",\"composition_profile\":\"photo-motion-v2-cfr24\",\"fps\":24,\"max_audio_attempts\":3,\"max_compose_attempts\":3,\"max_processing_wall_ms\":1260000,\"producer_identity\":{\"controller_sha256\":\"bfb1f34d35d03c1147f31e7fb1e0ddc787848fbf9e36b54b7aed87a08ee3d092\",\"image_uri\":\"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186\",\"renderer_source_sha256\":\"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9\"},\"rate_evidence_sha256\":\"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a\",\"source_mode\":\"photo_motion_v1\",\"transition\":\"cut\",\"visible_frames\":[48,72,96,120]}'::jsonb;\nend$function$\n"},{"signature":"public.property_video_photo_motion_saved_identity(text,jsonb)","body_md5":"9ef6e66727150104e7b2d13d9f278bc4","definition":"CREATE OR REPLACE FUNCTION public.property_video_photo_motion_saved_identity(p_profile text, p_identity jsonb)\n RETURNS boolean\n LANGUAGE plpgsql\n STABLE SECURITY DEFINER\n SET search_path TO ''\nAS $function$begin\n if p_profile='photo-motion-v2-opening-cfr24'then return p_identity is not distinct from '{\"algorithm\":\"fractional-bicubic-cosine-12pct-four-directions\",\"composition_profile\":\"photo-motion-v2-opening-cfr24\",\"fps\":24,\"max_audio_attempts\":3,\"max_compose_attempts\":3,\"max_opening_frames\":192,\"max_processing_wall_ms\":1260000,\"opening\":\"accepted-full-clip-first\",\"producer_identity\":{\"controller_sha256\":\"f985e25fea30e9a1d29268dfc0cd984ffebb7b039e124cc5e328768b5401a467\",\"image_uri\":\"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186\",\"renderer_source_sha256\":\"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9\"},\"rate_evidence_sha256\":\"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a\",\"source_mode\":\"photo_motion_v1\",\"transition\":\"cut\",\"visible_frames\":[48,72,96,120]}'::jsonb\n     or p_identity is not distinct from '{\"algorithm\":\"fractional-bicubic-cosine-12pct-four-directions\",\"composition_profile\":\"photo-motion-v2-opening-cfr24\",\"fps\":24,\"max_audio_attempts\":3,\"max_compose_attempts\":3,\"max_opening_frames\":192,\"max_processing_wall_ms\":1260000,\"opening\":\"accepted-full-clip-first\",\"producer_identity\":{\"controller_sha256\":\"bfb1f34d35d03c1147f31e7fb1e0ddc787848fbf9e36b54b7aed87a08ee3d092\",\"image_uri\":\"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186\",\"renderer_source_sha256\":\"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9\"},\"rate_evidence_sha256\":\"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a\",\"source_mode\":\"photo_motion_v1\",\"transition\":\"cut\",\"visible_frames\":[48,72,96,120]}'::jsonb;end if;\n return public.property_video_photo_motion_saved_identity_before_opening_20261022(p_profile,p_identity);end$function$\n"}]$functions$::jsonb;
+ expected_configs jsonb := $configs$[{"key":"photo_motion_renderer_v2","value":{"enabled":true,"producer_identity":{"image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","controller_sha256":"bfb1f34d35d03c1147f31e7fb1e0ddc787848fbf9e36b54b7aed87a08ee3d092","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"composition_profile":"photo-motion-v2-cfr24"}},{"key":"photo_motion_renderer_v2_opening","value":{"enabled":true,"producer_identity":{"image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","controller_sha256":"bfb1f34d35d03c1147f31e7fb1e0ddc787848fbf9e36b54b7aed87a08ee3d092","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"composition_profile":"photo-motion-v2-opening-cfr24"}},{"key":"property_video_aerial_opening","value":{"enabled":true,"profile":"kie-kling3-pro-aerial-opening-v1","route_id":"7fd8d740-de05-4b37-b881-9b319fd31a73","quality_route_id":"1bd4c151-cb16-4d3f-8a06-1c12a763c8de","processor_consent":{"token":"aerial-opening-v1","processors":["anthropic","kie"],"disclosure_revision":"aerial-opening-v1-kie-pro-anthropic-20261023"},"producer_identity":{"image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","controller_sha256":"bfb1f34d35d03c1147f31e7fb1e0ddc787848fbf9e36b54b7aed87a08ee3d092","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"assessment_route_id":"1bd4c151-cb16-4d3f-8a06-1c12a763c8de","rate_evidence_sha256":"0c6079b618d1f7f73368c4e8da28a634903f358c19c6c0202ea2a3c148de34e4","vendor_content_license":"kie-terms-2025-08-01-section-3-owner-accepted","maximum_operation_cents":70}}]$configs$::jsonb;
+ old_function_metadata jsonb := '{}'::jsonb;
+ old_config_metadata jsonb := '{}'::jsonb;
+ old_job jsonb;
+ item jsonb;
+ proc_record pg_proc%rowtype;
+ config_record public.app_config%rowtype;
+ changed integer;
+BEGIN
+ -- Same lock as existing PM and aerial CPU claim paths; no physical-name database field.
+ PERFORM pg_advisory_xact_lock(hashtextextended('property-video-photo-motion-slot-0',79));
+ -- Lock only the three configuration rows. No application job or cost record is modified.
+ PERFORM 1 FROM public.app_config WHERE key IN
+  ('photo_motion_renderer_v2','photo_motion_renderer_v2_opening','property_video_aerial_opening')
+  ORDER BY key FOR UPDATE;
+
+ -- Exact previously approved cutover predicate, with no lease-expiry exemption.
+ SELECT to_jsonb(j) INTO old_job FROM public.property_video_aerial_openings j
+ WHERE j.id='45f9ca65-c79a-4c74-8c3f-f8e165a52bb7'::uuid
+   AND j.operation_id='9b2ebd5f-fd90-4d59-88e0-cd78ffa7292b'::uuid
+   AND j.listing_id='da2cdfc6-7ef5-819b-98dd-09a5cd73513e'::uuid
+   AND j.state='failed' AND j.input_claimed_at IS NOT NULL AND j.input_lease IS NOT NULL
+   AND j.generation_claimed_at IS NULL AND j.generation_lease IS NULL
+   AND j.provider_receipt IS NULL AND j.provider_clip IS NULL;
+ IF old_job IS NULL THEN RAISE EXCEPTION 'Producer adoption: quarantined aerial job is not exact terminal pre-generation failure'; END IF;
+ IF EXISTS(SELECT 1 FROM public.property_video_jobs j
+  WHERE (j.manifest->>'source_mode'='photo_motion_v1' OR j.quality_profile IN
+   ('photo-motion-v1-cfr24','photo-motion-v2-cfr24','photo-motion-v2-opening-cfr24'))
+   AND j.state NOT IN('ready','failed','cancelled')
+   AND (j.audio_lease IS NOT NULL OR j.audio_attempts>0 OR j.compose_lease IS NOT NULL OR j.compose_attempts>0))
+ THEN RAISE EXCEPTION 'Producer adoption: other nonterminal PM CPU-issued work exists'; END IF;
+ IF EXISTS(SELECT 1 FROM public.property_video_aerial_openings j
+  WHERE j.id<>'45f9ca65-c79a-4c74-8c3f-f8e165a52bb7'::uuid
+   AND j.state NOT IN('accepted','ready_for_acceptance','ineligible','failed','cancelled')
+   AND (j.input_claimed_at IS NOT NULL OR j.input_lease IS NOT NULL
+    OR j.qualification_claimed_at IS NOT NULL OR j.qualification_lease IS NOT NULL))
+ THEN RAISE EXCEPTION 'Producer adoption: other nonterminal aerial CPU-issued work exists'; END IF;
+
+ FOR item IN SELECT value FROM jsonb_array_elements(expected_functions) LOOP
+  SELECT * INTO proc_record FROM pg_proc WHERE oid=to_regprocedure(item->>'signature');
+  IF proc_record.oid IS NULL OR md5(proc_record.prosrc) IS DISTINCT FROM item->>'body_md5'
+   OR pg_get_functiondef(proc_record.oid) IS DISTINCT FROM item->>'definition'
+   OR pg_get_userbyid(proc_record.proowner) IS DISTINCT FROM 'postgres'
+   OR proc_record.proacl::text IS DISTINCT FROM '{postgres=X/postgres}'
+   OR NOT proc_record.prosecdef OR proc_record.proconfig IS DISTINCT FROM ARRAY['search_path=""']::text[]
+  THEN RAISE EXCEPTION 'Producer adoption: function predecessor changed: %',item->>'signature'; END IF;
+  old_function_metadata:=old_function_metadata||jsonb_build_object(item->>'signature',to_jsonb(proc_record)-'prosrc');
+ END LOOP;
+ FOR item IN SELECT value FROM jsonb_array_elements(expected_configs) LOOP
+  SELECT * INTO config_record FROM public.app_config WHERE key=item->>'key';
+  IF NOT FOUND OR config_record.value IS DISTINCT FROM item->'value'
+  THEN RAISE EXCEPTION 'Producer adoption: config predecessor changed: %',item->>'key'; END IF;
+  old_config_metadata:=old_config_metadata||jsonb_build_object(item->>'key',to_jsonb(config_record)-'value');
+ END LOOP;
+
+ EXECUTE $definition0$CREATE OR REPLACE FUNCTION public.property_video_photo_motion_saved_identity_before_opening_20261(p_profile text, p_identity jsonb)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+begin
+ if p_profile='photo-motion-v1-cfr24' then
+  return p_identity is not distinct from public.property_video_photo_motion_identity_for(p_profile);
+ end if;
+ if p_profile is distinct from 'photo-motion-v2-cfr24' then return false;end if;
+ return p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_processing_wall_ms":1260000,"producer_identity":{"controller_sha256":"604b92b2c8b6a3ccfd49ac6bec6ff81993e52062c71ba6f910f057d1e2cb3db6","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:f8bf65d52390bdd4470c36638b141251ec9fe924aa30bb7218fdbcba09a809ec","renderer_source_sha256":"a98b48825fbd819dbf49fd4c2cca4b836cdd81d57bedda5bf2de7774a42d98be"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb
+     or p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_processing_wall_ms":1260000,"producer_identity":{"controller_sha256":"c36d9aba8975401865aacb6c58ad4026c9eff810050957435a53e55035705e64","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:f8bf65d52390bdd4470c36638b141251ec9fe924aa30bb7218fdbcba09a809ec","renderer_source_sha256":"a98b48825fbd819dbf49fd4c2cca4b836cdd81d57bedda5bf2de7774a42d98be"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb
+     or p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_processing_wall_ms":1260000,"producer_identity":{"controller_sha256":"f985e25fea30e9a1d29268dfc0cd984ffebb7b039e124cc5e328768b5401a467","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb
+     or p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_processing_wall_ms":1260000,"producer_identity":{"controller_sha256":"bfb1f34d35d03c1147f31e7fb1e0ddc787848fbf9e36b54b7aed87a08ee3d092","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb
+     or p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_processing_wall_ms":1260000,"producer_identity":{"controller_sha256":"c74d84846a43413c77a0bfa989e9f052fb5ba387addac013aa7c83f65dd73362","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb;
+end$function$
+$definition0$;
+
+ EXECUTE $definition1$CREATE OR REPLACE FUNCTION public.property_video_photo_motion_saved_identity(p_profile text, p_identity jsonb)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO ''
+AS $function$begin
+ if p_profile='photo-motion-v2-opening-cfr24'then return p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-opening-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_opening_frames":192,"max_processing_wall_ms":1260000,"opening":"accepted-full-clip-first","producer_identity":{"controller_sha256":"f985e25fea30e9a1d29268dfc0cd984ffebb7b039e124cc5e328768b5401a467","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb
+     or p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-opening-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_opening_frames":192,"max_processing_wall_ms":1260000,"opening":"accepted-full-clip-first","producer_identity":{"controller_sha256":"bfb1f34d35d03c1147f31e7fb1e0ddc787848fbf9e36b54b7aed87a08ee3d092","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb
+     or p_identity is not distinct from '{"algorithm":"fractional-bicubic-cosine-12pct-four-directions","composition_profile":"photo-motion-v2-opening-cfr24","fps":24,"max_audio_attempts":3,"max_compose_attempts":3,"max_opening_frames":192,"max_processing_wall_ms":1260000,"opening":"accepted-full-clip-first","producer_identity":{"controller_sha256":"c74d84846a43413c77a0bfa989e9f052fb5ba387addac013aa7c83f65dd73362","image_uri":"registry.cloudflare.com/9c332c75b96cc642621dad5d86d4bf18/rendprop-property-video-photo-motion@sha256:29f970ce4beca15f485ec421979c5c17eac8d0e6e243db2da6f94f1adb368186","renderer_source_sha256":"9c4e21b2daa4b70a4725138a8ca21465e3eab433f094bd4f557e4f68b5ee83b9"},"rate_evidence_sha256":"8b8db0d3d1925f1ce48a96a944bba5c66b4e0a3d8561ebba9c9c3add8460588a","source_mode":"photo_motion_v1","transition":"cut","visible_frames":[48,72,96,120]}'::jsonb;end if;
+ return public.property_video_photo_motion_saved_identity_before_opening_20261022(p_profile,p_identity);end$function$
+$definition1$;
+
+ FOR item IN SELECT value FROM jsonb_array_elements(expected_configs) LOOP
+  UPDATE public.app_config SET value=jsonb_set(value,'{producer_identity,controller_sha256}',
+   to_jsonb('c74d84846a43413c77a0bfa989e9f052fb5ba387addac013aa7c83f65dd73362'::text),false)
+   WHERE key=item->>'key' AND value=item->'value';
+  GET DIAGNOSTICS changed=ROW_COUNT;
+  IF changed<>1 THEN RAISE EXCEPTION 'Producer adoption: config CAS refused: %',item->>'key'; END IF;
+ END LOOP;
+
+ -- All function metadata (including OID, owner, ACL, settings) remains byte-for-byte JSON-equal.
+ FOR item IN SELECT value FROM jsonb_array_elements(expected_functions) LOOP
+  SELECT * INTO proc_record FROM pg_proc WHERE oid=to_regprocedure(item->>'signature');
+  IF (to_jsonb(proc_record)-'prosrc') IS DISTINCT FROM old_function_metadata->(item->>'signature')
+  THEN RAISE EXCEPTION 'Producer adoption: function metadata changed: %',item->>'signature'; END IF;
+ END LOOP;
+ IF (SELECT md5(prosrc) FROM pg_proc WHERE oid='public.property_video_photo_motion_saved_identity_before_opening_20261(text,jsonb)'::regprocedure) IS DISTINCT FROM 'ed37ef6778868cfd78403415169c4ffe' THEN RAISE EXCEPTION 'Producer adoption: resulting body mismatch'; END IF;
+ IF (SELECT md5(prosrc) FROM pg_proc WHERE oid='public.property_video_photo_motion_saved_identity(text,jsonb)'::regprocedure) IS DISTINCT FROM '877e426f8dad16c7e9af31519ebea926' THEN RAISE EXCEPTION 'Producer adoption: resulting body mismatch'; END IF;
+ FOR item IN SELECT value FROM jsonb_array_elements(expected_configs) LOOP
+  SELECT * INTO config_record FROM public.app_config WHERE key=item->>'key';
+  IF config_record.value IS DISTINCT FROM jsonb_set(item->'value','{producer_identity,controller_sha256}',
+    to_jsonb('c74d84846a43413c77a0bfa989e9f052fb5ba387addac013aa7c83f65dd73362'::text),false)
+   OR (to_jsonb(config_record)-'value') IS DISTINCT FROM old_config_metadata->(item->>'key')
+  THEN RAISE EXCEPTION 'Producer adoption: unrelated configuration field changed: %',item->>'key'; END IF;
+ END LOOP;
+ IF (SELECT to_jsonb(j) FROM public.property_video_aerial_openings j
+  WHERE j.id='45f9ca65-c79a-4c74-8c3f-f8e165a52bb7'::uuid) IS DISTINCT FROM old_job
+ THEN RAISE EXCEPTION 'Producer adoption: quarantined job changed'; END IF;
+END $adoption$;
+COMMIT;

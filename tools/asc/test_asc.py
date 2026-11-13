@@ -24,13 +24,122 @@ import unittest
 import urllib.parse
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import asc  # noqa: E402
+import credit_pack_iap  # noqa: E402
 
 
 HAVE_OPENSSL = shutil.which("openssl") is not None
+
+
+class LaunchCatalogParityTests(unittest.TestCase):
+    def test_local_storekit_monthly_prices_match_exact_asc_contract(self):
+        fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
+        local = {s["productID"]: s for group in fixture["subscriptionGroups"]
+                 for s in group["subscriptions"]}
+        monthly = {s["productId"]: s for s in asc.SUBSCRIPTIONS
+                   if s["period"] == "ONE_MONTH"}
+        self.assertEqual(set(monthly), {
+            "com.rendprop.app.pro29.monthly",
+            "com.rendprop.app.starter.monthly",
+            "com.rendprop.app.pro.monthly",
+            "com.rendprop.app.team.monthly",
+        })
+        for product_id, spec in monthly.items():
+            with self.subTest(product_id=product_id):
+                self.assertIn(product_id, local)
+                self.assertEqual(Decimal(local[product_id]["displayPrice"]),
+                                 Decimal(spec["usd"]))
+                self.assertEqual(local[product_id]["recurringSubscriptionPeriod"], "P1M")
+                self.assertEqual(local[product_id]["subscriptionGroupID"],
+                                 fixture["subscriptionGroups"][0]["id"])
+                self.assertEqual(local[product_id]["localizations"][0]["displayName"],
+                                 spec["displayName"])
+                self.assertEqual(local[product_id]["localizations"][0]["description"],
+                                 spec["description"])
+
+    def test_credit_pack_local_quantity_price_and_identity_match_asc(self):
+        fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
+        products = {p["productID"]: p for p in fixture["products"]}
+        self.assertEqual(set(products), {
+            credit_pack_iap.PRODUCT_ID,
+            "com.rendprop.app.website.premium.property",
+        })
+        pack = products[credit_pack_iap.PRODUCT_ID]
+        self.assertEqual(pack["type"], "Consumable")
+        self.assertEqual(Decimal(pack["displayPrice"]), credit_pack_iap.CUSTOMER_PRICE)
+        self.assertEqual(pack["localizations"][0]["displayName"],
+                         credit_pack_iap.DISPLAY_NAME)
+        self.assertEqual(pack["localizations"][0]["description"],
+                         credit_pack_iap.DESCRIPTION)
+
+    def test_website_upgrade_local_product_matches_app_and_asc_contract(self):
+        fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
+        products = [p for p in fixture["products"]
+                    if p["productID"] == "com.rendprop.app.website.premium.property"]
+        self.assertEqual(len(products), 1)
+        upgrade = products[0]
+        self.assertEqual(upgrade["type"], "Consumable")
+        self.assertEqual(Decimal(upgrade["displayPrice"]), Decimal("25.00"))
+        self.assertFalse(upgrade["familyShareable"])
+        self.assertEqual(upgrade["localizations"], [{
+            "description": "Luxury design for one property. Plan hosting.",
+            "displayName": "Luxury Property Website",
+            "locale": "en_US",
+        }])
+        model = (asc.REPO_ROOT / "apps/ios/Rendprop/Models/WebsiteDesign.swift").read_text()
+        self.assertIn(f'static let id = "{upgrade["productID"]}"', model)
+
+    def test_dormant_team_seat_variants_match_storekit_and_server_targets(self):
+        fixture = json.loads((asc.REPO_ROOT / "apps/ios/Rendprop.storekit").read_text())
+        local = {s["productID"]: s for group in fixture["subscriptionGroups"]
+                 for s in group["subscriptions"]}
+        server = (asc.REPO_ROOT / "services/supabase/migrations"
+                  / "20261027190441_pricing_margin_repair.sql").read_text()
+        self.assertEqual(len(asc.TEAM_SEAT_SUBSCRIPTIONS), 6)
+        self.assertEqual(len(asc.active_subscriptions(SimpleNamespace())), 7,
+                         "ordinary ASC commands must leave Team variants dormant")
+        included = asc.active_subscriptions(SimpleNamespace(include_team_seats=True))
+        self.assertEqual(len(included), 13)
+        for seats, spec in enumerate(asc.TEAM_SEAT_SUBSCRIPTIONS, start=4):
+            product_id = f"com.rendprop.app.team{seats}.monthly"
+            cents = 24999 + 5000 * (seats - 3)
+            credits = 600 + 100 * (seats - 3)
+            with self.subTest(seats=seats):
+                self.assertEqual(spec["productId"], product_id)
+                self.assertEqual(spec["groupLevel"], 1)
+                self.assertEqual(spec["period"], "ONE_MONTH")
+                self.assertEqual(Decimal(spec["usd"]), Decimal(cents) / 100)
+                self.assertLessEqual(len(spec["displayName"]), asc.SUB_DISPLAY_NAME_MAX)
+                self.assertLessEqual(len(spec["description"]), asc.SUB_DESCRIPTION_MAX)
+                self.assertEqual(Decimal(local[product_id]["displayPrice"]), Decimal(spec["usd"]))
+                self.assertEqual(local[product_id]["groupNumber"], 1)
+                self.assertEqual(local[product_id]["localizations"][0]["displayName"],
+                                 spec["displayName"])
+                self.assertEqual(local[product_id]["localizations"][0]["description"],
+                                 spec["description"])
+                self.assertIn("monthly_credits=600+100*(seats-3)", server)
+                self.assertIn("600+100*(seats-3)", server)
+
+    def test_obsolete_review_image_is_rejected_before_any_apple_access(self):
+        self.assertIn(
+            "940850743271be9e9c61ad777660518dacfbf0a9cff5d4500574dd718eb63228",
+            asc.OBSOLETE_IAP_SCREENSHOT_SHA256)
+        with tempfile.TemporaryDirectory(prefix="asc-stale-paywall-") as directory:
+            path = Path(directory) / "paywall.png"
+            path.write_bytes(b"not a current PNG")
+            original = asc.IAP_SCREENSHOT
+            asc.IAP_SCREENSHOT = path
+            try:
+                with self.assertRaises(asc.AscError) as caught:
+                    asc.cmd_review(None, SimpleNamespace(action="apply", dry_run=False),
+                                   io.StringIO())
+            finally:
+                asc.IAP_SCREENSHOT = original
+        self.assertIn("No App Store review writes", str(caught.exception))
 
 
 # ---------------------------------------------------------------------------
@@ -450,16 +559,17 @@ class LengthValidatorTests(unittest.TestCase):
 class ConfigurationTests(unittest.TestCase):
     """Guard the facts this tool is built on."""
 
-    def test_six_products_with_the_agreed_ids_and_periods(self):
+    def test_seven_products_with_the_agreed_ids_and_periods(self):
         expected = {
-            "com.rendprop.app.team.monthly": ("ONE_MONTH", "249.00", 1),
+            "com.rendprop.app.team.monthly": ("ONE_MONTH", "249.99", 1),
             "com.rendprop.app.team.annual": ("ONE_YEAR", "2490.00", 1),
-            "com.rendprop.app.pro.monthly": ("ONE_MONTH", "99.00", 2),
+            "com.rendprop.app.pro.monthly": ("ONE_MONTH", "99.99", 2),
             "com.rendprop.app.pro.annual": ("ONE_YEAR", "990.00", 2),
             "com.rendprop.app.starter.monthly": ("ONE_MONTH", "49.00", 3),
             "com.rendprop.app.starter.annual": ("ONE_YEAR", "490.00", 3),
+            "com.rendprop.app.pro29.monthly": ("ONE_MONTH", "29.99", 4),
         }
-        self.assertEqual(len(asc.SUBSCRIPTIONS), 6)
+        self.assertEqual(len(asc.SUBSCRIPTIONS), 7)
         for spec in asc.SUBSCRIPTIONS:
             period, usd, level = expected[spec["productId"]]
             self.assertEqual(spec["period"], period)
@@ -556,7 +666,7 @@ class FakeAsc(object):
     # is why com.rendprop.app.team.annual (2490.00) was priced at 1000.00 on the
     # live run. Pass this to reproduce that.
     YEARLY_CEILING_LADDER = [
-        "49.00", "99.00", "249.00", "490.00", "990.00", "999.99", "1000.00",
+        "29.99", "49.00", "99.99", "249.99", "490.00", "990.00", "999.99", "1000.00",
     ]
 
     def __init__(self, price_ladder=None, app_attributes=None):
@@ -593,7 +703,7 @@ class FakeAsc(object):
         # A ladder that offers every Rendprop price exactly. Tests that care
         # about a missing price point pass YEARLY_CEILING_LADDER instead.
         self.price_ladder = price_ladder or [
-            "49.00", "99.00", "249.00", "490.00", "990.00", "2490.00",
+            "29.99", "49.00", "99.99", "249.99", "490.00", "990.00", "2490.00",
         ]
         # Every territory offers the same numeric ladder, which is exactly why a
         # wrong-territory point is dangerous: 249.00 MXN looks like 249.00 USD.
@@ -667,7 +777,7 @@ class FakeAsc(object):
             "appInfos", {"state": state, "appStoreAgeRating": age_rating}, parents)
 
     def add_build(self, version="1", state="VALID", uploaded="2026-09-05T08:34:43-07:00",
-                  uses_non_exempt_encryption=None, marketing_version="1.0", expired=False):
+                  uses_non_exempt_encryption=None, marketing_version=asc.VERSION_STRING, expired=False):
         """A build as GET /v1/builds returns it.
 
         `version` is the build number ("1"); the marketing version ("1.0") lives
@@ -689,7 +799,7 @@ class FakeAsc(object):
              "expired": expired, "usesNonExemptEncryption": uses_non_exempt_encryption},
             {"app": self.app_id, "preReleaseVersion": prerelease_id})
 
-    def add_version(self, version_string="1.0", state="PREPARE_FOR_SUBMISSION",
+    def add_version(self, version_string=asc.VERSION_STRING, state="PREPARE_FOR_SUBMISSION",
                     localization=None):
         version_id = self._insert(
             "appStoreVersions",
@@ -1058,6 +1168,20 @@ class FakeAsc(object):
         kind = self.COLLECTIONS[parts[0]]
         data = payload["data"]
         attributes = dict(data.get("attributes") or {})
+
+        if kind == "subscriptions":
+            # Apple's live 409 for the new Pro SKU: the old pro.monthly still
+            # owns "Pro Monthly" as its internal reference name, even though
+            # its customer-facing localization is now Ultra Monthly.
+            for row in self.store.get("subscriptions", {}).values():
+                if row["attributes"].get("name", "").casefold() == \
+                        attributes.get("name", "").casefold():
+                    return 409, {"errors": [{
+                        "code": "ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE",
+                        "title": "Duplicate subscription name",
+                        "detail": "The name is already in use.",
+                        "status": "409",
+                    }]}
 
         # App Store Connect rejects a price whose price point belongs to a
         # different territory than the request. This is provable from the id
@@ -1465,11 +1589,11 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertEqual(list(localizations.values())[0]["attributes"]["name"],
                          "Rendprop Plans")
 
-        self.assertEqual(len(fake.store["subscriptions"]), 6)
-        self.assertEqual(len(fake.store["subscriptionLocalizations"]), 6)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
-        self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 6)
-        self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 6)
+        self.assertEqual(len(fake.store["subscriptions"]), 7)
+        self.assertEqual(len(fake.store["subscriptionLocalizations"]), 7)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 7 * len(fake.territories))
+        self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 7)
+        self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 7)
 
     def test_products_get_the_agreed_attributes(self):
         fake = FakeAsc()
@@ -1483,6 +1607,44 @@ class SubscriptionPlanTests(unittest.TestCase):
             self.assertEqual(attributes["groupLevel"], spec["groupLevel"])
             self.assertIs(attributes["familySharable"], False)
             self.assertEqual(attributes["reviewNote"], asc.REVIEW_NOTE)
+
+    def test_new_pro_internal_name_differs_from_legacy_but_display_stays_pro(self):
+        spec = next(s for s in asc.SUBSCRIPTIONS
+                    if s["productId"] == "com.rendprop.app.pro29.monthly")
+        self.assertEqual(spec["name"], "Rendprop Pro Monthly")
+        self.assertEqual(spec["displayName"], "Pro Monthly")
+
+    def test_duplicate_internal_name_is_rejected_before_apple_writes(self):
+        fake = FakeAsc()
+        self.run_subscriptions(fake)
+        pro_id = next(row_id for row_id, row in fake.store["subscriptions"].items()
+                      if row["attributes"]["productId"] ==
+                      "com.rendprop.app.pro29.monthly")
+        del fake.store["subscriptions"][pro_id]
+        legacy = next(row for row in fake.store["subscriptions"].values()
+                      if row["attributes"]["productId"] ==
+                      "com.rendprop.app.pro.monthly")
+        legacy["attributes"]["name"] = "Pro Monthly"
+        fake.writes.clear()
+        original = asc.SUBSCRIPTIONS
+        asc.SUBSCRIPTIONS = [dict(spec, name="Pro Monthly")
+                             if spec["productId"] == "com.rendprop.app.pro29.monthly"
+                             else spec for spec in original]
+        try:
+            with self.assertRaisesRegex(asc.AscError, "already used by"):
+                self.run_subscriptions(fake)
+        finally:
+            asc.SUBSCRIPTIONS = original
+        self.assertEqual(fake.writes, [])
+
+        # The corrected internal name can then create the new product while
+        # retaining the public Pro Monthly localization.
+        code, _output = self.run_subscriptions(fake)
+        self.assertEqual(code, 0)
+        created = next(row for row in fake.store["subscriptions"].values()
+                       if row["attributes"]["productId"] ==
+                       "com.rendprop.app.pro29.monthly")
+        self.assertEqual(created["attributes"]["name"], "Rendprop Pro Monthly")
 
     def test_introductory_offers_are_one_week_free_trials(self):
         fake = FakeAsc()
@@ -1499,7 +1661,7 @@ class SubscriptionPlanTests(unittest.TestCase):
     def test_availability_is_usa_only_for_a_us_launch(self):
         fake = FakeAsc()
         self.run_subscriptions(fake)
-        self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 6)
+        self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 7)
         for availability in fake.store["subscriptionAvailabilities"].values():
             self.assertIs(availability["attributes"]["availableInNewTerritories"], False)
             self.assertEqual(availability["attributes"]["_territories"], ["USA"])
@@ -1514,7 +1676,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         first_price = writes.index("/v1/subscriptionPrices")
         self.assertLess(first_availability, first_price,
                         "availability must be POSTed before the price")
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 7 * len(fake.territories))
 
     def test_pricing_before_availability_would_be_rejected(self):
         """Proves the fake reproduces the live ordering failure."""
@@ -1654,7 +1816,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         code, _output = self.run_subscriptions(fake)
         self.assertEqual(code, 0)
         self.assertEqual(len(fake.store["subscriptionGroups"]), 1)
-        self.assertEqual(len(fake.store["subscriptions"]), 6)
+        self.assertEqual(len(fake.store["subscriptions"]), 7)
         product_ids = sorted(r["attributes"]["productId"]
                              for r in fake.store["subscriptions"].values())
         self.assertEqual(product_ids, sorted(s["productId"] for s in asc.SUBSCRIPTIONS))
@@ -1673,7 +1835,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         )
         self.run_subscriptions(fake)
         attributes = fake.store["subscriptions"][subscription_id]["attributes"]
-        self.assertEqual(attributes["name"], "Pro Monthly")
+        self.assertEqual(attributes["name"], "Ultra Monthly")
         self.assertIs(attributes["familySharable"], False)
         self.assertEqual(attributes["groupLevel"], 2)
         self.assertEqual(attributes["reviewNote"], asc.REVIEW_NOTE)
@@ -1706,9 +1868,9 @@ class SubscriptionPlanTests(unittest.TestCase):
         fake = FakeAsc()
         self.run_subscriptions(fake)
         # Every territory Apple sells in is priced (equalized from the USA point).
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 7 * len(fake.territories))
         usa = [p for p in fake.store["subscriptionPrices"].values() if p["_parents"]["territory"] == "USA"]
-        self.assertEqual(len(usa), 6)
+        self.assertEqual(len(usa), 7)
 
     def test_a_wrong_territory_price_point_would_be_rejected(self):
         """Proves the fake reproduces the live failure, so the guard is real."""
@@ -1760,12 +1922,12 @@ class SubscriptionPlanTests(unittest.TestCase):
         # Nothing was duplicated...
         self.assertEqual(len(fake.store["subscriptionGroups"]), 1)
         self.assertEqual(len(fake.store["subscriptionGroupLocalizations"]), 1)
-        self.assertEqual(len(fake.store["subscriptions"]), 6)
-        self.assertEqual(len(fake.store["subscriptionLocalizations"]), 6)
+        self.assertEqual(len(fake.store["subscriptions"]), 7)
+        self.assertEqual(len(fake.store["subscriptionLocalizations"]), 7)
         # ...and the half-finished product got its price, availability and trial.
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
-        self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 6)
-        self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 6)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 7 * len(fake.territories))
+        self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 7)
+        self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 7)
         self.assertIn("exists", output)
 
         # And a further run is a clean no-op.
@@ -1778,7 +1940,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.run_subscriptions(fake)
         point_calls = [path for method, path in fake.calls if path.endswith("/pricePoints")]
         # One request per product, not four pages each.
-        self.assertEqual(len(point_calls), 6)
+        self.assertEqual(len(point_calls), 7)
 
     def test_annual_price_above_the_ladder_warns_loudly(self):
         # Apple's yearly USD points stop at 1000.00, below the 2490.00 annual.
@@ -1788,7 +1950,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertIn("2490.00", output)
 
     def test_exact_annual_price_produces_no_warning(self):
-        fake = FakeAsc(price_ladder=["49.00", "99.00", "249.00",
+        fake = FakeAsc(price_ladder=["29.99", "49.00", "99.99", "249.99",
                                      "490.00", "990.00", "2490.00"])
         _code, output = self.run_subscriptions(fake)
         self.assertNotIn("PRICE POINT WARNING", output)
@@ -1814,8 +1976,8 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("already exists (HTTP 409)", output)
         # It recovered onto the existing product rather than creating a seventh.
-        self.assertEqual(len(fake.store["subscriptions"]), 6)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
+        self.assertEqual(len(fake.store["subscriptions"]), 7)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 7 * len(fake.territories))
 
     def test_unrecoverable_409_still_fails(self):
         """If the conflicting product cannot be found, the error must surface."""
@@ -1844,6 +2006,52 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertIn("cannot create app records", str(caught.exception))
 
 
+class ReviewDetailDemoAccountTests(unittest.TestCase):
+    class Client:
+        def __init__(self, attributes=None):
+            self.attributes = attributes
+            self.patches = []
+
+        def get_optional(self, path):
+            if self.attributes is None:
+                return None
+            return {"data": {"type": "appStoreReviewDetails", "id": "review-1",
+                             "attributes": self.attributes}}
+
+        def patch(self, path, body):
+            self.patches.append((path, body))
+            self.attributes.update(body["data"]["attributes"])
+            return {"data": {"id": "review-1", "attributes": self.attributes}}
+
+    def test_provisioned_demo_account_is_preserved_when_notes_change(self):
+        client = self.Client({"demoAccountRequired": True,
+                              "demoAccountName": "review@example.invalid",
+                              "demoAccountPassword": "example-secret",
+                              "notes": "old"})
+        asc.ensure_review_detail(client, "version-1", None, "updated",
+                                 asc.Plan(dry_run=False, out=io.StringIO()))
+        self.assertEqual(len(client.patches), 1)
+        self.assertEqual(client.patches[0][1]["data"]["attributes"], {"notes": "updated"})
+        self.assertEqual(client.attributes["demoAccountRequired"], True)
+        self.assertEqual(client.attributes["demoAccountName"], "review@example.invalid")
+        self.assertEqual(client.attributes["demoAccountPassword"], "example-secret")
+
+    def test_unprovisioned_demo_account_blocks_review_note_upload(self):
+        client = self.Client({"demoAccountRequired": False, "notes": "old"})
+        with self.assertRaises(asc.AscError) as caught:
+            asc.ensure_review_detail(client, "version-1", None, "updated",
+                                     asc.Plan(dry_run=False, out=io.StringIO()))
+        self.assertIn("demo login is not configured", str(caught.exception))
+        self.assertEqual(client.patches, [])
+
+    def test_missing_review_details_must_be_created_in_secure_ui(self):
+        client = self.Client()
+        with self.assertRaises(asc.AscError):
+            asc.ensure_review_detail(client, "version-1", None, "updated",
+                                     asc.Plan(dry_run=False, out=io.StringIO()))
+        self.assertEqual(client.patches, [])
+
+
 class ReviewSubmitTests(unittest.TestCase):
     """`review submit` is explicit and never part of `apply`."""
 
@@ -1869,7 +2077,7 @@ class ReviewSubmitTests(unittest.TestCase):
         fake = self.build({})
         code, output = self.run_submit(fake)
         self.assertEqual(code, 0)
-        self.assertEqual(len(fake.submitted), 6)
+        self.assertEqual(len(fake.submitted), 7)
         self.assertTrue(any(path == "/v1/subscriptionSubmissions"
                             for _method, path in fake.writes))
         for resource in fake.store["subscriptions"].values():
@@ -1882,7 +2090,7 @@ class ReviewSubmitTests(unittest.TestCase):
         self.assertEqual(code, 1, "a blocked product must exit non-zero")
         self.assertIn("MISSING_METADATA", output)
         self.assertIn("review apply", output)
-        self.assertEqual(len(fake.submitted), 5)
+        self.assertEqual(len(fake.submitted), 6)
         self.assertIn("Not submitted: com.rendprop.app.pro.monthly", output)
 
     def test_already_submitted_products_are_left_alone(self):
@@ -1979,7 +2187,7 @@ class ReviewStageTests(unittest.TestCase):
         code = asc.cmd_review(client, Args(action="stage", **kwargs), out)
         return code, out.getvalue()
 
-    def test_it_creates_one_draft_with_the_version_group_and_five_products(self):
+    def test_it_creates_one_draft_with_the_version_group_and_six_products(self):
         fake, client = self.build()
         code, output = self.run_stage(fake, client, skip_product=["com.rendprop.app.team.annual"])
         self.assertEqual(code, 0)
@@ -1991,7 +2199,7 @@ class ReviewStageTests(unittest.TestCase):
         flat = [next(iter(k)) for k in kinds]
         self.assertEqual(flat.count("appStoreVersion"), 1)
         self.assertEqual(flat.count("subscriptionGroupVersion"), 1)
-        self.assertEqual(flat.count("subscriptionVersion"), 5)
+        self.assertEqual(flat.count("subscriptionVersion"), 6)
         self.assertIn("NOT submitted", output)
 
     def test_it_is_idempotent(self):
@@ -2361,8 +2569,26 @@ class PriceGuardTests(unittest.TestCase):
         self.assertEqual(code, 0, "one unpriceable product must not fail the run")
         priced = self.priced_products(fake)
         self.assertNotIn("com.rendprop.app.team.annual", priced)
-        self.assertEqual(len(priced), 5, "every other product is still priced")
+        self.assertEqual(len(priced), 6, "every other product is still priced")
         self.assertIn("NOT PRICING com.rendprop.app.team.annual", output)
+
+    def test_monthly_launch_price_never_uses_a_close_substitute(self):
+        fake = FakeAsc(price_ladder=["29.99", "49.99", "99.99", "249.99",
+                                     "490.00", "990.00", "2490.00"])
+        _code, output = self.run_subscriptions(fake)
+        self.assertNotIn("com.rendprop.app.starter.monthly", self.priced_products(fake))
+        self.assertIn("NOT PRICING com.rendprop.app.starter.monthly", output)
+        self.assertIn("Monthly launch prices must match exactly", output)
+
+    def test_existing_monthly_price_needs_explicit_price_schedule(self):
+        fake = FakeAsc()
+        self.run_subscriptions(fake)
+        fake.repoint_price("com.rendprop.app.starter.monthly", "49.99")
+        fake.writes = []
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_subscriptions(fake)
+        self.assertIn("current USD 49.99; target USD 49.00", str(caught.exception))
+        self.assertEqual(fake.writes, [], "preflight must refuse before any Apple write")
 
     def test_the_refusal_names_both_amounts_and_the_way_out(self):
         fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
@@ -2379,19 +2605,19 @@ class PriceGuardTests(unittest.TestCase):
 
     def test_a_substitute_inside_the_tolerance_is_still_used(self):
         # 2450.00 is 1.6% below 2490.00 - close enough to charge.
-        fake = FakeAsc(price_ladder=["49.00", "99.00", "249.00",
+        fake = FakeAsc(price_ladder=["29.99", "49.00", "99.99", "249.99",
                                      "490.00", "990.00", "2450.00"])
         _code, output = self.run_subscriptions(fake)
         self.assertIn("PRICE POINT WARNING", output)
         self.assertNotIn("NOT PRICING", output)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 7 * len(fake.territories))
 
     def test_re_running_still_refuses_rather_than_settling(self):
         fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
         self.run_subscriptions(fake)
         _code, output = self.run_subscriptions(fake)
         self.assertIn("NOT PRICING com.rendprop.app.team.annual", output)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 5 * len(fake.territories))
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
 
     def test_an_unpriced_product_gets_no_free_trial(self):
         """A trial on a product that cannot be sold is meaningless - and Apple
@@ -2403,13 +2629,13 @@ class PriceGuardTests(unittest.TestCase):
         annual = [r["id"] for r in fake.store["subscriptions"].values()
                   if r["attributes"]["productId"] == "com.rendprop.app.team.annual"][0]
         self.assertNotIn(annual, offers)
-        self.assertEqual(len(offers), 5)
-        self.assertIn("no free trial for com.rendprop.app.team.annual", output)
+        self.assertEqual(len(offers), 6)
+        self.assertIn("trial setup skipped for com.rendprop.app.team.annual", output)
 
     def test_a_priced_product_still_gets_its_trial(self):
         fake = FakeAsc()
         self.run_subscriptions(fake)
-        self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 6)
+        self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 7)
 
     def test_the_tolerance_maths(self):
         self.assertEqual(asc.price_gap("2490.00", "1000.0"),
@@ -2439,7 +2665,7 @@ class SkipProductTests(unittest.TestCase):
         products = {r["attributes"]["productId"]
                     for r in fake.store["subscriptions"].values()}
         self.assertNotIn("com.rendprop.app.team.annual", products)
-        self.assertEqual(len(products), 5)
+        self.assertEqual(len(products), 6)
         self.assertIn("Skipping 1 product", out.getvalue())
 
     def test_the_flag_is_repeatable(self):
@@ -2448,7 +2674,7 @@ class SkipProductTests(unittest.TestCase):
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.cmd_subscriptions(client, Args(skip_product=[
             "com.rendprop.app.team.annual", "com.rendprop.app.pro.annual"]), out)
-        self.assertEqual(len(fake.store["subscriptions"]), 4)
+        self.assertEqual(len(fake.store["subscriptions"]), 5)
 
     def test_review_submit_skips_it_too(self):
         fake = FakeAsc()
@@ -2465,7 +2691,7 @@ class SkipProductTests(unittest.TestCase):
                                            skip_product=["com.rendprop.app.team.annual"]), out)
         submitted = {fake.store["subscriptions"][i]["attributes"]["productId"]
                      for i in fake.submitted}
-        self.assertEqual(len(submitted), 5)
+        self.assertEqual(len(submitted), 6)
         self.assertNotIn("com.rendprop.app.team.annual", submitted)
 
     def test_an_unknown_product_id_is_refused_rather_than_ignored(self):
@@ -2503,16 +2729,16 @@ class UnpriceTests(unittest.TestCase):
     def test_the_price_is_deleted(self):
         fake, client = self.build()
         per_product = len(fake.territories)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * per_product)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 7 * per_product)
         code, output = self.run_unprice(fake, client)
         self.assertEqual(code, 0)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 5 * per_product)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * per_product)
         deletes = [path for method, path in fake.writes if method == "DELETE"]
         self.assertEqual(len(deletes), per_product)
         self.assertTrue(deletes[0].startswith("/v1/subscriptionPrices/"), deletes[0])
         self.assertIn("remove the USA price", output)
         # The other five products are untouched.
-        self.assertEqual(len(fake.store["subscriptions"]), 6)
+        self.assertEqual(len(fake.store["subscriptions"]), 7)
 
     def test_a_refused_delete_withdraws_the_product_from_sale(self):
         fake, client = self.build()
@@ -2575,27 +2801,37 @@ class WhatsNewTests(unittest.TestCase):
 
     def test_an_app_with_only_a_first_version_has_no_previous_release(self):
         fake = FakeAsc()
-        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
         out = io.StringIO()
         self.assertFalse(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
 
     def test_a_released_version_counts(self):
         fake = FakeAsc()
-        fake.add_version("1.0", "READY_FOR_SALE")
+        fake.add_version(asc.VERSION_STRING, "READY_FOR_SALE")
         fake.add_version("1.1", "PREPARE_FOR_SUBMISSION")
         out = io.StringIO()
         self.assertTrue(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
 
+    def test_live_1_0_4_counts_when_apple_version_state_is_distribution(self):
+        """Live Apple state: appVersionState differs from appStoreState."""
+        fake = FakeAsc()
+        previous_id = fake.add_version("1.0.4", "READY_FOR_DISTRIBUTION")
+        fake.store["appStoreVersions"][previous_id]["attributes"]["appStoreState"] = "READY_FOR_SALE"
+        target_id = fake.add_version("1.0.5", "PREPARE_FOR_SUBMISSION")
+        out = io.StringIO()
+        self.assertTrue(asc.app_has_previous_release(
+            self.client(fake, out), fake.app_id, exclude_version_id=target_id))
+
     def test_an_approved_but_unreleased_version_does_not_count(self):
         """ACCEPTED means App Review passed, not that customers ever saw it."""
         fake = FakeAsc()
-        fake.add_version("1.0", "ACCEPTED")
+        fake.add_version(asc.VERSION_STRING, "ACCEPTED")
         out = io.StringIO()
         self.assertFalse(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
 
     def test_a_version_is_not_its_own_predecessor(self):
         fake = FakeAsc()
-        version_id = fake.add_version("1.0", "PENDING_DEVELOPER_RELEASE")
+        version_id = fake.add_version(asc.VERSION_STRING, "PENDING_DEVELOPER_RELEASE")
         out = io.StringIO()
         client = self.client(fake, out)
         self.assertTrue(asc.app_has_previous_release(client, fake.app_id))
@@ -2606,7 +2842,7 @@ class WhatsNewTests(unittest.TestCase):
         """The live 409, and the point of the retry: nothing else is lost."""
         fake = FakeAsc()
         version_id = fake.add_version(
-            "1.0", "PREPARE_FOR_SUBMISSION",
+            asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION",
             localization={"description": "old", "keywords": "old"})
         out = io.StringIO()
         plan = asc.Plan(out=out)
@@ -2628,7 +2864,7 @@ class WhatsNewTests(unittest.TestCase):
 
     def test_a_created_localization_recovers_the_same_way(self):
         fake = FakeAsc()
-        version_id = fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        version_id = fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
         out = io.StringIO()
         asc.ensure_version_localization(
             self.client(fake, out), version_id,
@@ -2640,7 +2876,7 @@ class WhatsNewTests(unittest.TestCase):
     def test_whats_new_is_kept_when_the_api_accepts_it(self):
         fake = FakeAsc()
         fake.whats_new_editable = True
-        version_id = fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+        version_id = fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION",
                                       localization={"description": "old"})
         out = io.StringIO()
         asc.ensure_version_localization(
@@ -2797,6 +3033,19 @@ class AgeRatingTests(unittest.TestCase):
         self.assertEqual([w for w in fake.writes if w[0] == "PATCH"], [])
         self.assertIn("already says nothing applies", printed)
 
+    def test_unknown_live_grac_field_preserves_every_rating_answer(self):
+        fake = FakeAsc()
+        fake.age_rating = {"gracRatingClassificationNumber": 13,
+                           "userGeneratedContent": True,
+                           "alcoholTobaccoOrDrugUseOrReferences": "INFREQUENT_OR_MILD"}
+        before = dict(fake.age_rating)
+        printed = self.run_age_rating(fake)
+        self.assertEqual(fake.age_rating, before)
+        self.assertEqual([w for w in fake.writes if w[0] == "PATCH"], [])
+        self.assertIn("preserving existing declaration", printed)
+        self.assertIn("gracRatingClassificationNumber", printed)
+        self.assertNotIn("declare age rating (nothing applies -> 4+)", printed)
+
 
 class StatusPriceTests(unittest.TestCase):
     """`status` must show the amount, not just that a price exists."""
@@ -2807,7 +3056,7 @@ class StatusPriceTests(unittest.TestCase):
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.cmd_subscriptions(client, Args(), out)
         fake.add_app_info()
-        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION",
                          localization={"description": "d", "keywords": "k",
                                        "supportUrl": "https://rendprop.com/support"})
         return fake
@@ -2837,6 +3086,13 @@ class StatusPriceTests(unittest.TestCase):
         self.assertIn("subscriptions unprice com.rendprop.app.team.annual", output)
         self.assertIn("is priced USD 1000.0, not the agreed USD 2490.00", output)
 
+    def test_monthly_status_requires_the_exact_owner_price(self):
+        fake = self.build()
+        fake.repoint_price("com.rendprop.app.starter.monthly", "49.99")
+        code, output = self.run_status(fake)
+        self.assertEqual(code, 1)
+        self.assertIn("49.99 != 49.00", output)
+
     def test_a_correct_price_is_not_flagged(self):
         fake = self.build()
         _code, output = self.run_status(fake)
@@ -2865,6 +3121,28 @@ class StatusPriceTests(unittest.TestCase):
         self.assertEqual(asc.price_amounts(prices, included), {"USA": "249.00"})
         # A point that did not come back is unknown, never "correct".
         self.assertEqual(asc.price_amounts(prices, []), {"USA": None})
+
+    def test_future_and_preserved_prices_do_not_look_live_to_new_buyers(self):
+        def price(identifier, point, start=None, preserved=False):
+            return {"type": "subscriptionPrices", "id": identifier,
+                    "attributes": {"startDate": start, "preserved": preserved},
+                    "relationships": {
+                        "territory": {"data": {"type": "territories", "id": "USA"}},
+                        "subscriptionPricePoint": {"data": {
+                            "type": "subscriptionPricePoints", "id": point}}}}
+
+        included = [{"type": "subscriptionPricePoints", "id": point,
+                     "attributes": {"customerPrice": amount}}
+                    for point, amount in [("old", "49.00"), ("new", "49.99"),
+                                          ("legacy", "48.00")]]
+        prices = [price("base", "old"), price("scheduled", "new", "2026-10-29"),
+                  price("grandfathered", "legacy", "2026-09-01", True)]
+        self.assertEqual(asc.price_amounts(prices, included, today="2026-10-27"),
+                         {"USA": "49.00"})
+        self.assertEqual(asc.price_amounts(prices, included, today="2026-10-29"),
+                         {"USA": "49.00"})  # effective hour is not established
+        self.assertEqual(asc.price_amounts(prices, included, today="2026-10-30"),
+                         {"USA": "49.99"})
 
 
 class CategoryTests(unittest.TestCase):
@@ -2949,7 +3227,7 @@ class CategoryTests(unittest.TestCase):
     def test_status_reports_set_categories_as_set(self):
         fake = FakeAsc()
         fake.add_app_info()
-        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
         out = io.StringIO()
         code = asc.cmd_status(self.client(fake, out), Args(json=True), out)
         output = out.getvalue()
@@ -2975,7 +3253,7 @@ class StatusSkipProductTests(unittest.TestCase):
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.cmd_subscriptions(client, Args(), out)
         fake.add_app_info()
-        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION",
                          localization={"description": "d", "keywords": "k",
                                        "supportUrl": "https://rendprop.com/support"})
         fake.repoint_price(self.PRODUCT, "1000.0")
@@ -3082,13 +3360,142 @@ class StatusSkipProductTests(unittest.TestCase):
         self.assertIn("status --skip-product com.rendprop.app.team.annual", bridge)
 
 
+class ExactReleaseVersionTests(unittest.TestCase):
+    def client(self, fake):
+        return asc.Client(credentials=None, transport=fake, verbose=False, out=io.StringIO())
+
+    def test_only_the_release_version_is_selected_among_editable_versions(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_version("1.1", "READY_FOR_REVIEW")
+        target = fake.add_version("1.0.5", "READY_FOR_REVIEW")
+        self.assertEqual(asc.VERSION_STRING, "1.0.5")
+        self.assertEqual(asc.find_editable_version(self.client(fake), fake.app_id)["id"], target)
+        self.assertEqual(fake.writes, [])
+
+    def test_another_editable_version_is_never_a_fallback(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_version("1.1", "READY_FOR_REVIEW")
+        self.assertIsNone(asc.find_editable_version(self.client(fake), fake.app_id))
+        self.assertEqual(fake.writes, [])
+
+    def test_build_attach_refuses_unrelated_draft_before_any_write(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        fake.add_build(version="57", marketing_version="1.0.4")
+        with self.assertRaises(asc.AscError):
+            asc.cmd_build(self.client(fake), Args(action="attach", build="57"), io.StringIO())
+        self.assertEqual(fake.writes, [], "A valid build must not cause writes to an unrelated version")
+
+    def test_published_target_does_not_select_an_unrelated_draft(self):
+        fake = FakeAsc()
+        fake.add_version("1.0.4", "READY_FOR_SALE")
+        fake.add_version("1.1", "PREPARE_FOR_SUBMISSION")
+        self.assertIsNone(asc.find_editable_version(self.client(fake), fake.app_id))
+        self.assertEqual(fake.writes, [])
+
+    def test_create_plan_names_current_release_without_writes(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "READY_FOR_SALE")
+        out = io.StringIO()
+        plan = asc.Plan(out=out, dry_run=True)
+        asc.ensure_app_store_version(self.client(fake), fake.app_id, plan)
+        self.assertIn("create App Store version " + asc.VERSION_STRING, out.getvalue())
+        self.assertEqual(fake.writes, [])
+
+    def test_status_marks_the_selected_version_missing_with_historical_versions_present(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.add_version("1.0.8", "READY_FOR_SALE")
+        out = io.StringIO()
+        client = self.client(fake)
+        self.assertEqual(asc.main(["--version", "1.0.9", "status"], out=out, client=client), 1)
+        self.assertIn("App Store version 1.0.9", out.getvalue())
+
+
+class VersionCopyTests(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeAsc()
+        self.fake.whats_new_editable = True
+        self.fake.add_version("1.0.8", "READY_FOR_SALE", localization={
+            "description": "Approved public description", "keywords": "homes,video",
+            "promotionalText": "", "supportUrl": "https://rendprop.com/support",
+            "marketingUrl": "https://rendprop.com", "whatsNew": "Older release notes",
+        })
+        self.client = asc.Client(credentials=None, transport=self.fake, verbose=False,
+                                 out=io.StringIO())
+        self.temp = tempfile.TemporaryDirectory()
+        self.notes = Path(self.temp.name) / "whats-new.txt"
+        self.notes.write_text("Faster photo review and more reliable video exports.\n")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def argv(self, action="plan", digest=None):
+        argv = ["--version", "1.0.9", "version-copy", action,
+                "--from-version", "1.0.8", "--whats-new-file", str(self.notes)]
+        if digest:
+            argv += ["--plan-sha256", digest]
+        return argv
+
+    def test_plan_is_read_only_and_copy_requires_matching_plan_digest(self):
+        out = io.StringIO()
+        self.assertEqual(asc.main(self.argv(), out=out, client=self.client), 0)
+        self.assertEqual(self.fake.writes, [])
+        self.assertIn("WOULD create App Store version 1.0.9", out.getvalue())
+        digest = next(line.split(": ", 1)[1] for line in out.getvalue().splitlines()
+                      if line.startswith("Exact release plan SHA-256:"))
+        self.assertEqual(len(digest), 64)
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            self.assertEqual(asc.main(self.argv("apply", "0" * 64), out=io.StringIO(),
+                                      client=self.client), 1)
+            self.assertIn("Apply requires --plan-sha256", sys.stderr.getvalue())
+        finally:
+            sys.stderr = stderr
+        self.assertEqual(self.fake.writes, [])
+        self.assertEqual(asc.main(self.argv("apply", digest), out=io.StringIO(),
+                                  client=self.client), 0)
+        target = next(v for v in self.fake.store["appStoreVersions"].values()
+                      if v["attributes"]["versionString"] == "1.0.9")
+        target_loc = next(loc for loc in self.fake.store["appStoreVersionLocalizations"].values()
+                          if loc["_parents"].get("appStoreVersion") == target["id"])
+        self.assertEqual(target_loc["attributes"]["description"], "Approved public description")
+        self.assertEqual(target_loc["attributes"]["whatsNew"],
+                         "Faster photo review and more reliable video exports.")
+        self.assertEqual(asc.VERSION_STRING, "1.0.5")
+
+    def test_released_target_is_rejected_before_any_write(self):
+        self.fake.add_version("1.0.9", "READY_FOR_SALE")
+        out = io.StringIO()
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            self.assertEqual(asc.main(self.argv("apply", "0" * 64), out=out,
+                                      client=self.client), 1)
+            self.assertIn("refusing to change", sys.stderr.getvalue())
+        finally:
+            sys.stderr = stderr
+        self.assertEqual(self.fake.writes, [])
+
+    def test_old_tracked_metadata_cannot_overwrite_the_new_release(self):
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            self.assertEqual(asc.main(["--version", "1.0.9", "metadata", "apply"],
+                                      out=io.StringIO(), client=self.client), 1)
+            self.assertIn("use `version-copy`", sys.stderr.getvalue())
+        finally:
+            sys.stderr = stderr
+        self.assertEqual(self.fake.writes, [])
+
+
 class BuildAttachTests(unittest.TestCase):
-    """`build attach` links the newest processed build to the 1.0 version."""
+    """`build attach` links a processed build to the configured release version."""
 
     def build(self, *builds, **version):
         fake = FakeAsc()
         if version.get("with_version", True):
-            fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+            fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
         for kwargs in builds:
             fake.add_build(**kwargs)
         return fake
@@ -3111,7 +3518,7 @@ class BuildAttachTests(unittest.TestCase):
         code, output = self.run_attach(fake)
         self.assertEqual(code, 0)
         self.assertEqual(self.attached_build_number(fake), "2")
-        self.assertIn("+ attach build 2 to version 1.0", output)
+        self.assertIn("+ attach build 2 to version " + asc.VERSION_STRING, output)
         self.assertIn("Build attach: 2 change(s) applied.", output)
 
     def test_newer_failed_builds_are_passed_over_with_a_warning(self):
@@ -3199,17 +3606,21 @@ class BuildAttachTests(unittest.TestCase):
              {"data": {"type": "builds", "id": build_id}}),
         ])
 
-    def test_a_build_can_be_named_by_number_or_by_version(self):
+    def test_a_build_must_belong_to_the_target_version(self):
         fake = self.build(dict(version="1", uploaded="2026-09-05T08:00:00-07:00"),
                           dict(version="2", uploaded="2026-09-05T09:00:00-07:00"),
                           dict(version="3", marketing_version="1.1",
                                uploaded="2026-09-05T10:00:00-07:00"))
         self.run_attach(fake, build="1")
         self.assertEqual(self.attached_build_number(fake), "1")
-        self.run_attach(fake, build="1.0")      # newest VALID build of version 1.0
+        self.run_attach(fake, build=asc.VERSION_STRING)  # newest VALID build of the release version
         self.assertEqual(self.attached_build_number(fake), "2")
-        self.run_attach(fake, build="1.1")
-        self.assertEqual(self.attached_build_number(fake), "3")
+        writes_before = len(fake.writes)
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_attach(fake, build="3")
+        self.assertIn("not target App Store version", str(caught.exception))
+        self.assertEqual(len(fake.writes), writes_before)
+        self.assertEqual(self.attached_build_number(fake), "2")
 
     def test_an_unknown_build_is_refused(self):
         fake = self.build(dict(version="1"))
@@ -3229,7 +3640,7 @@ class BuildAttachTests(unittest.TestCase):
         code, output = self.run_attach(fake, dry_run=True)
         self.assertEqual(code, 0)
         self.assertEqual(fake.writes, [])
-        self.assertIn("WOULD attach build 1 to version 1.0", output)
+        self.assertIn("WOULD attach build 1 to version " + asc.VERSION_STRING, output)
         self.assertIsNone(self.attached_build_number(fake))
 
     def test_it_needs_an_editable_version(self):
@@ -3253,8 +3664,42 @@ class BuildAttachTests(unittest.TestCase):
         fake = self.build(dict(version="1"))
         out = io.StringIO()
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
-        self.assertEqual(asc.main(["build", "attach"], out=out, client=client), 0)
+        self.assertEqual(asc.main(["--version", asc.VERSION_STRING,
+                                   "build", "attach", "--build", "1"],
+                                  out=out, client=client), 0)
         self.assertEqual(self.attached_build_number(fake), "1")
+
+    def test_cli_requires_explicit_version_and_build_before_any_write(self):
+        fake = self.build(dict(version="1"))
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=io.StringIO())
+        cases = [
+            ["build", "attach", "--build", "1"],
+            ["--version", asc.VERSION_STRING, "build", "attach"],
+            ["--version", asc.VERSION_STRING, "build", "attach", "--build", asc.VERSION_STRING],
+            ["metadata", "apply"],
+            ["review", "send", "--yes"],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv):
+                out = io.StringIO()
+                self.assertEqual(asc.main(argv, out=out, client=client), 2)
+                self.assertIn("FAILED", out.getvalue())
+        self.assertEqual(fake.writes, [])
+
+    def test_cli_version_override_targets_only_the_named_draft(self):
+        fake = FakeAsc()
+        fake.add_version(asc.VERSION_STRING, "PREPARE_FOR_SUBMISSION")
+        target_id = fake.add_version("1.0.9", "PREPARE_FOR_SUBMISSION")
+        fake.add_build(version="141", marketing_version="1.0.8")
+        fake.add_build(version="142", marketing_version="1.0.9")
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=io.StringIO())
+        out = io.StringIO()
+        self.assertEqual(asc.main(["--version", "1.0.9", "build", "attach", "--build", "142"],
+                                  out=out, client=client), 0)
+        self.assertEqual(fake.store["appStoreVersions"][target_id]["_parents"].get("build"),
+                         next(bid for bid, b in fake.store["builds"].items()
+                              if b["attributes"]["version"] == "142"))
+        self.assertEqual(asc.VERSION_STRING, "1.0.5")
 
     def test_status_sees_the_attached_build(self):
         fake = self.build(dict(version="1"))
@@ -3264,7 +3709,7 @@ class BuildAttachTests(unittest.TestCase):
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.cmd_status(client, Args(json=True), out)
         output = out.getvalue()
-        self.assertIn("attached to 1.0: yes", output)
+        self.assertIn("attached to " + asc.VERSION_STRING + ": yes", output)
         report = json.loads(output[output.index("{"):])
         self.assertNotIn("a build attached to version 1.0", report["missing"])
 
@@ -3301,12 +3746,29 @@ class MetadataCommandTests(unittest.TestCase):
         fake = FakeAsc()
         fake.add_app_info()
         fake.whats_new_editable = True
-        fake.add_version("1.0", "READY_FOR_SALE")
+        fake.add_version(asc.VERSION_STRING, "READY_FOR_SALE")
         code, _output = self.run_metadata(fake)
         self.assertEqual(code, 0)
         listing = [v["attributes"] for v in
                    fake.store["appStoreVersionLocalizations"].values()][0]
         self.assertTrue(listing.get("whatsNew"))
+
+    def test_live_1_0_4_requires_whats_new_on_1_0_5(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.whats_new_editable = True
+        previous_id = fake.add_version("1.0.4", "READY_FOR_DISTRIBUTION")
+        fake.store["appStoreVersions"][previous_id]["attributes"]["appStoreState"] = "READY_FOR_SALE"
+        fake.add_version("1.0.5", "PREPARE_FOR_SUBMISSION")
+        code, output = self.run_metadata(fake)
+        self.assertEqual(code, 0)
+        target = [v["attributes"] for v in
+                  fake.store["appStoreVersionLocalizations"].values()
+                  if v["attributes"].get("whatsNew")]
+        self.assertEqual(len(target), 1)
+        self.assertEqual(target[0]["whatsNew"],
+                         (asc.METADATA_DIR / "release_notes.txt").read_text().strip())
+        self.assertNotIn("What's New is not used for a first release", output)
 
     def test_the_support_url_is_the_support_page(self):
         fake = FakeAsc()

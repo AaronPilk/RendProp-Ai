@@ -6,9 +6,23 @@ scrubbable tour**. It's the server-side twin of the on-device
 buttery scrub), plus the things a phone can't do well — Cloudflare Stream
 hosting, AI declutter/restage/hero, and cost metering.
 
+New renders default to a **1920-pixel maximum long edge and 24 Mbps target**,
+with aspect preserved and no upscaling. A minute is approximately 180 MB at the
+target bitrate; actual encoder output varies. Native output now also optimizes
+MP4 metadata for network playback. Existing published files require a new render
+from their original source and a new sharing link. Worker environment overrides
+can retain older settings; changing defaults here does not establish a live
+worker deployment. See the [HD verification](../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md).
+
 The base render runs on-device; render time depends on the media and phone.
 This optional worker handles server encodes and enhancement stills/hero clips.
 It does not establish that a production worker fleet is currently running.
+Legacy paid enhancement dispatch now also requires the shared funded-serving
+receipt before each provider POST and a fresh worker lease/listing check. Old
+jobs without a recorded requesting actor are enhanced only in a sole-owner
+workspace; shared workspaces use AI Photo Studio. Unknown legacy tariffs are
+restricted to explicit unlimited private testing sponsorship. Provider timeouts
+retain their money hold; replay cannot submit the same paid attempt again.
 The [Studio editor](../../apps/studio/README.md) also has its own browser exporter;
 it does not submit every chat edit to this queue.
 
@@ -20,7 +34,7 @@ it does not submit every chat edit to this queue.
 poll render_jobs where status in (created, queued) AND the capture asset is an uploaded video in the uploads bucket
   └─ claim one            → status = processing (CAS claim + worker/attempt lease)
      1. download capture   from R2 rendprop-uploads (S3 API)
-     2. ffmpeg render      retime · 60fps · ≤1280 · all-intra H.264 · faststart · poster
+     2. ffmpeg render      retime · 60fps · ≤1920 · all-intra H.264 · faststart · poster
                                                         → cost_ledger: render
      3. enhancements?      call services/pipeline per room/segment:
                            declutter / restage / hero   → cost_ledger: declutter|restage|hero|qc
@@ -66,12 +80,12 @@ Built in `ffmpeg_render.py`. For a handheld (non-drone) clip ≥12s (speed 2.0×
 
 ```
 ffmpeg -y -hide_banner -nostdin -i capture.mov \
-  -vf "setpts=PTS/2.000000,scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=60,format=yuv420p" \
+  -vf "setpts=PTS/2.000000,scale=w='min(1920,iw)':h='min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=60,format=yuv420p" \
   -an \
   -c:v libx264 -preset medium -profile:v high -pix_fmt yuv420p \
   -g 1 -keyint_min 1 -bf 0 \
-  -x264-params keyint=1:min-keyint=1:scenecut=0:bframes=0:ref=1 \
-  -b:v 14M \
+  -x264-params keyint=1:min-keyint=1:scenecut=0:bframes=0:ref=1:colorprim=bt709:transfer=bt709:colormatrix=bt709 \
+  -b:v 24M \
   -color_primaries bt709 -color_trc bt709 -colorspace bt709 \
   -r 60 -movflags +faststart \
   -progress pipe:1 -nostats \
@@ -84,11 +98,11 @@ Why each piece (all from `RenderEngine.swift`):
 |---|---|
 | `setpts=PTS/2.0` (drone `1.25`, short clips ≤`1.5`) | RETIME — the glide. Same speed rule: `min(base,1.5)` under 12s. |
 | `fps=60` | fluid scroll-scrub cadence (scale runs FIRST, so frames `fps` will drop aren't scaled for nothing) |
-| `scale=…:force_original_aspect_ratio=decrease:force_divisible_by=2` | ≤1280 long edge, aspect-kept, never upscaled, even dims. Single-quotes protect the commas in `min()`. |
-| `-g 1 -bf 0` + `x264 keyint=1` | **ALL-INTRA** — every frame a keyframe → any scrub position decodes instantly. The whole point. |
-| `-b:v 14M` | high bitrate keeps all-intra crisp (mirrors `AVVideoAverageBitRateKey`) |
+| `scale=…:force_original_aspect_ratio=decrease:force_divisible_by=2` | ≤1920 long edge, aspect-kept, never upscaled, even dims. Single-quotes protect the commas in `min()`. |
+| `-g 1 -bf 0` + `x264 keyint=1` | **ALL-INTRA** — every frame a keyframe → each frame can decode independently; actual seeking depends on buffering and decoder performance. |
+| `-b:v 24M` | high bitrate keeps all-intra crisp (mirrors `AVVideoAverageBitRateKey`) |
 | `bt709` tags | the output really is Rec.709 SDR: HDR sources are tone-mapped first (below) |
-| `-movflags +faststart` | moov atom up front → instant web start |
+| `-movflags +faststart` | moov atom up front → playback metadata is available before the full download |
 | `-an` | the scrubbable tour is silent, like on-device |
 
 Poster: one exact frame pulled at ~12% in — but at least 1 s in (skips the
@@ -306,9 +320,9 @@ the two it has at startup.
 - **HDR curve tuning:** the tone-map is on by default for HDR sources; the
   `npl=100` + `mobius` default is covered by synthetic measurements above;
   check representative real iPhone HLG clips before changing it.
-- **Hero clip has no first-class home:** it's uploaded to R2 and logged, but the
-  schema has no column for it. Add `renders.hero_key` (or a `media` table) so the
-  tour host can play it.
+- **Hero storage:** migration 0016 added `renders.hero_key`, and the worker
+  includes it in the publication payload. Storage persistence does not establish
+  that a hero is selected for public playback or that its output quality is accepted.
 - **Heartbeat / lease:** *implemented* in the worker (claim stamps
   `lease_expires_at`/`worker_id`/`attempts`, a heartbeat thread renews it, the
   claim query reclaims expired leases, and a reaper fails attempts-exhausted
@@ -316,6 +330,6 @@ the two it has at startup.
   publication migrations are also required. See [the worker lease handoff](../../docs/handoff/audit-fixes/worker-leases.md) for
   historical context, not a current pending-deployment claim.
 - **4K tier:** `render_jobs.tier` (`premium4k`/`cinematic`) is read but the encode
-  is fixed at ≤1280. Branch the long-edge/bitrate on tier when 4K ships.
+  is fixed at ≤1920. Branch the long-edge/bitrate on tier when 4K ships.
 - **Stream webhook:** subscribe to Stream's `video.ready` webhook instead of
   `poll_ready` when `STREAM_REQUIRE_READY` matters.

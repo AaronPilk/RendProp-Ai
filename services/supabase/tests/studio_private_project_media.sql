@@ -10,7 +10,11 @@ do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();c uuid:=gen_ran
  insert into auth.users(id,email)values(a,'audit-a@fixture.invalid'),(b,'audit-b@fixture.invalid'),(c,'audit-c@fixture.invalid'),(q,'audit-q@fixture.invalid');
  select org_id into strict o from memberships where user_id=a;select org_id into strict other from memberships where user_id=c;select org_id into strict qo from memberships where user_id=q;
  insert into memberships(user_id,org_id,role) values(b,o,'agent');
+ -- Preserve Free private-media limits after seeding a listing that was
+ -- created during the owner's synthetic active intro week.
+ update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=o;
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic private-media property');
+ update orgs set plan='free',plan_source=null,trial_ends_at=null where id=o;
  insert into fixture values(a,b,c,q,o,other,qo,l,gen_random_uuid(),gen_random_uuid(),repeat('a',64),'project:'||gen_random_uuid());
 end$$;
 grant select on fixture to service_role;
@@ -66,6 +70,50 @@ do $$declare f record;r jsonb;deadline timestamptz;begin select * into f from fi
  perform pg_temp.ok((studio_project_media_write(f.b,f.o,f.bm,'read','{}')->>'id')::uuid=f.bm,'marketing can read own original after upload deadline');
  perform pg_temp.denied(format('select studio_project_media_write(%L,%L,%L,%L,%L::jsonb)',f.a,f.o,f.bm,'read','{}'),'RP404:','read recheck denies same-org colleague original');
  perform pg_temp.denied(format('select studio_project_media_write(%L,%L,%L,%L,%L::jsonb)',f.c,f.o,f.bm,'read','{}'),'RP403:','read recheck denies foreign workspace');
+ perform pg_temp.denied(format('select prepare_account_deletion(%L,%L,%L)',f.a,'fixture-uploads','fixture-renders'),'RP409: Transfer ownership','sole shared owner deletion requires custody transfer');
+ perform pg_temp.ok(not exists(select 1 from deletion_requests where user_id=f.a)
+  and exists(select 1 from memberships where user_id=f.a and org_id=f.o and role='owner')
+  and exists(select 1 from memberships where user_id=f.b and org_id=f.o and role='marketing')
+  and exists(select 1 from listings where id=f.l and org_id=f.o and agent_id=f.a and deleted_at is null)
+  and (select count(*)from studio_documents where user_id=f.a and org_id=f.o)=100
+  and exists(select 1 from studio_project_media where id=f.m and actor_id=f.a)
+  and exists(select 1 from studio_project_media where id=f.bm and actor_id=f.b),
+  'refused owner deletion preserves documents custody both originals and no intent');
+end$$;
+reset role;
+-- Explicit synthetic custody transfer does not authorize cascading away the
+-- departing person's retained shared documents.
+update memberships set role='owner'where user_id=(select b from fixture)and org_id=(select o from fixture);
+set local role service_role;
+do $$declare f record;begin select * into f from fixture;
+ perform pg_temp.denied(format('select prepare_account_deletion(%L,%L,%L)',f.a,'fixture-uploads','fixture-renders'),'RP409: This account has retained work','shared documents still require assisted cleanup after custody transfer');
+ perform pg_temp.ok(not exists(select 1 from deletion_requests where user_id=f.a)
+  and exists(select 1 from memberships where user_id=f.a and org_id=f.o and role='owner')
+  and exists(select 1 from memberships where user_id=f.b and org_id=f.o and role='owner')
+  and exists(select 1 from listings where id=f.l and org_id=f.o and agent_id=f.a and deleted_at is null)
+  and (select count(*)from studio_documents where user_id=f.a and org_id=f.o)=100
+  and exists(select 1 from studio_project_media where id=f.m and actor_id=f.a)
+  and exists(select 1 from studio_project_media where id=f.bm and actor_id=f.b),
+  'refused shared work deletion preserves documents custody both originals and no intent');
+end$$;
+reset role;
+-- Synthetic operator cleanup only: no shipped UI or automated cleanup is
+-- implied. Resolve exactly the 100 test-owned project documents, without
+-- deleting the actor's reserved originals or any colleague's media.
+do $$declare f record;n integer;begin select * into f from fixture;
+ perform pg_temp.ok((select count(*)from studio_documents where user_id=f.a)=100
+  and (select count(*)from studio_documents where user_id=f.a and org_id=f.o and kind='project'and listing_id=f.l)=100,
+  'assisted fixture cleanup binds exact actor org kind listing and 100 documents');
+ delete from studio_documents where user_id=f.a and org_id=f.o and kind='project'and listing_id=f.l;
+ get diagnostics n=row_count;
+ perform pg_temp.ok(n=100 and not exists(select 1 from studio_documents where user_id=f.a)
+  and exists(select 1 from listings where id=f.l and org_id=f.o and agent_id=f.a and deleted_at is null)
+  and exists(select 1 from studio_project_media where id=f.m and actor_id=f.a)
+  and exists(select 1 from studio_project_media where id=f.bm and actor_id=f.b),
+  'assisted fixture document cleanup preserves both private originals and listing');
+end$$;
+set local role service_role;
+do $$declare f record;r jsonb;deadline timestamptz;begin select * into f from fixture;
  select write_deadline into deadline from studio_project_media where id=f.m;
  r:=prepare_account_deletion(f.a,'fixture-uploads','fixture-renders');
  select payload into r from deletion_requests where user_id=f.a and snapshot_version=2;

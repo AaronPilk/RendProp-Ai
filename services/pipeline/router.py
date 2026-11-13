@@ -30,7 +30,8 @@ from config import ARCHITECTURE_LOCK, SETTINGS
 from cost_ledger import CostLedger, LedgerError
 from providers import anthropic_qc, costs, fal_client as fal, gemini
 from providers.anthropic_qc import QCResult
-from providers.base import ProviderError, ProviderResult
+from providers.base import ProviderError, ProviderFundingError, ProviderResult
+from providers.funding import capture_provider_attempts, result_funding
 
 DECLUTTER_PROMPTEDIT = (
     "Remove all clutter, mess, boxes, cords, cables, laundry, dishes, and personal "
@@ -116,12 +117,14 @@ def _meter(ctx: JobContext, feature: str, estimate_cents: float,
     """
     _guard_ledger(ctx, feature)
     ctx.budget.precheck(feature, estimate_cents)          # may raise BudgetExceeded
-    result = produce()                                    # the actual provider call
+    with capture_provider_attempts() as attempts:
+        result = produce()                                # the actual provider call
     try:
         ctx.ledger.record(
             feature=result.feature or feature, provider=result.provider, model=result.model,
             units=result.units, unit_cost_cents=result.unit_cost_cents,
             total_cents=result.total_cents, job_id=ctx.job_id, org_id=ctx.org_id, meta=result.meta,
+            funding_attempt=result_funding(attempts, result.provider, result.model),
         )
     except LedgerError as e:
         print(f"    ⚠ {e}")
@@ -181,6 +184,8 @@ def restage(ctx: JobContext, image: bytes, style_prompt: str, *, allow_fallback:
         return _meter(ctx, "restage", est, lambda: _restage_primary(route, image, style_prompt))
     except BudgetExceeded:
         raise  # cap breaches never silently fall back — they abort
+    except ProviderFundingError:
+        raise  # Funding refusal/replay is not permission to buy a fallback.
     except ProviderError as e:
         if not allow_fallback or route == "fal":
             raise
@@ -251,7 +256,7 @@ def drone_render(ctx: JobContext, video: bytes, *, out_seconds: float, tier: str
 
 # ── QC drift judge (Haiku → Sonnet tiering) ───────────────────────────────────
 
-def _record_qc(ctx: JobContext, r: QCResult, image_count: int) -> None:
+def _record_qc(ctx: JobContext, r: QCResult, image_count: int, attempts=()) -> None:
     unit = round(r.cost_cents / image_count, 6) if image_count else r.cost_cents
     try:
         ctx.ledger.record(
@@ -259,6 +264,7 @@ def _record_qc(ctx: JobContext, r: QCResult, image_count: int) -> None:
             unit_cost_cents=unit, total_cents=r.cost_cents, job_id=ctx.job_id, org_id=ctx.org_id,
             meta={"structure": r.structure, "completeness": r.completeness, "artifacts": r.artifacts,
                   "confidence": r.confidence, "verdict": r.verdict, "escalated": r.escalated},
+            funding_attempt=result_funding(attempts, "anthropic", r.model),
         )
     except LedgerError as e:
         print(f"    ⚠ {e}")
@@ -277,19 +283,21 @@ def qc(ctx: JobContext, source_frames: list[bytes], enhanced_frames: list[bytes]
     # Tier 1 — Haiku (the cheap judge; the rubric is too short to prompt-cache).
     _guard_ledger(ctx, "qc")
     ctx.budget.precheck("qc", costs.qc_estimate_cents(SETTINGS.anthropic_model_qc))
-    result = anthropic_qc.judge(source_frames, enhanced_frames, plan,
-                                model=SETTINGS.anthropic_model_qc)
-    _record_qc(ctx, result, image_count)
+    with capture_provider_attempts() as attempts:
+        result = anthropic_qc.judge(source_frames, enhanced_frames, plan,
+                                    model=SETTINGS.anthropic_model_qc)
+    _record_qc(ctx, result, image_count, attempts)
 
     # Tier 2 — escalate to Sonnet ONLY when Haiku's confidence is low.
     if result.confidence < SETTINGS.qc_confidence_escalate:
         try:
             _guard_ledger(ctx, "qc-escalate")
             ctx.budget.precheck("qc", costs.qc_estimate_cents(SETTINGS.anthropic_model_escalate))
-            escalated = anthropic_qc.judge(source_frames, enhanced_frames, plan,
-                                           model=SETTINGS.anthropic_model_escalate)
+            with capture_provider_attempts() as attempts:
+                escalated = anthropic_qc.judge(source_frames, enhanced_frames, plan,
+                                               model=SETTINGS.anthropic_model_escalate)
             escalated.escalated = True
-            _record_qc(ctx, escalated, image_count)
+            _record_qc(ctx, escalated, image_count, attempts)
             return escalated
         except BudgetExceeded as e:
             # Out of budget to escalate — keep Haiku's (lower-confidence) verdict.

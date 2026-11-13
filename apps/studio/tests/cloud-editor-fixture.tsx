@@ -9,6 +9,7 @@ import type {VideoEditorProps} from "../src/editor/VideoEditor";
 import type {ShotPlanHandoff, AgentPlanHandoff} from "../src/features/creative/model";
 import type { Workspace, Listing } from "../src/data/contracts";
 import "../src/styles.css";
+import "../src/design/studio.css";
 import {reviewFixture} from "./review-fixture";
 const org = "10000000-0000-4000-8000-000000000001", listing = "20000000-0000-4000-8000-000000000002", other = "20000000-0000-4000-8000-000000000003", user = "40000000-0000-4000-8000-000000000004";
 const workspace: Workspace = { user: { id: user, email: "fixture@example.invalid", name: "Fixture Agent", avatarUrl: null }, org: { id: org, name: "Fixture office", handle: "office", spaceType: "real_estate" }, memberships: [{ orgId: org, orgName: "Fixture office", role: "owner", spaceType: "real_estate" }], plan: "team", planRaw: "team", planDegraded: false, planExpiresAt: null, trialEndsAt: null, usage: { listings: 2, leads: 0, leadsNew: 0, renders: 0 } };
@@ -41,6 +42,8 @@ const services = {
   api: async (path: string, options: { method?: string; orgId: string; body?: Record<string, unknown> }) => {
     if (options.orgId !== org) throw new Error("Unexpected fixture workspace");
     const body = options.body;
+    if(path.includes("/property-video-jobs/sources?")){const target=new URL(path,"https://fixture.invalid").searchParams.get("listing_id");return {listing_id:target,org_id:org,selected_library_org_id:org,selected_count:0,sources:[],next_offset:null};}
+    if(path.includes("/property-video-jobs?"))return {jobs:[],next_offset:null};
     if(path.endsWith("/production-review/narration")){
       const saved=(body?.document_user_id===user?cloud.documents:otherDocuments)[String(body?.key)],draft=saved?.payload.draft as {narration?:{resultId:string}}|undefined;
       if(!saved||saved.revision!==body?.expected_document_revision||draft?.narration?.resultId!==body?.result_id||body?.result_id!==voiceId)throw new StudioError("missing","Saved review narration is unavailable.",404);
@@ -102,4 +105,4 @@ function Fixture() {
   });
   return <div style={{ padding: 24 }}><button onClick={() => setPlanner(!planner)}>Switch to {planner ? "editor" : "planner"}</button>{notice && <p role="status">{notice}</p>}<div hidden={planner}><CloudEditor services={services} workspace={{...workspace,user:{...workspace.user,id:activeUser},memberships:workspace.memberships.map(member=>({...member,role:activeRole}))}} listings={listings} listingId={new URL(location.href).searchParams.get("listing")??listing} active={!planner} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} entryRequest={entryRequest} onOpenCreative={(listingId,tool)=>setNotice(`Open ${tool} for ${listingId}`)} onChanged={() => {}} /></div><div hidden={!planner}><CloudPlanner services={services} workspace={workspace} onNotice={setNotice} /></div></div>;
 }
-createRoot(document.getElementById("root")!).render(<Fixture />);
+createRoot(document.getElementById("root")!).render(<div className="studio-shell" style={{display:"block"}}><Fixture /></div>);

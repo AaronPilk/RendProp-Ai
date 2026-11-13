@@ -39,6 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -51,7 +52,8 @@ TEAM_ID = "5F5C5G25Y6"
 APP_NAME = "Rendprop"
 APP_NAME_FALLBACK = "Rendprop: AI Property Tours"
 PRIMARY_LOCALE = "en-US"
-VERSION_STRING = "1.0"
+VERSION_STRING = "1.0.5"
+TRACKED_METADATA_VERSION = "1.0.5"
 COPYRIGHT = "2026 Rendprop"
 PLATFORM = "IOS"
 
@@ -86,9 +88,9 @@ SUBSCRIPTION_GROUP_REFERENCE_NAME = "rendprop_plans"
 SUBSCRIPTION_GROUP_DISPLAY_NAME = "Rendprop Plans"
 
 REVIEW_NOTE = (
-    "Unlocks the monthly allowance shown in Settings → Plan & usage "
-    "(tour renders, AI photo edits, reel clips, aerial intros). The paywall is "
-    "Settings → Plan & usage → Upgrade plan."
+    "Monthly plans include the AI credits shown in Account → Settings & plan "
+    "after the introductory week. Eligible work shows its credit cost first. "
+    "The paywall is Account → Settings & plan → Plan & usage → Upgrade plan."
 )
 
 # groupLevel: 1 is the highest-value tier. Apple uses the level to decide whether
@@ -102,10 +104,10 @@ SUBSCRIPTIONS = [
         "productId": "com.rendprop.app.team.monthly",
         "name": "Team Monthly",
         "period": "ONE_MONTH",
-        "usd": "249.00",
+        "usd": "249.99",
         "groupLevel": 1,
         "displayName": "Team Monthly",
-        "description": "25 tours, 400 edits, 25 reel clips, 2 seats.",
+        "description": "600 AI credits monthly; 3 seats.",
     },
     {
         "productId": "com.rendprop.app.team.annual",
@@ -118,12 +120,12 @@ SUBSCRIPTIONS = [
     },
     {
         "productId": "com.rendprop.app.pro.monthly",
-        "name": "Pro Monthly",
+        "name": "Ultra Monthly",
         "period": "ONE_MONTH",
-        "usd": "99.00",
+        "usd": "99.99",
         "groupLevel": 2,
-        "displayName": "Pro Monthly",
-        "description": "10 tours, 200 edits, 12 reel clips a month.",
+        "displayName": "Ultra Monthly",
+        "description": "250 AI credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.pro.annual",
@@ -136,12 +138,24 @@ SUBSCRIPTIONS = [
     },
     {
         "productId": "com.rendprop.app.starter.monthly",
-        "name": "Starter Monthly",
+        "name": "Max Monthly",
         "period": "ONE_MONTH",
         "usd": "49.00",
         "groupLevel": 3,
-        "displayName": "Starter Monthly",
-        "description": "4 tours, 100 edits, 6 reel clips a month.",
+        "displayName": "Max Monthly",
+        "description": "120 AI credits monthly; 1 seat.",
+    },
+    {
+        "productId": "com.rendprop.app.pro29.monthly",
+        # Internal reference names must be unique even when the retired
+        # product is still present. Apple's old pro.monthly SKU already owns
+        # "Pro Monthly" internally; customers still see the localization below.
+        "name": "Rendprop Pro Monthly",
+        "period": "ONE_MONTH",
+        "usd": "29.99",
+        "groupLevel": 4,
+        "displayName": "Pro Monthly",
+        "description": "60 AI credits monthly; 1 seat.",
     },
     {
         "productId": "com.rendprop.app.starter.annual",
@@ -152,6 +166,25 @@ SUBSCRIPTIONS = [
         "displayName": "Starter Yearly",
         "description": "4 tours, 100 edits, 6 reel clips a month.",
     },
+]
+
+# Additional Team capacity is a separate subscription at each seat count,
+# within the same Apple subscription group and level as the three-seat Team
+# product. These remain absent from the default release catalog. Supplying
+# --include-team-seats is an explicit setup/inspection step; it never changes
+# the app's dormant SKU allowlist or the server's inactive funding rows.
+TEAM_SEAT_SUBSCRIPTIONS = [
+    {
+        "productId": "com.rendprop.app.team%d.monthly" % seats,
+        "name": "Team %d Seats Monthly" % seats,
+        "period": "ONE_MONTH",
+        "usd": "%d.99" % (249 + 50 * (seats - 3)),
+        "groupLevel": 1,
+        "displayName": "Team %d Seats Monthly" % seats,
+        "description": "%s AI credits monthly; %d seats."
+                       % (format(600 + 100 * (seats - 3), ","), seats),
+    }
+    for seats in range(4, 10)
 ]
 
 # Introductory offer applied to every product.
@@ -231,6 +264,31 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 METADATA_DIR = REPO_ROOT / "docs" / "appstore" / "metadata" / PRIMARY_LOCALE
 SCREENSHOT_DIR = REPO_ROOT / "docs" / "appstore" / "screenshots" / "6.9"
 IAP_SCREENSHOT = REPO_ROOT / "docs" / "appstore" / "iap-review" / "paywall.png"
+
+
+def iap_review_screenshot_for_product(product_id):
+    """Each sold Team-seat variant needs its own visible StoreKit selection."""
+    for seats in range(4, 10):
+        if product_id == "com.rendprop.app.team%d.monthly" % seats:
+            return IAP_SCREENSHOT.with_name("team%d.png" % seats)
+    return IAP_SCREENSHOT
+# An IAP review screenshot is not a marketing screenshot set. Apple accepts
+# any screenshot size supported by the iPhone app; the phone's native PNG must
+# not be resized just to satisfy the automated 6.9-inch store-shot recipe.
+# https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/
+IAP_REVIEW_IPHONE_PORTRAIT_SIZES = frozenset({
+    (1320, 2868), (1290, 2796), (1260, 2736),
+    (1206, 2622), (1179, 2556), (1284, 2778),
+    (1242, 2688), (1170, 2532), (1125, 2436), (1080, 2340),
+    (1242, 2208), (750, 1334), (640, 1136), (640, 1096),
+    (640, 960), (640, 920),
+})
+# The existing image predates Pro/Max/Ultra, the monthly-only catalog and the
+# owner-selected .99 prices. Keep its fingerprint as a permanent upload denylist
+# so an old checkout cannot quietly attach it to the new subscription review.
+OBSOLETE_IAP_SCREENSHOT_SHA256 = {
+    "940850743271be9e9c61ad777660518dacfbf0a9cff5d4500574dd718eb63228"
+}
 # The notes Apple receives verbatim (<= 4000 chars). The .md next to it is the
 # human explainer and must never be sent — it discusses the owner console.
 REVIEW_NOTES_FILE = REPO_ROOT / "docs" / "appstore" / "metadata" / "en-US" / "review_notes.txt"
@@ -675,6 +733,7 @@ class Plan(object):
         # Products this run refused to price because no acceptable price point
         # exists. Surfaced in the summary so it can never pass unnoticed.
         self.price_skipped = []
+        self.existing_price_mismatches = []
 
     def note(self, message):
         self.out.write("  = %s\n" % message)
@@ -724,6 +783,22 @@ def md5_of(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def iap_review_screenshot_issue(path=None):
+    """Return a concrete release blocker before any App Store review write."""
+    path = IAP_SCREENSHOT if path is None else path
+    if not path.is_file():
+        return "The current subscription review paywall capture is missing: %s" % path
+    if png_dimensions(path) not in IAP_REVIEW_IPHONE_PORTRAIT_SIZES:
+        return ("Subscription review paywall capture is not a native supported "
+                "iPhone portrait PNG: %s" % path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest in OBSOLETE_IAP_SCREENSHOT_SHA256:
+        return ("Subscription review paywall capture is obsolete (Starter/Pro, "
+                "$49/$99 and a Yearly picker). Recapture the current Pro/Max/Ultra "
+                "monthly paywall with all prices visible before review.")
+    return None
 
 
 def png_dimensions(path):
@@ -850,10 +925,27 @@ def load_review_contact(key_dir=None):
 # ---------------------------------------------------------------------------
 
 
+# 2026-10-09: Rendprop sells monthly plans only. Annual products are never
+# touched (priced, put on sale, added for review) by any command; pass
+# --include-annual to override deliberately.
+NOT_SOLD_PRODUCT_IDS = (
+    "com.rendprop.app.starter.annual",
+    "com.rendprop.app.pro.annual",
+    "com.rendprop.app.team.annual",
+)
+
+
+def catalog_subscriptions(args):
+    """Default launch SKUs, plus explicitly requested dormant Team variants."""
+    if getattr(args, "include_team_seats", False):
+        return SUBSCRIPTIONS + TEAM_SEAT_SUBSCRIPTIONS
+    return SUBSCRIPTIONS
+
+
 def active_subscriptions(args, out=None):
     """The products this run should touch, honouring --skip-product."""
     skip = list(getattr(args, "skip_product", None) or [])
-    known = {spec["productId"] for spec in SUBSCRIPTIONS}
+    known = {spec["productId"] for spec in SUBSCRIPTIONS + TEAM_SEAT_SUBSCRIPTIONS}
     unknown = [p for p in skip if p not in known]
     if unknown:
         raise AscError(
@@ -862,7 +954,7 @@ def active_subscriptions(args, out=None):
         )
     if skip and out is not None:
         out.write("Skipping %d product(s): %s\n" % (len(skip), ", ".join(skip)))
-    return [spec for spec in SUBSCRIPTIONS if spec["productId"] not in skip]
+    return [spec for spec in catalog_subscriptions(args) if spec["productId"] not in skip]
 
 
 def find_app(client):
@@ -1185,24 +1277,35 @@ def priced_territories(prices):
     return found
 
 
-def price_amounts(prices, included):
-    """{territory: customerPrice} for a subscription's prices.
+def price_amounts(prices, included, today=None):
+    """{territory: current new-buyer customerPrice} for a subscription.
 
     The amount is an attribute of the price POINT, not of the price, so this
     needs `include=subscriptionPricePoint,territory` and the `included` array
     those come back in. A price whose point is not in `included` maps to None -
-    which reads as "unknown", never as "correct".
+    which reads as "unknown", never as "correct". Apple's prices may include
+    future schedules and preserved prices for existing subscribers. Neither is
+    today's storefront price for a new buyer. A change dated today is treated
+    as pending because its territory-specific effective hour is not proven by
+    this API response; read StoreKit before claiming that it has taken effect.
     """
+    today = today or datetime.now(timezone.utc).date().isoformat()
     points = {}
     for resource in included or []:
         if resource.get("type") == "subscriptionPricePoints" and resource.get("id"):
             points[resource["id"]] = attributes_of(resource).get("customerPrice")
     found = {}
+    current_dates = {}
     for price in prices:
         relationships = price.get("relationships") or {}
+        attrs = attributes_of(price)
         territory = ((relationships.get("territory") or {}).get("data") or {}).get("id")
         point_id = ((relationships.get("subscriptionPricePoint") or {}).get("data") or {}).get("id")
-        if territory:
+        start = attrs.get("startDate") or ""
+        if not territory or attrs.get("preserved") is True or (start and start >= today):
+            continue
+        if territory not in current_dates or start > current_dates[territory]:
+            current_dates[territory] = start
             found[territory] = points.get(point_id)
     return found
 
@@ -1274,12 +1377,25 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
     # (one base price, equalized to all 175 territories). Availability stays
     # USA-only; prices in unavailable territories are dormant.
     territories = sorted(set(list(territories or LAUNCH_TERRITORIES)) | set(all_territory_ids(client)))
-    prices = client.get_all(
+    prices, included = client.get_all_included(
         "/v1/subscriptions/%s/prices" % subscription_id,
         params={"include": "subscriptionPricePoint,territory", "limit": 200},
     )
     already = priced_territories(prices)
     missing = [t for t in territories if t not in already]
+    if USA_TERRITORY in already:
+        actual = price_amounts(prices, included).get(USA_TERRITORY)
+        exact = actual is not None and same_amount(actual, spec["usd"])
+        if not exact and spec["period"] == "ONE_MONTH":
+            plan.existing_price_mismatches.append((spec["productId"], actual, spec["usd"]))
+            plan.out.write(
+                "  !! EXISTING PRICE MISMATCH: %s is USD %s; target is USD %s.\n"
+                "  !! Refusing to treat this product as launch-ready or schedule a\n"
+                "  !! price change implicitly. Review the subscriber-preservation\n"
+                "  !! choice and schedule the exact price separately in Apple.\n"
+                % (spec["productId"], actual or "unknown", spec["usd"])
+            )
+            return False
     if prices and not missing:
         plan.note("%s is priced in all %d territories (sold in %s)"
                   % (spec["productId"], len(territories), ",".join(LAUNCH_TERRITORIES)))
@@ -1312,7 +1428,8 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
     # price is the irreversible-ish step - once it exists the product is
     # sellable - so a bad substitute must never be written just because it was
     # the closest thing on offer.
-    if not exact and not price_is_acceptable(spec["usd"], amount):
+    if not exact and (spec["period"] == "ONE_MONTH" or
+                      not price_is_acceptable(spec["usd"], amount)):
         gap = price_gap(spec["usd"], amount)
         plan.price_skipped.append({
             "productId": spec["productId"],
@@ -1323,7 +1440,8 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
         plan.out.write(
             "  !! NOT PRICING %s.\n"
             "  !! Intended USD %s; the nearest point Apple offers is USD %s, which is\n"
-            "  !! %.1f%% away - past the %.0f%% tolerance this tool will accept.\n"
+            "  !! %.1f%% away. Monthly launch prices must match exactly; legacy\n"
+            "  !! annual prices have a %.0f%% tolerance.\n"
             "  !! Leaving the product unpriced is the safe outcome: an unpriced\n"
             "  !! subscription cannot be sold, a wrongly priced one can.\n"
             "  !!\n"
@@ -1705,12 +1823,88 @@ def cmd_subscriptions_unprice(client, args, out):
     return 1
 
 
+def preflight_subscription_internal_names(client, app_id, specs):
+    """Fail before any write if a planned internal reference name is taken.
+
+    Apple returns ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE for a subscription
+    `name` already owned by another product, even when its localized display
+    name is different. Scan every group in the app, including withdrawn SKUs;
+    the internal reference name is not the customer-facing localization.
+    """
+    existing_by_name = {}
+    for group in client.get_all("/v1/apps/%s/subscriptionGroups" % app_id):
+        for row in client.get_all(
+                "/v1/subscriptionGroups/%s/subscriptions" % group["id"]):
+            attrs = attributes_of(row)
+            name = attrs.get("name")
+            product_id = attrs.get("productId")
+            if name and product_id:
+                key = name.casefold()
+                previous = existing_by_name.get(key)
+                if previous and previous != product_id:
+                    raise AscError(
+                        "Apple already has multiple subscriptions named %r (%s, %s)"
+                        % (name, previous, product_id))
+                existing_by_name[key] = product_id
+
+    planned_by_name = {}
+    for spec in specs:
+        product_id = spec["productId"]
+        name = spec["name"]
+        if not isinstance(name, str) or not name.strip() or len(name) > 64:
+            raise AscError("Invalid internal reference name for %s" % product_id)
+        key = name.casefold()
+        previous = planned_by_name.get(key) or existing_by_name.get(key)
+        if previous and previous != product_id:
+            raise AscError(
+                "Internal subscription name %r for %s is already used by %s. "
+                "Choose a unique internal name; keep the customer-facing "
+                "displayName unchanged. No Apple writes were made."
+                % (name, product_id, previous))
+        planned_by_name[key] = product_id
+
+
 def cmd_subscriptions(client, args, out):
     if getattr(args, "action", None) == "unprice":
         return cmd_subscriptions_unprice(client, args, out)
     plan = Plan(dry_run=args.dry_run, out=out)
     app = require_app(client)
     out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
+
+    # These are existing, approved SKUs. Updating their price means choosing
+    # what happens to current subscribers, and Apple can notify or seek their
+    # consent. Never let the broad apply bridge silently change storefront
+    # metadata or create another product before that choice is made.
+    group = find_group(client, app["id"])
+    mismatches = []
+    if group is not None:
+        existing = {
+            attributes_of(row).get("productId"): row
+            for row in client.get_all("/v1/subscriptionGroups/%s/subscriptions" % group["id"])
+        }
+        for spec in active_subscriptions(args):
+            if spec["period"] != "ONE_MONTH":
+                continue
+            row = existing.get(spec["productId"])
+            if row is None:
+                continue
+            prices, included = client.get_all_included(
+                "/v1/subscriptions/%s/prices" % row["id"],
+                params={"include": "subscriptionPricePoint,territory", "limit": 200},
+            )
+            amounts = price_amounts(prices, included)
+            if USA_TERRITORY in amounts and not same_amount(amounts[USA_TERRITORY], spec["usd"]):
+                mismatches.append((spec["productId"], amounts[USA_TERRITORY], spec["usd"]))
+    if mismatches:
+        raise AscError(
+            "Existing monthly prices differ from the release catalog. No writes were made.\n"
+            + "\n".join("  %s: current USD %s; target USD %s" % row for row in mismatches)
+            + "\nSchedule the exact price in App Store Connect after choosing whether "
+              "existing subscribers keep their current price. Run `status` to inspect all gaps."
+        )
+
+    specs = active_subscriptions(args)
+    preflight_subscription_internal_names(client, app["id"], specs)
 
     out.write("\nApp Store Server Notifications\n")
     ensure_notification_urls(client, app, plan)
@@ -1739,7 +1933,8 @@ def cmd_subscriptions(client, args, out):
             # meaningless - and Apple may well refuse an introductory offer on an
             # unpriced product, which would abort a run over a product this tool
             # has already decided to leave alone.
-            plan.note("no free trial for %s while it has no price" % spec["productId"])
+            plan.note("trial setup skipped for %s while its price is not launch-ready"
+                      % spec["productId"])
             continue
         ensure_introductory_offer(client, subscription_id, spec, plan, territories)
 
@@ -1916,7 +2111,7 @@ def ensure_categories(client, app_info, plan):
 
 
 def ensure_age_rating(client, app_info, plan):
-    """Declare that nothing applies, which yields a 4+ rating.
+    """Reconcile known declarations, preserving the rating on unknown fields.
 
     Attribute names and enum values are from AgeRatingDeclarationUpdateRequest in
     the v4.4.1 spec. The enum for every content field is
@@ -1930,6 +2125,20 @@ def ensure_age_rating(client, app_info, plan):
     declaration_id = declaration["data"]["id"]
 
     current = attributes_of(declaration.get("data"))
+
+    # A live Rendprop read-back includes gracRatingClassificationNumber, which
+    # is not an attribute this version of the tool can safely update. Do not
+    # clear the other declarations (and lower the public 13+ rating to 4+)
+    # while any field in Apple's current rating is not understood. Metadata
+    # copy can still be updated independently.
+    known = (AGE_RATING_SKIP | AGE_RATING_BOOLEANS |
+             frozenset(AGE_RATING_NONE_VALUES) | AGE_RATING_FREQUENCY_FIELDS)
+    unknown = sorted(set(current) - known)
+    if unknown:
+        plan.warn("age rating: preserving existing declaration; App Store Connect "
+                  "returned unrecognized field(s) %s. Check the current rating "
+                  "in App Information before release." % ", ".join(unknown))
+        return
 
     # Drive the PATCH from the attribute keys App Store Connect actually returns,
     # rather than a list invented here. The first live attempt sent 22 fields
@@ -1948,10 +2157,7 @@ def ensure_age_rating(client, app_info, plan):
         elif key in AGE_RATING_FREQUENCY_FIELDS:
             wanted[key] = "NONE"
         else:
-            # An attribute this tool has never seen. Answering it blind could set
-            # a rating nobody intended, so say so and leave it alone.
-            plan.warn("age rating: App Store Connect returned an attribute this tool "
-                      "does not know (%r) - check it in the UI" % key)
+            raise AscError("Unclassified age-rating field %r" % key)
 
     changed = {k: v for k, v in wanted.items() if current.get(k) != v}
     if not changed:
@@ -1974,8 +2180,8 @@ def ensure_age_rating(client, app_info, plan):
             if isinstance(source, dict) and source.get("pointer"):
                 plan.out.write("      at %s\n" % source["pointer"])
         plan.out.write(
-            "      Set it by hand: App Store Connect -> your app -> App Information\n"
-            "      -> Age Rating -> Edit -> answer None/No to everything -> 4+.\n")
+            "      Check it by hand: App Store Connect -> your app -> App Information\n"
+            "      -> Age Rating -> Edit. Preserve accurate content disclosures.\n")
 
     def apply_patch():
         try:
@@ -2315,7 +2521,7 @@ def ensure_app_price_free(client, app_id, plan):
 
 
 def find_editable_version(client, app_id):
-    """Find the 1.0 iOS App Store version that is still editable."""
+    """Find only the configured iOS App Store version when it is editable."""
     versions = client.get_all(
         "/v1/apps/%s/appStoreVersions" % app_id,
         params={"filter[platform]": PLATFORM, "limit": 200},
@@ -2325,10 +2531,6 @@ def find_editable_version(client, app_id):
         if attrs.get("versionString") != VERSION_STRING:
             continue
         state = attrs.get("appVersionState") or attrs.get("appStoreState")
-        if state in EDITABLE_VERSION_STATES:
-            return version
-    for version in versions:
-        state = attributes_of(version).get("appVersionState") or attributes_of(version).get("appStoreState")
         if state in EDITABLE_VERSION_STATES:
             return version
     return None
@@ -2382,7 +2584,9 @@ def ensure_app_store_version(client, app_id, plan, copyright_text=None):
 # the AppStoreVersionState and AppVersionState enums in spec v4.4.1. Approval
 # states that never shipped (ACCEPTED, READY_FOR_DISTRIBUTION, IN_REVIEW...) are
 # deliberately NOT here: an app approved but never released still has no previous
-# release to write a "What's New" against.
+# release to write a "What's New" against. Apple can return
+# appVersionState=READY_FOR_DISTRIBUTION and appStoreState=READY_FOR_SALE for the
+# same already-live version; check both fields instead of preferring the former.
 RELEASED_VERSION_STATES = frozenset([
     "READY_FOR_SALE",
     "PREORDER_READY_FOR_SALE",
@@ -2410,8 +2614,8 @@ def app_has_previous_release(client, app_id, exclude_version_id=None):
         if exclude_version_id and version.get("id") == exclude_version_id:
             continue
         attrs = attributes_of(version)
-        state = attrs.get("appVersionState") or attrs.get("appStoreState")
-        if state in RELEASED_VERSION_STATES:
+        states = (attrs.get("appVersionState"), attrs.get("appStoreState"))
+        if any(state in RELEASED_VERSION_STATES for state in states):
             return True
     return False
 
@@ -2556,6 +2760,12 @@ def read_listing_metadata():
 
 
 def cmd_metadata(client, args, out):
+    if not args.dry_run and VERSION_STRING != TRACKED_METADATA_VERSION:
+        raise AscError(
+            "Tracked metadata/en-US files were prepared for %s, not target %s; "
+            "use `version-copy` to preserve the released listing."
+            % (TRACKED_METADATA_VERSION, VERSION_STRING)
+        )
     plan = Plan(dry_run=args.dry_run, out=out)
     values = read_listing_metadata()
     out.write("Metadata files validated against Apple's limits:\n")
@@ -2607,6 +2817,93 @@ def cmd_metadata(client, args, out):
     ensure_version_localization(client, version_id, listing, plan)
 
     summarise(plan, out, "metadata")
+    return 0
+
+
+def cmd_version_copy(client, args, out):
+    """Copy only public en-US version copy from a released version to the target.
+
+    App information, screenshots, privacy answers, App Review details and demo
+    credentials are deliberately outside this narrow operation. The source
+    fingerprint must be repeated on apply, so a changed Apple record cannot be
+    copied from an earlier plan without a fresh inspection.
+    """
+    source_number = args.from_version
+    if source_number == VERSION_STRING:
+        raise AscError("The source and target App Store versions must differ.")
+    notes_path = Path(args.whats_new_file)
+    try:
+        whats_new = notes_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as exc:
+        raise AscError("Could not read What's New from %s: %s" % (notes_path, exc))
+    if not whats_new or len(whats_new) > METADATA_LIMITS["release_notes"][1]:
+        raise AscError("What's New must contain 1-4000 characters in %s." % notes_path)
+
+    app = require_app(client)
+    versions = client.get_all("/v1/apps/%s/appStoreVersions" % app["id"],
+                              params={"filter[platform]": PLATFORM, "limit": 200})
+    source_matches = [v for v in versions
+                      if attributes_of(v).get("versionString") == source_number]
+    target_matches = [v for v in versions
+                      if attributes_of(v).get("versionString") == VERSION_STRING]
+    if len(source_matches) != 1 or "READY_FOR_SALE" not in (
+            attributes_of(source_matches[0]).get("appStoreState"),
+            attributes_of(source_matches[0]).get("appVersionState")):
+        raise AscError("Source version %s must be the unique released iOS App Store version." % source_number)
+    if len(target_matches) > 1:
+        raise AscError("More than one target App Store version %s was returned." % VERSION_STRING)
+    if target_matches and version_state(target_matches[0]) not in {
+            "PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED",
+            "METADATA_REJECTED", "INVALID_BINARY"}:
+        raise AscError("Target version %s is %s; refusing to change a staged or released version."
+                       % (VERSION_STRING, version_state(target_matches[0])))
+
+    source = source_matches[0]
+    localizations = client.get_all(
+        "/v1/appStoreVersions/%s/appStoreVersionLocalizations" % source["id"])
+    source_localizations = [loc for loc in localizations
+                            if attributes_of(loc).get("locale") == PRIMARY_LOCALE]
+    if len(source_localizations) != 1:
+        raise AscError("Source version %s needs exactly one %s localization."
+                       % (source_number, PRIMARY_LOCALE))
+    source_loc = source_localizations[0]
+    source_attrs = attributes_of(source_loc)
+    listing = {name: source_attrs.get(name) or "" for name in
+               ("description", "keywords", "promotionalText", "supportUrl", "marketingUrl")}
+    for name in ("description", "keywords", "supportUrl"):
+        if not listing[name]:
+            raise AscError("Released source version %s has no %s." % (source_number, name))
+    copyright_text = attributes_of(source).get("copyright") or COPYRIGHT
+    source_binding = {
+        "versionId": source["id"], "localizationId": source_loc["id"],
+        "copyright": copyright_text, "listing": listing,
+    }
+    source_digest = hashlib.sha256(json.dumps(source_binding, sort_keys=True,
+                                              separators=(",", ":")).encode("utf-8")).hexdigest()
+    listing["whatsNew"] = whats_new
+    plan_binding = {
+        "appId": app["id"], "source": source_binding,
+        "targetVersionId": target_matches[0]["id"] if target_matches else None,
+        "targetState": version_state(target_matches[0]) if target_matches else None,
+        "whatsNew": whats_new,
+    }
+    plan_digest = hashlib.sha256(json.dumps(plan_binding, sort_keys=True,
+                                            separators=(",", ":")).encode("utf-8")).hexdigest()
+    out.write("Source iOS version %s: READY_FOR_SALE\n" % source_number)
+    out.write("Target iOS version %s: %s\n" %
+              (VERSION_STRING, version_state(target_matches[0]) if target_matches else "absent"))
+    out.write("Source metadata SHA-256: %s\n" % source_digest)
+    out.write("Exact release plan SHA-256: %s\n" % plan_digest)
+    out.write("Copying %s; new What's New: %d characters from %s.\n" %
+              (", ".join(sorted(listing)), len(whats_new), notes_path))
+    out.write("App Privacy, review credentials, screenshots and subscriptions are untouched.\n")
+    if not args.dry_run and args.plan_sha256 != plan_digest:
+        raise AscError("Apply requires --plan-sha256 %s from a fresh plan." % plan_digest)
+
+    plan = Plan(dry_run=args.dry_run, out=out)
+    version_id = ensure_app_store_version(client, app["id"], plan, copyright_text)
+    ensure_version_localization(client, version_id, listing, plan)
+    summarise(plan, out, "version copy")
     return 0
 
 
@@ -2856,7 +3153,10 @@ def ensure_review_detail(client, version_id, contact, notes, plan):
         return
     current = client.get_optional("/v1/appStoreVersions/%s/appStoreReviewDetail" % version_id)
 
-    wanted = {"demoAccountRequired": False}
+    # Demo credentials belong in App Store Connect's private App Review
+    # Information UI. Never clear a provisioned login while syncing contact
+    # details or notes from this checkout.
+    wanted = {}
     if contact:
         wanted.update(
             {
@@ -2872,6 +3172,17 @@ def ensure_review_detail(client, version_id, contact, notes, plan):
     if current and (current.get("data") or {}).get("id"):
         detail_id = current["data"]["id"]
         attrs = attributes_of(current["data"])
+        if notes and attrs.get("demoAccountRequired") is not True:
+            message = (
+                "App Review demo login is not configured for this version. "
+                "Provision and rehearse the reviewer account, then enter its "
+                "credentials in App Store Connect > App Review Information. "
+                "This tool never reads or writes those credentials."
+            )
+            if plan.dry_run:
+                plan.warn(message)
+                return
+            raise AscError(message + " No App Review details were changed.")
         changed = {k: v for k, v in wanted.items() if attrs.get(k) != v}
         if not changed:
             plan.note("App Review details are current")
@@ -2885,15 +3196,15 @@ def ensure_review_detail(client, version_id, contact, notes, plan):
         )
         return
 
-    body = {
-        "data": {
-            "type": "appStoreReviewDetails",
-            "attributes": wanted,
-            "relationships": {"appStoreVersion": relationship("appStoreVersions", version_id)},
-        }
-    }
-    # https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-appStoreReviewDetails
-    plan.act("create App Review details", lambda: client.post("/v1/appStoreReviewDetails", body))
+    message = (
+        "App Review Information is absent for this version. Create it in "
+        "App Store Connect with the provisioned demo login, then rerun to "
+        "sync contact details and notes. This tool never handles credentials."
+    )
+    if plan.dry_run:
+        plan.warn(message)
+        return
+    raise AscError(message + " No App Review details were changed.")
 
 
 def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out):
@@ -2904,7 +3215,8 @@ def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out)
     current = client.get_optional(
         "/v1/subscriptions/%s/appStoreReviewScreenshot" % subscription_id
     )
-    checksum = md5_of(IAP_SCREENSHOT)
+    screenshot = iap_review_screenshot_for_product(product_id)
+    checksum = md5_of(screenshot)
     if current and (current.get("data") or {}).get("id"):
         attrs = attributes_of(current["data"])
         state = (attrs.get("assetDeliveryState") or {}).get("state")
@@ -2922,8 +3234,8 @@ def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out)
             "data": {
                 "type": "subscriptionAppStoreReviewScreenshots",
                 "attributes": {
-                    "fileName": IAP_SCREENSHOT.name,
-                    "fileSize": IAP_SCREENSHOT.stat().st_size,
+                    "fileName": screenshot.name,
+                    "fileSize": screenshot.stat().st_size,
                 },
                 "relationships": {"subscription": relationship("subscriptions", subscription_id)},
             }
@@ -2934,7 +3246,7 @@ def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out)
             body,
             "/v1/subscriptionAppStoreReviewScreenshots",
             "/v1/subscriptionAppStoreReviewScreenshots/%s",
-            IAP_SCREENSHOT,
+            screenshot,
             out,
         )
 
@@ -3157,6 +3469,11 @@ def cmd_review(client, args, out):
         return cmd_review_stage(client, args, out)
     if getattr(args, "action", None) == "send":
         return cmd_review_send(client, args, out)
+    for spec in active_subscriptions(args):
+        screenshot_issue = iap_review_screenshot_issue(
+            iap_review_screenshot_for_product(spec["productId"]))
+        if screenshot_issue:
+            raise AscError(screenshot_issue + " No App Store review writes were made.")
     plan = Plan(dry_run=args.dry_run, out=out)
     app = require_app(client)
     out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
@@ -3173,16 +3490,18 @@ def cmd_review(client, args, out):
         )
 
     notes = None
-    if REVIEW_NOTES_FILE.is_file():
-        notes = REVIEW_NOTES_FILE.read_text(encoding="utf-8").strip()
+    review_notes_file = (REVIEW_NOTES_FILE.with_name("review_notes_team_seats.txt")
+                         if getattr(args, "include_team_seats", False) else REVIEW_NOTES_FILE)
+    if review_notes_file.is_file():
+        notes = review_notes_file.read_text(encoding="utf-8").strip()
         if len(notes) > 4000:
             raise AscError(
                 "%s is %d characters; App Review notes allow 4000."
-                % (REVIEW_NOTES_FILE, len(notes))
+                % (review_notes_file, len(notes))
             )
-        out.write("Review notes: %s (%d characters)\n" % (REVIEW_NOTES_FILE.name, len(notes)))
+        out.write("Review notes: %s (%d characters)\n" % (review_notes_file.name, len(notes)))
     else:
-        out.write("Review notes: %s not present, skipping.\n" % REVIEW_NOTES_FILE)
+        out.write("Review notes: %s not present, skipping.\n" % review_notes_file)
 
     out.write("\nApp Review details\n")
     version_id = ensure_app_store_version(client, app["id"], plan)
@@ -3478,7 +3797,8 @@ def pick_build(builds, marketing, wanted, plan):
     candidates = builds
     if wanted:
         candidates = [b for b in builds
-                      if attributes_of(b).get("version") == wanted
+                      if b.get("id") == wanted
+                      or attributes_of(b).get("version") == wanted
                       or marketing.get(b["id"]) == wanted]
         if not candidates:
             raise AscError("No build matches --build %r.\n  Uploaded builds (newest first):\n%s"
@@ -3546,6 +3866,13 @@ def cmd_build_attach(client, args, out):
     build = pick_build(builds, marketing, getattr(args, "build", None), plan)
     build_id = build["id"]
     build_number = attributes_of(build).get("version")
+    build_marketing_version = marketing.get(build_id)
+    if build_marketing_version != version_string:
+        raise AscError(
+            "Build %s belongs to marketing version %s, not target App Store version %s; "
+            "refusing to attach it." % (build_number, build_marketing_version or "unknown",
+                                       version_string)
+        )
 
     out.write("\nVersion %s (%s)\n"
               % (version_string,
@@ -3668,7 +3995,7 @@ def cmd_status(client, args, out):
     # still printed, but they add nothing to WHAT IS MISSING and do not trigger
     # the WRONG PRICE banner - unless one of them is actually on sale somewhere.
     # active_subscriptions() also refuses an unknown product id.
-    skipped = ({spec["productId"] for spec in SUBSCRIPTIONS}
+    skipped = ({spec["productId"] for spec in catalog_subscriptions(args)}
                - {spec["productId"] for spec in active_subscriptions(args)})
 
     app = find_app(client)
@@ -3727,9 +4054,11 @@ def cmd_status(client, args, out):
     versions = client.get_all(
         "/v1/apps/%s/appStoreVersions" % app["id"], params={"filter[platform]": PLATFORM}
     )
-    version = find_editable_version(client, app["id"])
+    version = next((v for v in versions
+                    if attributes_of(v).get("versionString") == VERSION_STRING), None)
     if not versions:
         out.write("  none\n")
+    if version is None:
         missing.append("App Store version %s" % VERSION_STRING)
     for item in versions[:5]:
         item_attrs = attributes_of(item)
@@ -3826,7 +4155,7 @@ def cmd_status(client, args, out):
         mispriced = []
         notes = []
         submittable = []
-        for spec in SUBSCRIPTIONS:
+        for spec in catalog_subscriptions(args):
             is_skipped = spec["productId"] in skipped
             subscription = by_product.get(spec["productId"])
             if subscription is None:
@@ -3875,7 +4204,8 @@ def cmd_status(client, args, out):
                 price_text = "NONE"
             elif usa_amount is None:
                 price_text = "%d price(s), amount ?" % len(prices)
-            elif price_is_acceptable(spec["usd"], usa_amount):
+            elif (same_amount(spec["usd"], usa_amount) if spec["period"] == "ONE_MONTH"
+                  else price_is_acceptable(spec["usd"], usa_amount)):
                 price_text = "%s" % usa_amount
             else:
                 wrong_price = True
@@ -3944,7 +4274,9 @@ def cmd_status(client, args, out):
                 "priceUsd": usa_amount,
                 "priceMatchesContract": (
                     None if usa_amount is None
-                    else bool(price_is_acceptable(spec["usd"], usa_amount))),
+                    else bool(same_amount(spec["usd"], usa_amount)
+                              if spec["period"] == "ONE_MONTH"
+                              else price_is_acceptable(spec["usd"], usa_amount))),
                 "introductoryOffers": len(offers),
                 "localizations": len(locs),
                 "reviewScreenshot": bool(shot),
@@ -3960,19 +4292,24 @@ def cmd_status(client, args, out):
         if mispriced:
             out.write("\n")
             out.write("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
-            out.write("  !! WRONG PRICE - on sale at an amount docs/LAUNCH-CONTRACT.md does\n")
-            out.write("  !! not agree with. Customers are charged what is below, not what\n")
-            out.write("  !! the contract says.\n")
+            out.write("  !! WRONG PRICE - current Apple price differs from the launch catalog.\n")
+            out.write("  !! Customers are charged Apple's current price, shown below.\n")
             for spec, amount in mispriced:
                 out.write("  !!   %-34s USD %s, should be USD %s\n"
                           % (spec["productId"], amount, spec["usd"]))
             out.write("  !!\n")
-            out.write("  !! Take it off sale:\n")
-            for spec, _amount in mispriced:
-                out.write("  !!   python3 tools/asc/asc.py subscriptions unprice %s\n"
-                          % spec["productId"])
-            out.write("  !! Apple's yearly USD points stop at 1000.00. Request higher ones\n")
-            out.write("  !! before repricing: %s\n" % HIGHER_PRICE_POINTS_REQUEST_URL)
+            if any(spec["period"] == "ONE_MONTH" for spec, _ in mispriced):
+                out.write("  !! For monthly plans, schedule the exact new price in App Store\n")
+                out.write("  !! Connect and choose whether existing subscribers keep their\n")
+                out.write("  !! current price. This tool will not make that choice implicitly.\n")
+            annual = [spec for spec, _ in mispriced if spec["period"] == "ONE_YEAR"]
+            if annual:
+                out.write("  !! Withdraw any incorrectly priced annual plan that is on sale:\n")
+                for spec in annual:
+                    out.write("  !!   python3 tools/asc/asc.py subscriptions unprice %s\n"
+                              % spec["productId"])
+                out.write("  !! Request higher yearly price points if needed: %s\n"
+                          % HIGHER_PRICE_POINTS_REQUEST_URL)
             out.write("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
             for spec, amount in mispriced:
                 missing.append("%s is priced USD %s, not the agreed USD %s"
@@ -3981,6 +4318,10 @@ def cmd_status(client, args, out):
 
     # --- review details ----------------------------------------------------
     out.write("\nAPP REVIEW\n")
+    screenshot_issue = iap_review_screenshot_issue()
+    if screenshot_issue:
+        out.write("  subscription paywall: NOT CURRENT - %s\n" % screenshot_issue)
+        missing.append(screenshot_issue)
     if version:
         detail = client.get_optional("/v1/appStoreVersions/%s/appStoreReviewDetail" % version["id"])
         if detail and (detail.get("data") or {}).get("id"):
@@ -4045,6 +4386,12 @@ def cmd_status(client, args, out):
 
 def summarise(plan, out, label):
     out.write("\n")
+    if plan.existing_price_mismatches:
+        out.write("EXISTING PRICE MISMATCH - launch requires a separate Apple price schedule:\n")
+        for product_id, actual, target in plan.existing_price_mismatches:
+            out.write("  - %s  current USD %s, target USD %s\n"
+                      % (product_id, actual or "unknown", target))
+        out.write("  Review whether existing subscribers keep their current price.\n\n")
     if plan.price_skipped:
         out.write("UNPRICED - these products were NOT priced and cannot be sold:\n")
         for item in plan.price_skipped:
@@ -4083,6 +4430,8 @@ def build_parser():
     )
     parser.add_argument("--key-dir", default=None,
                         help="override the directory holding AuthKey_*.p8 and config")
+    parser.add_argument("--version", dest="target_version", metavar="VERSION", default=None,
+                        help="explicit App Store version to inspect or change (required for writes)")
     parser.add_argument("--json", action="store_true", help="also print machine-readable JSON")
     parser.add_argument("--quiet", action="store_true", help="do not log HTTP requests")
     parser.add_argument("--debug", action="store_true",
@@ -4092,6 +4441,16 @@ def build_parser():
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("app", help="find the app record, or print the New App form values")
+
+    copy = sub.add_parser("version-copy", help="copy only released en-US version text into an exact target")
+    copy.add_argument("action", nargs="?", choices=["plan", "apply"], default="plan",
+                      help="plan by default; apply requires --version and a source digest")
+    copy.add_argument("--from-version", required=True, metavar="VERSION",
+                      help="released source App Store version, e.g. 1.0.8")
+    copy.add_argument("--whats-new-file", required=True, metavar="PATH",
+                      help="new target version's What's New text")
+    copy.add_argument("--plan-sha256", default=None, metavar="SHA256",
+                      help="exact source, target and What's New fingerprint printed by plan; required for apply")
 
     for name, help_text in (
         ("subscriptions", "create the subscription group, products, prices, trials"),
@@ -4124,6 +4483,12 @@ def build_parser():
             command.add_argument(
                 "--skip-product", action="append", metavar="PRODUCT_ID", default=[],
                 help="leave this product alone entirely; repeatable")
+            command.add_argument(
+                "--include-annual", action="store_true",
+                help="also touch the annual products (monthly-only by default since 2026-10-09)")
+            command.add_argument(
+                "--include-team-seats", action="store_true",
+                help="explicitly include dormant Team 4-9 seat monthly SKUs for setup/review")
         if name == "review":
             command.add_argument("--yes", action="store_true",
                                  help="for `send`: actually press Submit to App Review")
@@ -4145,16 +4510,14 @@ def build_parser():
                      "the set becomes exactly the files in the directory, in "
                      "filename order" % SCREENSHOT_DISPLAY_TYPE)
 
-    # `build attach` links the newest processed build to the 1.0 version. It is
+    # `build attach` links the newest processed build to the release version. It is
     # not part of the bridge because a build only exists after
     # bridge-600-archive-upload.sh has run and Apple has finished processing.
-    build = sub.add_parser("build", help="attach the newest processed build to version %s"
-                                         % VERSION_STRING)
+    build = sub.add_parser("build", help="attach an explicitly named processed build to the target version")
     build.add_argument("action", choices=["attach"],
-                       help="attach = link the newest VALID build to the editable version")
+                       help="attach = link the named VALID build to the editable target version")
     build.add_argument("--build", dest="build", metavar="BUILD", default=None,
-                       help="a build number (e.g. 1) or version (e.g. 1.0) to attach "
-                            "instead of the newest VALID build")
+                       help="exact build number or Apple build ID; required for a write")
     build.add_argument("--dry-run", action="store_true",
                        help="show what would change without writing anything")
 
@@ -4163,11 +4526,18 @@ def build_parser():
         "--skip-product", action="append", metavar="PRODUCT_ID", default=[],
         help="a product deliberately not sold at launch: its row is shown but it is "
              "not counted as missing unless it is actually on sale; repeatable")
+    status.add_argument(
+        "--include-annual", action="store_true",
+        help="count the annual products as expected (monthly-only by default since 2026-10-09)")
+    status.add_argument(
+        "--include-team-seats", action="store_true",
+        help="inspect dormant Team 4-9 seat monthly SKUs (off by default)")
     return parser
 
 
 COMMANDS = {
     "app": cmd_app,
+    "version-copy": cmd_version_copy,
     "subscriptions": cmd_subscriptions,
     "metadata": cmd_metadata,
     "screenshots": cmd_screenshots,
@@ -4178,9 +4548,14 @@ COMMANDS = {
 
 
 def main(argv=None, out=None, client=None):
+    global VERSION_STRING
     out = out or sys.stdout
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Monthly plans only: annual products are skipped unless --include-annual.
+    if hasattr(args, "skip_product") and not getattr(args, "include_annual", False):
+        args.skip_product = list(args.skip_product or []) + [
+            p for p in NOT_SOLD_PRODUCT_IDS if p not in (args.skip_product or [])]
     if not args.command:
         parser.print_help(out)
         return 2
@@ -4188,7 +4563,31 @@ def main(argv=None, out=None, client=None):
     # `plan` is the same thing as `apply --dry-run`.
     args.dry_run = bool(getattr(args, "dry_run", False)) or getattr(args, "action", None) == "plan"
 
+    if args.target_version and not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,2}", args.target_version):
+        out.write("FAILED: --version must be a numeric App Store version such as 1.0.9.\n")
+        return 2
+    if args.command == "version-copy" and not args.target_version:
+        out.write("FAILED: version-copy requires an explicit target --version.\n")
+        return 2
+    action = getattr(args, "action", None)
+    writing = action in {"apply", "stage", "submit", "send", "unprice", "attach"} and not args.dry_run
+    if writing and not args.target_version:
+        out.write("FAILED: App Store writes require explicit --version before the subcommand.\n")
+        return 2
+    if args.command == "build" and action == "attach" and not args.dry_run:
+        wanted = getattr(args, "build", None)
+        build_id = re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", wanted or "")
+        if not (wanted and (wanted.isdigit() or build_id)):
+            out.write("FAILED: build attach requires an exact --build number or Apple build ID; "
+                      "marketing-version selection is not allowed for a write.\n")
+            return 2
+
+    prior_version = VERSION_STRING
     try:
+        if args.target_version:
+            VERSION_STRING = args.target_version
         if client is None:
             credentials = load_credentials(args.key_dir)
             client = Client(credentials, verbose=not args.quiet, out=out,
@@ -4201,6 +4600,8 @@ def main(argv=None, out=None, client=None):
     except KeyboardInterrupt:
         sys.stderr.write("\nInterrupted.\n")
         return 130
+    finally:
+        VERSION_STRING = prior_version
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import { libraryBillingOrg } from "../_shared/library-access.ts";
 // ai-voice — ElevenLabs text-to-speech for reel voiceovers, with the
 // character-level alignment the app turns into word-by-word captions.
 // Owner-authenticated, same envelope and RPnnn conventions as ai-photo.
@@ -11,7 +12,7 @@
 //   POST /ai-voice/tts   { text, voice_id, listing_id?, label? }
 //        -> { audio_url, mime, duration_s, duration_source, words[],
 //             voice_name, characters, disclosure, provenance }
-//        `audio_url` is a SHORT-LIVED SIGNED GET on R2 (15 min). The base64
+//        `audio_url` is a SHORT-LIVED SIGNED GET (at most 10 min). The base64
 //        audio ElevenLabs returns is never forwarded to the app: a 60-second
 //        mp3 is ~1 MB, which is ~1.4 MB of base64 inside a JSON body the phone
 //        then has to hold in memory twice to decode. The app downloads the URL.
@@ -86,7 +87,7 @@
 //   $0.24 Seedance clip's allowance. Same published number, separate meter.
 //
 //   CHARGE / REFUND. The meter is charged immediately BEFORE the ElevenLabs
-//   call and refunded with `refundRateLimit` if that call (or the R2 upload)
+//   call and refunded against its original window receipt if that call (or the R2 upload)
 //   fails, so a failed generation costs the org nothing — same net effect as
 //   charging afterwards, without the race that charging afterwards opens (N
 //   concurrent requests would all read an uncharged counter and all spend).
@@ -132,8 +133,11 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { ProviderError, definitiveSubmitRejection } from "../_shared/providers/common.ts";
+import { fundingContext, fundedAttempt, TARIFF_VERSION } from "../_shared/funded-serving.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { durableRateLimit, chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
+import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertMarketingCopy } from "../_shared/fairhousing.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
@@ -144,6 +148,7 @@ import { R2_BUCKET_UPLOADS, presignPut } from "../_shared/r2.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { saveSharedVoice } from "./shared-result.ts";
 import { assertVoiceWriteWindow, reserveVoiceStorage } from "./storage-reservation.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 
 // Denial-of-wallet guard: every TTS call bills ElevenLabs per character.
 const TTS_MAX_PER_WINDOW = 20;
@@ -155,7 +160,7 @@ const MONTH_SECONDS = 30 * 86400;
 const MAX_TEXT_CHARS = 1000;
 
 /** How long the returned audio URL stays valid. The app downloads immediately. */
-const AUDIO_URL_TTL_SECONDS = 900;
+const AUDIO_URL_TTL_SECONDS = 600;
 
 /** Voice catalogue cache lifetime (contract: 10 minutes). */
 const VOICES_TTL_MS = 10 * 60 * 1000;
@@ -306,14 +311,11 @@ async function presignGet(bucket: string, key: string, expiresIn: number): Promi
 // ── Guards ───────────────────────────────────────────────────────────────────
 
 /** Role gate: marketing is read-only, same rule as ai-photo / ai-video. */
-async function requireEditorRole(userId: string, req: Request, what: string): Promise<string> {
-  const orgId = await orgForUser(userId, preferredOrg(req));
-  const { data: mem, error: mErr } = await adminClient()
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, `Your role does not permit ${what}`);
-  }
+async function requireEditorRole(user: PaidAiCaller, req: Request, what: string, listingId?: string): Promise<string> {
+  const userId = user.id;
+  const orgId = await contentOrgForUser(userId, preferredOrg(req), listingId, true);
+
+  await assertPaidAiIdentity(user, orgId);
   return orgId;
 }
 
@@ -326,6 +328,8 @@ interface Charge {
   plan: string;
   monthlyKey: string;
   burstKey: string;
+  monthlyReceipt: RateChargeReceipt;
+  burstReceipt: RateChargeReceipt;
 }
 
 /**
@@ -334,29 +338,31 @@ interface Charge {
  * how `{}` bodies used to burn an org's allowance without a provider call ever
  * being made (audit round 4).
  */
-async function guardTTS(userId: string, req: Request): Promise<Charge> {
-  const orgId = await requireEditorRole(userId, req, "AI voiceovers");
+async function guardTTS(user: PaidAiCaller, req: Request, listingId?: string): Promise<Charge> {
+  const orgId = await requireEditorRole(user, req, "AI voiceovers", listingId);
   // A degraded plan lookup is a 503, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.reels_per_month; // the CAP is shared; the counter is not
   if (monthlyCap <= 0) throw quotaError("AI voiceover", 0, 0, ent.plan);
 
-  const idem = req.headers.get("idempotency-key")?.trim();
-  if (idem && idem.length <= 128) {
-    if (!(await durableRateLimit(`aivoiceidem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — this voiceover was already started.", "conflict");
-    }
+  const idem = requiredIdempotencyKey(req);
+  if (!(await durableRateLimit(`aivoiceidem:${orgId}:${idem}`, 1, 120))) {
+    throw new HttpError(409, "Duplicate submission — this voiceover was already started.", "conflict");
   }
 
-  const burstKey = `aivoice:${orgId}`;
-  if (!(await durableRateLimit(burstKey, TTS_MAX_PER_WINDOW, TTS_WINDOW_SECONDS))) {
+  const billingOrgId = await libraryBillingOrg(adminClient(), orgId, user.id);
+  const burstKey = `aivoice:${billingOrgId}`;
+  const burst = await chargeRateReceipt(burstKey, TTS_MAX_PER_WINDOW, TTS_WINDOW_SECONDS);
+  if (!burst.accepted) {
     throw new HttpError(429, "AI voiceover limit reached for now — try again in a few minutes.", "rate_limited");
   }
-  const monthlyKey = `aivoicemo:${orgId}`;
-  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
+  const monthlyKey = `aivoicemo:${billingOrgId}`;
+  const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  if (!monthly.accepted) {
+    await refundRateReceipt(burst.receipt);
     throw quotaError("AI voiceover", monthlyCap, monthlyCap, ent.plan);
   }
-  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey, monthlyReceipt: monthly.receipt, burstReceipt: burst.receipt };
 }
 
 /**
@@ -364,8 +370,8 @@ async function guardTTS(userId: string, req: Request): Promise<Charge> {
  * — a failed refund must not replace the real error the user needs to see.
  */
 async function refundCharge(charge: Charge): Promise<void> {
-  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
-  await refundRateLimit(charge.burstKey, TTS_WINDOW_SECONDS, 1);
+  await refundRateReceipt(charge.monthlyReceipt);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 // ── Voice catalogue ──────────────────────────────────────────────────────────
@@ -645,7 +651,7 @@ Deno.serve(async (req) => {
 
       // ── CHARGE ── everything above is validated; the meter is charged here,
       // immediately before the billable call, and refunded on any failure.
-      const charge = await guardTTS(user.id, req);
+      const charge = await guardTTS(user, req, body.listing_id);
 
       try {
         // Reserve an owned object key before provider dispatch. Account deletion
@@ -666,25 +672,27 @@ Deno.serve(async (req) => {
         const url =
           `${ELEVEN_BASE}/v1/text-to-speech/${encodeURIComponent(voiceId)}/with-timestamps` +
           `?output_format=${OUTPUT_FORMAT}`;
-        const payload: Record<string, unknown> = { text };
-        if (ELEVENLABS_MODEL_ID) payload.model_id = ELEVENLABS_MODEL_ID;
+        const model = ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
+        const payload: Record<string, unknown> = { text, model_id: model };
+        const funding = await fundingContext(user.id, charge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        // The liability hold must cover the same catalog price the ledger uses.
+        // Keep the verified public API rate as a floor, without assuming which
+        // vendor billing plan applies. Unknown models/units/prices stay unpriced.
+        const quote = ["eleven_multilingual_v2", "eleven_v3", "eleven_flash_v2_5", "eleven_turbo_v2_5"].includes(model) && step.provider === "elevenlabs" && step.unit === "1k_chars" && Number.isFinite(step.unit_cents) && step.unit_cents > 0
+          ? { cents: Math.ceil((text.length / 1000) * Math.max(step.unit_cents, model === "eleven_flash_v2_5" || model === "eleven_turbo_v2_5" ? 4 : 8) * 10000) / 10000, version: `${TARIFF_VERSION}:voice-catalog-v1` }
+          : null;
 
-        const res = await fetch(url, {
-          method: "POST",
-          headers: elevenHeaders(),
-          body: JSON.stringify(payload),
+        const data = await fundedAttempt(funding, "voice.tts", {provider: "elevenlabs", model}, payload, quote, async () => {
+          // The signal remains attached while JSON/audio arrives, not only
+          // until response headers. A deadline is uncertain, never a refund.
+          const res = await fetch(url, {method:"POST",headers:elevenHeaders(),body:JSON.stringify(payload),signal:AbortSignal.timeout(90_000)});
+          let parsed=true;
+          const data=await res.json().catch(()=>{parsed=false;return {} as Record<string,unknown>;});
+          if(!res.ok)throw new ProviderError("elevenlabs","upstream","The voice service could not accept this request.",res.status,parsed && !!data && typeof data==="object" && !Array.isArray(data) && definitiveSubmitRejection(res.status,data) && !data.audio_base64);
+          if(typeof data.audio_base64!=="string"||!data.audio_base64.length)throw new ProviderError("elevenlabs","upstream","The voice service returned no confirmed audio.");
+          try { if(!atob(data.audio_base64).length)throw new Error(); } catch {throw new ProviderError("elevenlabs","upstream","The voice service returned unreadable audio.");}
+          return data;
         });
-        const data = await res.json().catch(() => ({} as Record<string, unknown>));
-        if (!res.ok) {
-          // Always 502 `upstream`, whatever ElevenLabs said. A 401/403 from the
-          // vendor is OUR misconfiguration, not the caller's — surfacing it as
-          // a 401 would tell the app the USER's session died and sign them out.
-          throw new HttpError(
-            502,
-            `ElevenLabs ${res.status}: ${JSON.stringify(data).slice(0, 300)}`,
-            "upstream",
-          );
-        }
 
         const b64 = (data as Record<string, unknown>).audio_base64;
         if (typeof b64 !== "string" || b64.length === 0) {
@@ -698,6 +706,7 @@ Deno.serve(async (req) => {
         } catch {
           throw new HttpError(502, "ElevenLabs returned audio that is not valid base64", "upstream");
         }
+        assert(audioBuf.byteLength <= 20 * 1024 * 1024, 502, "The narration exceeds its reserved storage limit.");
         if (audioBuf.byteLength === 0) {
           throw new HttpError(502, "ElevenLabs returned an empty audio file", "upstream");
         }
@@ -715,29 +724,6 @@ Deno.serve(async (req) => {
             timed = alt; // no words either way, but a usable duration
           }
         }
-
-        // ── STORE ── the mp3 goes to R2; the app gets a short-lived signed GET.
-        // Own prefix so an R2 lifecycle rule can expire voiceovers without
-        // touching listing media.
-        assertVoiceWriteWindow(storage);
-        const key = storage.key;
-        const putUrl = await presignPut({
-          bucket: R2_BUCKET_UPLOADS,
-          key,
-          expiresIn: 300,
-          contentType: OUTPUT_MIME,
-        });
-        const put = await fetch(putUrl, {
-          method: "PUT",
-          headers: { "content-type": OUTPUT_MIME },
-          body: audioBuf,
-          signal: AbortSignal.timeout(120_000),
-        });
-        if (!put.ok) {
-          const detail = await put.text().catch(() => "");
-          throw new HttpError(502, `Storing the voiceover failed (R2 ${put.status}): ${detail.slice(0, 200)}`, "upstream");
-        }
-        const audioUrl = await presignGet(R2_BUCKET_UPLOADS, key, AUDIO_URL_TTL_SECONDS);
 
         // ── DURATION ── measured, estimated or absent, and always labelled.
         let durationS = 0;
@@ -761,10 +747,10 @@ Deno.serve(async (req) => {
         // unit means, so a 400-character script is 0.4 × 22¢ = 8.8¢ instead of
         // the 0¢ it used to be (see the COST VISIBILITY note in the header).
         //
-        // Best effort and never throws (see _shared/ledger.ts): `audioUrl` is
-        // already in hand and a ledger blip must not destroy a result the caller
-        // has paid for. Reached only on success, so a failure above — which the
-        // catch below refunds — writes no row and nothing is double-counted.
+        // Book the validated supplier response before storage/signing. A later
+        // storage failure may return an app allowance, but cannot undo this
+        // modeled supplier cost or its existing succeeded liability hold.
+        // Best effort and never throws; ledger failure must not destroy audio.
         //
         // `meta` is a durable row every member of the org can read under the
         // org-ledger RLS policy, so it carries only bounded, closed-vocabulary
@@ -774,15 +760,43 @@ Deno.serve(async (req) => {
         await recordRoutedAiCost(adminClient(), {
           orgId: charge.orgId,
           feature: "voiceover",
-          step,
+          // The timestamp endpoint is a route label; the hold identifies the
+          // actual ElevenLabs model sent in model_id. Keep the route's price.
+          step: { ...step, model },
           chars: text.length,
           meta: {
+            request_key: funding.requestKey,
+            stage: "voice.tts",
+            cost_basis: "route_catalog_estimate_not_supplier_invoice",
             voice_id: voiceId, // VOICE_ID_RE-validated above: [A-Za-z0-9_-]{1,64}
             characters: text.length,
             duration_s: durationS,
             duration_source: durationSource,
           },
         });
+
+        // ── STORE ── the mp3 goes to R2; the app gets a short-lived signed GET.
+        // Own prefix so an R2 lifecycle rule can expire voiceovers without
+        // touching listing media.
+        assertVoiceWriteWindow(storage);
+        const key = storage.key;
+        const putUrl = await presignPut({
+          bucket: R2_BUCKET_UPLOADS,
+          key,
+          expiresIn: 300,
+          contentType: OUTPUT_MIME,
+        });
+        const put = await fetch(putUrl, {
+          method: "PUT",
+          headers: { "content-type": OUTPUT_MIME },
+          body: audioBuf,
+          signal: AbortSignal.timeout(120_000),
+        });
+        if (!put.ok) {
+          const detail = await put.text().catch(() => "");
+          throw new HttpError(502, `Storing the voiceover failed (R2 ${put.status}): ${detail.slice(0, 200)}`, "upstream");
+        }
+        const audioUrl = await privateMediaUrl({actor:user.id,org:charge.orgId,listing:body.listing_id??null,bucket:"uploads",key},AUDIO_URL_TTL_SECONDS);
 
         // ── PROVENANCE ── AI-generated audio, so the tour must be able to
         // disclose it. `kind` is "other": migration 0012's check constraint
@@ -837,7 +851,9 @@ Deno.serve(async (req) => {
           },
         });
       } catch (err) {
-        // The voiceover did not happen: hand the allowance back (audit F-E-16).
+        // Return the app allowance on an unsuccessful delivery (audit F-E-16).
+        // This does not refund a validated supplier response, its booked
+        // estimate, or the durable liability hold.
         //
         // This catch spans the provenance write too, which is safe ONLY because
         // recordProvenance() is documented and implemented as never-throwing

@@ -10,7 +10,6 @@
 
 import type { Portfolio, PortfolioTour } from "./types";
 import { siteUrl } from "./attribution";
-import { portfolioJsonLd } from "./jsonld";
 import { EDITORIAL_CSS, renderGetAppSection } from "./player";
 import {
   absolutize,
@@ -171,24 +170,11 @@ export function renderPortfolioPage(data: Portfolio, opts: PortfolioOpts = {}): 
     ? `<div class="grid">${tours.map(renderCard).join("")}</div>`
     : `<div class="empty">No published tours yet.</div>`;
 
-  // INDEXING POSTURE — deliberately different from `/f/<slug>`, and this is
-  // why. A tour page is a LISTING: it carries the owner's name, phone and email
-  // beside a specific street address, so it is `noindex, nofollow` until its
-  // owner opts that listing in (player.ts `allowsIndexing`). `/a/<handle>` is
-  // the opposite kind of object — a public profile at a handle its owner chose,
-  // whose whole purpose is to be the one link an agent hands out. Publishing it
-  // IS the opt-in; there is no per-page decision left to make. So this page
-  // keeps its default-indexable posture, gets a canonical, and carries its
-  // structured data unconditionally rather than behind a predicate.
-  const jsonLd = portfolioJsonLd({
-    agent,
-    canonical,
-    name,
-    description: desc,
-    isRealEstate: (data.org?.space_type || data.space_type || "real_estate") === "real_estate",
-    // The ItemList mirrors the visible grid, card for card and in page order.
-    tours: tours.map((t) => ({ slug: t.slug, name: cardTitle(t), poster: t.poster })),
-  });
+  // Choosing a handle does not consent to search indexing all workspace
+  // listings. Keep hosted portfolios out of indexing until a reviewed,
+  // portfolio-specific selection and opt-in is available.
+  const jsonLd = "";
+
 
   // The same band the tour page renders (player.ts). An agent looking at their
   // OWN portfolio is the likeliest person on this domain to want the app, and
@@ -203,6 +189,7 @@ export function renderPortfolioPage(data: Portfolio, opts: PortfolioOpts = {}): 
 <meta name="theme-color" content="#0b0d10">
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeAttr(desc)}">
+<meta name="robots" content="noindex, nofollow">
 ${canonical ? `<link rel="canonical" href="${escapeAttr(canonical)}">` : ""}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta property="og:title" content="${escapeAttr(name)}">

@@ -73,6 +73,8 @@ import {
 // test is why this comment is a guarantee rather than a promise: adding a move
 // there and not here fails the build.
 export const MOTIONS = [
+  "fly_through",
+  "side_glide",
   "push_in",
   "pull_back",
   "tilt_up",
@@ -97,6 +99,8 @@ export type Motion = typeof MOTIONS[number];
 // reads exactly as monotonous as two push-ins. So consecutive shots must differ
 // by FAMILY, which implies they differ by move.
 const MOTION_FAMILY: Record<Motion, "dolly" | "vertical" | "lateral" | "optical"> = {
+  fly_through: "dolly",
+  side_glide: "lateral",
   push_in: "dolly",
   pull_back: "dolly",
   tilt_up: "vertical",
@@ -734,6 +738,8 @@ export interface ShotlistRequest {
  * rather than closing in. Two audiences, two texts; only the enum is shared.
  */
 const MOTION_NOTE: Record<Motion, string> = {
+  fly_through: "short stabilized forward tracking inside the visible space, constant height and level horizon",
+  side_glide: "very shallow lateral tracking within the photographed space, no hidden surfaces",
   push_in: "the camera pushes slowly in",
   pull_back: "the camera pulls back and widens out",
   tilt_up: "the camera tilts up, revealing height",

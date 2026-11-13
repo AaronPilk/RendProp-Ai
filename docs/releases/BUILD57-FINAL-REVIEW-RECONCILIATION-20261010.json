@@ -1,0 +1,23 @@
+{
+  "read_at": "2026-10-10T22:55:03.130547+00:00",
+  "version": "1.0.4",
+  "build": "57",
+  "build_id": "46e2df20-e688-4e14-afa7-88655f28e8ba",
+  "version_id": "39ff74df-71d4-4bf1-92f4-9c709e7f4366",
+  "review_id": "ecf0a17a-6fdd-40c9-8e0b-39f345b1b830",
+  "version_state": "WAITING_FOR_REVIEW",
+  "review_state": "WAITING_FOR_REVIEW",
+  "release_type": "MANUAL",
+  "submitted_date": "2026-10-10T17:53:19.511Z",
+  "mutations": 0,
+  "decision": "Leave submitted build in review; hold manual release for acceptance",
+  "claude_review": "docs/handoff/CLAUDE-BUILD57-FINAL-20261010.md",
+  "ci_run": 38071986005,
+  "ci_jobs_passed": 11,
+  "ci_jobs_failed": 1,
+  "export_classification": "Claude: environment underrun handled correctly; not a product failure",
+  "supplied_experiment_rows": 18,
+  "narrative_experiment_runs": 24,
+  "production_mutations": 0,
+  "followups_deferred": true
+}

@@ -6,6 +6,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export type ReelSource = {sha256: string; assetId: string; listingId: string};
 export type ReelPayload = {draft: EditDraft; listingId: string; sources: ReelSource[];conversation?:ConversationState};
 export type EarlierReel = {id: string; label: string; payload: ReelPayload};
+export function isPristineReelDraft(draft:EditDraft,conversation?:ConversationState):boolean {
+  return draft.revision === 0 && !draft.title && draft.ratio === "9:16" && draft.audio === "original" &&
+    !draft.clips.length && !draft.overlays?.length && !draft.music && !draft.narration &&
+    !draft.speech?.length && !conversation?.messages.length;
+}
 export function propertyReelKey(listingId: string): string {
   if (!UUID.test(listingId)) throw new Error("Choose a saved property for this reel.");
   return `edit:${listingId}`;
@@ -32,6 +37,11 @@ export function earlierReels(storage: Pick<Storage, "getItem">, legacyKey: strin
     if (value && typeof value === "object" && "listingId" in value && value.listingId && value.listingId !== listingId) return;
     try {
       const payload = reelPayload(value, listingId, true);
+      // Opening Create stores a pristine local draft. It is not earlier work
+      // that should interrupt the first property reel with a recovery choice.
+      // Preserve all keys and still offer any edited, bound or narrated draft.
+      if (!(value as {listingId?:unknown}).listingId && !payload.sources.length &&
+        isPristineReelDraft(payload.draft,payload.conversation)) return;
       if (!copies.some(copy => canonicalDocument(copy.payload) === canonicalDocument(payload))) copies.push({id, label, payload});
     } catch { unreadable = true; }
   };

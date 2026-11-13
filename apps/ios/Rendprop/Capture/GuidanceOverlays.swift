@@ -13,7 +13,9 @@ struct CameraPreview: UIViewRepresentable {
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
         view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
+        // Keep the whole recorded frame visible. Filling a tall phone display
+        // crops the sides of portrait video and makes even 0.5× look narrow.
+        view.previewLayer.videoGravity = .resizeAspect
         return view
     }
 
@@ -148,15 +150,22 @@ struct LightWarning: View {
 
 // MARK: - Rule-of-thirds grid
 struct ThirdsGrid: View {
+    let frameAspectRatio: CGFloat
+
     var body: some View {
         GeometryReader { geo in
             Path { p in
-                let w = geo.size.width, h = geo.size.height
+                // Match the letterboxed preview instead of drawing composition
+                // lines through the black space above and below the video.
+                let w = min(geo.size.width, geo.size.height * frameAspectRatio)
+                let h = min(geo.size.height, geo.size.width / frameAspectRatio)
+                let x = (geo.size.width - w) / 2
+                let y = (geo.size.height - h) / 2
                 for i in 1...2 {
-                    p.move(to: CGPoint(x: w * CGFloat(i) / 3, y: 0))
-                    p.addLine(to: CGPoint(x: w * CGFloat(i) / 3, y: h))
-                    p.move(to: CGPoint(x: 0, y: h * CGFloat(i) / 3))
-                    p.addLine(to: CGPoint(x: w, y: h * CGFloat(i) / 3))
+                    p.move(to: CGPoint(x: x + w * CGFloat(i) / 3, y: y))
+                    p.addLine(to: CGPoint(x: x + w * CGFloat(i) / 3, y: y + h))
+                    p.move(to: CGPoint(x: x, y: y + h * CGFloat(i) / 3))
+                    p.addLine(to: CGPoint(x: x + w, y: y + h * CGFloat(i) / 3))
                 }
             }
             .stroke(Color.white.opacity(0.12), lineWidth: 0.5)

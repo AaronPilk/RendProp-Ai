@@ -59,6 +59,8 @@ import { GUARDRAILS } from "../_shared/fairhousing.ts";
 // five seconds without being asked to invent geometry it was never shown?
 
 export const REEL_MOTIONS = [
+  "fly_through",
+  "side_glide",
   "push_in",
   "pull_back",
   "tilt_up",
@@ -125,6 +127,8 @@ export type ReelMotion = typeof REEL_MOTIONS[number];
  *   THE LEAST RISKY MOVE IN THE SET: nothing moves but the air.
  */
 export const REEL_MOTION_TEXT: Record<ReelMotion, string> = {
+  fly_through: "one short, smooth forward tracking move at a constant height with a level horizon and fixed lens",
+  side_glide: "one very shallow lateral tracking move to the right at a constant height with a level horizon",
   // FROZEN. This exact string is what the route has always sent, and
   // buildReelPrompt() reassembles the previous prompt around it byte for byte.
   // Changing it changes every clip the shipped app produces.
@@ -162,6 +166,8 @@ const BOUNDED_REVEAL =
   "any newly visible frame edge stays a plausible continuation of the room already shown — no new doorways, windows, rooms, or objects";
 
 const REEL_MOTION_REVEAL: Record<ReelMotion, string> = {
+  fly_through: NO_REVEAL,
+  side_glide: NO_REVEAL,
   push_in: NO_REVEAL,       // shows strictly less of the edges
   rack_focus: NO_REVEAL,    // the camera body never moves
   static_parallax: NO_REVEAL, // ditto
@@ -175,6 +181,8 @@ const REEL_MOTION_REVEAL: Record<ReelMotion, string> = {
 /** Human label for the chosen move, so the app can caption the clip in a shot
  *  list without shipping its own copy of this enum. Returned in the 202. */
 export const REEL_MOTION_LABEL: Record<ReelMotion, string> = {
+  fly_through: "Fly-through",
+  side_glide: "Side glide",
   push_in: "Push in",
   pull_back: "Pull back",
   tilt_up: "Tilt up",
@@ -245,6 +253,8 @@ const FAMILY_CYCLE = ["dolly", "vertical", "lateral", "optical"] as const;
 type MotionFamily = typeof FAMILY_CYCLE[number];
 
 export const REEL_MOTION_FAMILY: Record<ReelMotion, MotionFamily> = {
+  fly_through: "dolly",
+  side_glide: "lateral",
   push_in: "dolly",
   pull_back: "dolly",
   tilt_up: "vertical",
@@ -626,6 +636,23 @@ export function buildReelPrompt(args: { sceneNoun: string; motion: ReelMotion })
     "objects; no people, no animals, no text or watermarks; no scene changes, style shifts, " +
     "warping, or flicker. " + GUARDRAILS
   );
+}
+
+/** Versioned presets for the deployed Seedance 1.0 Pro Fast single-image API.
+ * A five-second shot is NOT a reconstructed route through the property. Never
+ * request unseen rooms, second reference frames, or an FPV orbit from one image.
+ * Keep this version stable so a stored receipt identifies its actual prompt. */
+export const REEL_PRESETS = ["fly_through", "push_in", "side_glide", "pull_back"] as const;
+export function buildSeedanceReelPreset(sceneNoun: string, motion: typeof REEL_PRESETS[number]): string {
+  const camera = {
+    fly_through: "A single stabilized forward tracking shot, like a slow indoor drone glide. Travel only a short distance into the visible space, at constant height and steady speed. Keep the horizon level and the lens fixed. Stop before a wall, doorway, furniture or surface could conceal an unseen area. No banking or flight through objects.",
+    push_in: "A single very slow, subtle straight push-in toward the existing focal point. Keep camera height, horizon and lens fixed. Show less of the original frame as you move closer; use only gentle natural parallax.",
+    side_glide: "A single very shallow camera truck to the right, with subtle natural parallax. Keep height, horizon and lens fixed and the existing subject centered. Limit travel to the pictured space; do not arc around objects or reveal their hidden sides.",
+    pull_back: "A single gentle pull-back feel contained entirely inside the source photograph. Begin with a modest crop into the source and ease out toward its original framing. Never widen beyond the source image borders or invent new frame edges. Keep the horizon level and lens fixed.",
+  }[motion];
+  return `Animate this exact photographed ${sceneNoun} in one continuous five-second shot. ${camera} ` +
+    "The source photograph is the only visual reference. Preserve its room layout, architectural geometry, proportions, door and window positions, garage door and trim colors, surfaces, fixtures, furniture, landscaping, visible views, lighting and exposure. Everything in the scene stays stationary; only the camera framing changes. " +
+    "Do not renovate, recolor, add, remove or move anything. No unseen rooms or invented surfaces, cuts, transitions, zoom jumps, morphing, warped straight lines, flicker, people, animals, text, logos or music. " + GUARDRAILS;
 }
 
 // ── Aerial ───────────────────────────────────────────────────────────────────

@@ -1,0 +1,57 @@
+{
+  "feature": "Floor plan measurements",
+  "branch": "feat/floor-plan-measurements-20261004",
+  "runtime_source_commit": "43cec70",
+  "backend": {
+    "project_id": "ymgqpbnjpztwjsyvceld",
+    "function": "tours",
+    "version": 48,
+    "status": "ACTIVE",
+    "verify_jwt": true,
+    "deployed_at_utc": "2026-10-04T16:36:20.914Z",
+    "ezbr_sha256": "ee154ab66bbd639d202d7a410a51a31d35c333806beed169b684bec6b8a4bed4",
+    "submitted_files": 13,
+    "readback_files": 13,
+    "exact_content_matches": 13,
+    "missing_or_extra_files": 0,
+    "behavior": "Exclude the case-insensitive floor_measurements_ namespace from public listing details; owner details and explicit floor-plan attachments remain available.",
+    "closure_note": "Includes the previously audited, unused assertPaidAiIdentity shared-helper export. tours does not invoke it. No migration or authentication-policy change."
+  },
+  "live_read_only_probes": {
+    "checked_at_utc": "2026-10-04T16:37:14.264457Z",
+    "unsigned_edge_function_status": 401,
+    "public_estate_demo_status": 200,
+    "public_estate_demo_measurement_key_present": false,
+    "customer_rows_created": false,
+    "live_measurement_sentinel_injected": false
+  },
+  "native": {
+    "generic_iphone_release_unsigned_build": "passed",
+    "internal_debug_simulator_build": "passed",
+    "manual_measurement_ui_case": "passed: 1 test, 0 failures",
+    "testflight_uploaded": false,
+    "app_store_submitted": false,
+    "physical_camera_accuracy_verified": false,
+    "physical_photos_delivery_verified": false,
+    "live_second_phone_sync_verified": false
+  },
+  "local_verification": {
+    "measurement_model_assertions": 191,
+    "existing_listing_form_assertions": 71,
+    "wire_and_sync_assertions": 52,
+    "async_photo_export_assertions": 18,
+    "public_handler_tests": 5,
+    "public_renderer_cases": 24,
+    "actual_tours_typecheck": "passed",
+    "actual_exported_pdf_visual_review": "passed",
+    "targeted_negative_controls": "detected targeted model, precision, geometry, sync, export and public-filter regressions"
+  },
+  "limitations": [
+    "Up to 24 rectangular rooms or sections; no inferred doors, windows or wall thickness.",
+    "Studio retains wire data but does not edit native measurement geometry.",
+    "Existing whole-details PATCH lacks revision/CAS protection against unseen simultaneous edits.",
+    "AR estimates require real-phone comparison against a tape."
+  ],
+  "private_evidence_directory": "/Users/pilksclaes/LocalRendpropAudits/floor-plan-measurements-20261004",
+  "handoff": "docs/handoff/FLOOR-MEASUREMENTS-20261004.md"
+}

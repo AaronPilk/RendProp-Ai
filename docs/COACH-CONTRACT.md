@@ -1,13 +1,15 @@
-# Coach — contract v1 (2026-09-07)
+# Coach — contract v3 (2026-10-14)
 
-Rendprop's in-app chat assistant. Two jobs, in priority order:
+Rendprop's in-app chat assistant. Two jobs:
 
 1. **Onboarding.** Guide a user through their first (or next) project one step
    at a time — never a plan dump. Exactly one next step, exactly one action.
 2. **Customer service — the higher priority of the two.** Answer questions
    about publishing, the unbranded MLS link, AI disclosure, what each tool
-   does, filming tips, account deletion, and managing a subscription. Must
-   never be dead, never fabricate, and is free on every plan.
+   does, filming tips, account deletion, and managing a subscription. Local
+   help remains available when online help fails or its serving allowance is
+   exhausted. Online calls have no separate feature fee; the shared serving
+   allowance and admission requirements still apply.
 
 TEXT ONLY. No photo or video is ever part of a request in either direction.
 
@@ -28,13 +30,17 @@ Request:
     "listings": [
       {
         "id": "…",            // this phone's own listing id — round-trips as listing_id
-        "title": "123 Main St",
+        "title": "Main St",       // street-only device label, not a full postal address
         "has_video": false, "room_tags": 0, "has_tour": false, "published": false,
         "photos": 0, "edits": 0, "reels": 0
       }
     ],
     "plan": "free" | "trial" | "starter" | "solo" | "pro" | "team",
-    "screen": "home" | "settings" | null   // a hint only, never load-bearing
+    "screen": "reel_studio", // optional closed AskAIScreen vocabulary, not arbitrary text
+    "selected_listing_id": "…",
+    "reel_state": {"phase":"generating", "completed":2, "total":8, "still_photo_shots":1,
+      "execution":"server_accepted", "server_phase":"generating", "resume_available":false}, // optional
+    "photo_state": {"tab":"original", "selected_count":3} // optional Photo Studio hint
   }
 }
 ```
@@ -53,10 +59,41 @@ Response:
 Auth failure is a plain `401` (signed-out) — the app's own offline knowledge
 answers instead of showing an error; see §5.
 
-`context.listings[]` is the CLIENT's own report of its own on-device state
-(`AppModel`), never looked up server-side by id. A stale or wrong id costs
-nothing but a slightly-off suggestion; it can never leak another org's data,
-because nothing is ever fetched with it.
+`context.listings[]` carries bounded device counts and street-only labels.
+`context.ts` verifies cloud ids through the selected library, excludes foreign
+or unavailable rows, and adds current server states plus limited account/usage
+fields. Device ids stay distinct from cloud ids. Explicit local drafts remain
+unverified device hints. No addresses, lead content, receipts or media are
+loaded for this context.
+
+The current screen and selected project take precedence over generic tour
+onboarding. Photos and reels do not require a walkthrough. `open_photos`
+opens the Photos library. `start_project` opens Home's existing address/details
+form. The normal sequence is address/details, photos, optional Original-based
+edits, review/select saved versions, optional landscape property video, then
+explicit Publish. A recorded walkthrough is optional. `share_tour` opens the
+scoped listing's details/Share controls even when it has no recorded video.
+
+`reel_state` is accepted only for Reel Studio with an authorized selected
+project. Its closed phases are generating, stitching, paused, ready,
+saved_request and needs_review. Counts are integers 0–100 with completed ≤ total
+and still-photo shots ≤ completed. It is a device hint, not server receipt or
+spending authority. No raw status text, error, URL or physical location enters
+this hint. Old clients may omit it; absent execution means `legacy_local`.
+`execution` is `legacy_local`, `awaiting_acceptance` or `server_accepted`.
+The native accepted hint is derived only from the actor/library/listing/operation-
+bound saved reply, never from a local generating phase. `server_phase` is a
+closed job state; `resume_available` is permitted only for an acknowledged
+failed job. The hint is cached and may be stale: it never authorizes a retry,
+publish or spend. Unaccepted operations get Check status guidance without a
+background completion promise. Legacy phone batches/exports may pause.
+
+`photo_state` is accepted only for Photos/Photo Studio with an authorized
+selected listing. Its tab is original, decluttered, staged or latest; the bounded
+selected count is the listing selection, not proof that the model saw those
+images. No style text, image/version IDs, preview URLs or comparison contents
+are sent. Original is the editing source; saved tabs are finished results for
+review, select and share. Earlier saved styles remain available.
 
 ## 2. The closed action enum
 
@@ -66,13 +103,13 @@ enforced server-side (dropped, not coerced) and re-checked client-side
 
 | `type`             | Needs `listing_id` | Maps to (iOS)                                          |
 |---------------------|:---:|----------------------------------------------------------|
-| `start_project`      | no  | `StartProjectSheet` (`gate = .start(.tour)`)             |
+| `start_project`      | no  | Home `startNewHome()` address/details form             |
 | `open_tour`          | yes | `ProjectRoute(listing:, feature: .tour)`                 |
 | `open_photos`        | yes | `ProjectRoute(listing:, feature: .photos)`               |
 | `open_reel`          | yes | `ProjectRoute(listing:, feature: .reel)`                 |
-| `open_floor_plan`    | yes | `ProjectRoute(listing:, feature: .floorPlan)`            |
+| `open_floor_plan`    | yes | RETIRED in build 57 — Measurements is Coming soon. The server drops it (`RETIRED_ACTIONS`, never a chip); an older client that still receives one, or a stale push, lands on the listing itself (`routeDestination` maps `.floorPlan` to `FlythroughDetailView`). |
 | `open_aerial`        | yes | `AerialIntroSheet` via `gate = .aerial(listing)` (a sheet, not a push) |
-| `share_tour`         | yes | same as `open_tour` — the finished tour's own Share sheet |
+| `share_tour`         | yes | authorized published listing details/Share controls; no recorded-video requirement |
 | `open_plan_usage`    | no  | Settings tab (Plan & usage section)                      |
 | `open_support`       | no  | mailto: `SettingsView.supportMailURL(subject:)`          |
 | `open_home`          | no  | Home tab                                                 |
@@ -92,14 +129,18 @@ can't share a source file) and must be changed together:
 - `apps/ios/Rendprop/Coach/CoachAPI.swift` → `CoachActionType`
 - this document
 
-## 3. Rate limits (durable, per user — abuse protection, not a plan quota)
+## 3. Rate limits (durable — abuse protection, not a plan quota)
 
 - **12 messages / 5 minutes**
 - **60 messages / day**
+- **600 messages / day per workspace**, shared across members as an abuse safety
+  fence. The first two limits remain per user.
 
-No entitlement check, no monthly allowance, no plan gate — coach is free on
-every plan by product decision. A limit hit is a `429` with a plain-language
-message; the app shows it as an assistant bubble, not an error dialog.
+Coach has no separate paid feature meter. Identified-account/library access,
+verified effective plan, AI consent on iOS, shared serving allowance and liability
+reservation still apply. User and library abuse limits do not replace that money
+authority. On a refusal, the native chat answers with local help and a safe
+navigation action; it does not bypass funding or dispatch an automatic retry.
 
 ## 4. Never a price
 
@@ -126,12 +167,10 @@ instruction alone:
   knowledge, plus the SAME onboarding step ladder run locally over state the
   phone already has (no network needed for that half at all). The chat is
   never blank and never shows a raw error.
-- **The AI-router feature flag is off** (today's default) and the DB has no
-  seeded route for `coach.chat` yet, or `resolveRoute()` throws:
-  `coach/index.ts`'s `chooseChain()` substitutes a hardcoded two-step
-  fallback (anthropic → openai) byte-identical to migration 0023's seeded
-  rows, so one vendor outage never takes the feature down even before the
-  router is ever turned on for it.
+- If the eligible router returns no steps, `chooseChain()` uses the source's
+  Anthropic → OpenAI fallback. Coach then applies its own prompt, attempt and
+  output caps (§8); this is not an availability guarantee or an override of the
+  shared money authority.
 - **The model's own output is unusable** (empty, unparseable, not JSON):
   `actions.ts`'s `parseCoachOutput` falls back to a fixed, friendly
   `FALLBACK_REPLY` with `open_support` — never a thrown error, never a blank
@@ -176,11 +215,31 @@ changes on one side should be considered on the other.
 
 ## 8. Cost / metering
 
-No entitlement check and no monthly allowance (§3 already covers abuse).
-Every answered request still calls `recordRoutedAiCost` (feature `"coach"`,
-task `coach.chat`) — best-effort, after the reply is already computed, and
-never turns a good reply into an error if the org lookup or ledger write
-fails.
+Coach uses at most two eligible steps, 600 output tokens per step and a combined
+prompt of at most 26,624 UTF-8 bytes. Old history is dropped before unselected
+project hints; the newest question and selected project remain. Route params
+cannot raise the adapter's 600-token ceiling. Each verified tariff/catalog hold
+must be ≤8¢, giving a ≤16¢ complete-turn reserve under the supported tariffs.
+
+The source fallback is Claude Sonnet 5 ($2/$10 per million input/output tokens)
+then GPT-5.6 Terra ($2/$12). `textAttemptQuote` uses bytes +1,024 as a conservative
+input-token bound; this is not a measured token count. `coachAttemptQuote`
+multiplies the OpenAI quote by 1.25 to cover implicit cold-cache writes, including
+a deliberately conservative extra output reserve. At maximum payload the
+source-model holds are 6.1296¢ and 7.8120¢. A hypothetical 3,000-input/600-output
+token answer costs 1.2¢ on Sonnet; Terra is 1.32¢ uncached or 1.47¢ with every
+input token charged as a cold cache write. Those examples are tariff arithmetic,
+not a supplier invoice or observed usage.
+
+`fundedAttempt` receives the adjusted quote and reserves before dispatch.
+Incurred/uncertain liabilities remain retained; output parsing cannot erase a
+supplier cost. `recordRoutedAiCost` still records the route catalog estimate,
+not an exact upstream invoice. Prompt/message content is not logged. Current
+screen, prompt byte count and numeric caps are safe receipt metadata.
+
+Sources checked 2026-10-13: [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing),
+[GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra),
+[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 
 ## 9. Deploy
 
@@ -227,16 +286,31 @@ own chain is `min_plan: 'free'` on both steps regardless.
 Shared files touched (never created) — see `docs/handoff/coach.md` for every
 edit at file:line.
 
-## 11. Known sandbox limitation (not a defect in this change)
+## 11. Verification limits
 
-`deno check services/supabase/functions/coach/index.ts` reports two
-pre-existing errors in `_shared/providers/common.ts` (`TS2315: Type
-'Uint8Array' is not generic`, lines 372 and 388) — a TypeScript-lib version
-mismatch between this sandbox's pinned Deno (2.1.4 / TS 5.6.2, which predates
-generic typed arrays) and whatever the real deploy toolchain uses. This is
-NOT introduced by coach: `git status` shows `common.ts` untouched, and
-`deno check services/supabase/functions/ai-photo/index.ts` — an already-
-shipped function that imports the same provider adapters — fails with the
-identical two errors at the identical lines. `coach/index.ts` itself
-produces zero errors beyond those two; so do `prompt.ts`, `actions.ts` and
-`knowledge.ts` standalone.
+The Build69 focused gate compiles the complete current Coach native source with
+closed app/queue/media boundaries and exercises the actual server handler,
+sanitation, reservation calls and provider HTTP serializers with closed transport.
+It makes no paid provider calls and does not prove live reply quality or a supplier
+invoice. Current `deno check coach/index.ts` passes; the earlier v1 sandbox's
+TypeScript-library error is historical.
+
+## 9. Usage evidence and current support facts
+
+The existing ledger still records the router's catalog cost estimate and uses the
+same bounded liability reservation. An answered attempt additionally records
+provider-reported input/output token counts (and Anthropic cache counts when
+reported) in `provider_usage`. Missing or invalid counts remain `unavailable`;
+the metadata explicitly says it is not a verified supplier invoice. It contains
+no prompt/reply/media. Fallback attempt counts are retained with the final
+answered ledger row. A chain that fails before that existing ledger path does
+not gain a new count-only ledger; uncertain holds retain their current behavior.
+
+Current catalog examples are 30/60/150 generated five-second shots for
+Starter/Pro/Team, not whole finished videos. The verified effective account
+snapshot wins; older grants retain their own caps and shared serving capacity
+can limit meter use. Prices come from StoreKit. Classic website design is
+included; one verified per-property unlock allows both premium designs and
+switching between them. Preview uses already-public content, noindex/watermark
+and no enquiry form; it never changes or publishes the live site. Publishing
+is an explicit action. Nearby data and MLS/Zillow syndication are never invented.

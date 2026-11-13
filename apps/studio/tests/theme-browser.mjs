@@ -14,8 +14,8 @@ const fixtures = ['creative', 'business', 'listing-workflow', 'cloud-editor', 'c
 const receipt = {
   status: 'running',
   proof: 'Actual Studio CSS and AppearanceSelector, with isolated local workflow fixtures. All non-local browser requests are aborted; fixture media is intentionally unavailable. No customer data, provider, or account operation.',
-  appearance: [], contrast: [], layouts: [], errors: [],
-  sourceFiles: Object.fromEntries(await Promise.all(['src/styles.css', 'src/Appearance.tsx', 'src/theme.ts', 'src/editor/editor.css', 'src/planner.css', 'src/features/creative/creative.css', 'src/features/business/business.css', 'src/features/listings/listings.css', 'src/features/sync/reel.css'].map(async path => [path, createHash('sha256').update(await readFile(join(root, path))).digest('hex')]))),
+  appearance: [], contrast: [], layouts: [], disabledControls: [], errors: [],
+  sourceFiles: Object.fromEntries(await Promise.all(['src/styles.css', 'src/Appearance.tsx', 'src/theme.ts', 'src/editor/editor.css', 'src/editor/conversation.css', 'src/planner.css', 'src/features/creative/creative.css', 'src/features/business/business.css', 'src/features/listings/listings.css', 'src/features/sync/reel.css'].map(async path => [path, createHash('sha256').update(await readFile(join(root, path))).digest('hex')]))),
 };
 let browser, server;
 const key = 'rendprop.studio.appearance.v1';
@@ -101,6 +101,12 @@ try {
         assert.equal(result.bg, scheme === 'light' ? 'rgb(250, 250, 252)' : 'rgb(14, 13, 20)');
         assert.equal(result.ink, scheme === 'light' ? 'rgb(28, 25, 45)' : 'rgb(242, 240, 250)');
         assert.equal(result.overflow, false, `${fixture} ${scheme} ${width} overflows`);
+        const disabled = await page.evaluate(() => {
+          const root = getComputedStyle(document.documentElement), sample = document.createElement('span'); sample.style.color = root.getPropertyValue('--muted'); document.body.append(sample); const expectedInk = getComputedStyle(sample).color; sample.remove();
+          return [...document.querySelectorAll('button:disabled')].filter(button => button.getClientRects().length).map(button => { const style = getComputedStyle(button); return { text: button.textContent.trim(), opacity: style.opacity, ink: style.color, expectedInk }; });
+        });
+        for (const button of disabled) { assert.equal(button.opacity, '1', `${fixture} disabled ${button.text} fades`); assert.equal(button.ink, button.expectedInk, `${fixture} disabled ${button.text} retains active color`); }
+        receipt.disabledControls.push({scheme,width,fixture,count:disabled.length});
         receipt.layouts.push({ scheme, width, fixture, ...result });
       }
     }

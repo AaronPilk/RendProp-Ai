@@ -1,0 +1,106 @@
+@main struct CurrentGalleryChecks {
+ @MainActor static func main() async throws {
+  let mode=CommandLine.arguments[2];var count=0
+  func check(_ value:Bool,_ label:String){precondition(value,label);count += 1}
+  func fixture(_ label:String,edited:Bool=false,recorded:Bool=true)throws->(AppModel,UUID,UUID,URL){
+   let id=UUID(),server=UUID(),dir=EnhancedPhoto.directory(for:id);try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+   try PhotoVersionHistory.saveCapture(original:Data("\(label)-original".utf8),enhanced:Data("\(label)-enhanced".utf8),id:"capture",directory:dir)
+   if edited{_ = try PhotoVersionHistory.saveEdit(jpeg:Data("\(label)-edit".utf8),id:"clean",parentID:"capture",sourceID:"capture",edit:"declutter",style:nil,disclosure:"Synthetic disclosure",provenanceID:"synthetic-evidence",provenanceRecorded:recorded,directory:dir)}
+   UploadManager.shared.reset();UploadManager.shared.boundary={_,_ in UUID().uuidString}
+   return(AppModel(Listing(id:id,serverID:server,mainPhotoRelPath:nil,lastError:AppModel.photoSyncErrorPrefix+" Earlier attempt.")),id,server,dir)
+  }
+  func files(_ dir:URL)throws->[String:Data]{try Dictionary(uniqueKeysWithValues:FileManager.default.contentsOfDirectory(at:dir,includingPropertiesForKeys:nil).map{($0.lastPathComponent,try Data(contentsOf:$0))})}
+  func measured(_ version:PhotoVersionHistory.Version,_ dir:URL)throws->PhotoCloudLocalVersion{
+   let file=dir.appendingPathComponent(version.imageFile)
+   return .init(id:version.id,familyID:version.familyID,imageFile:version.imageFile,sha256:DirectUploader.sha256(of:file)!,bytes:FileStore.fileSize(file),knownAssetID:nil,historyComplete:version.sourceHistoryKnown)
+  }
+  func prepare(_ model:AppModel,_ id:UUID,_ server:UUID,_ dir:URL,_ versionID:String)throws->(PhotoCloudLocalVersion,PhotoCloudSelectionIdentity){
+   let version=try PhotoVersionHistory.load(directory:dir).versions[versionID]!
+   return(try measured(version,dir),.init(actorID:UUID(),libraryOrgID:UUID(),localListingID:id,serverListingID:server))
+  }
+  if mode=="sync" {
+   for imported in [false,true] {
+    for unrelated in [false,true] {
+     let(model,id,server,dir)=try fixture("warning-\(imported)-\(unrelated)");model.listings[0].cloudImported=imported
+     let before=try files(dir);if unrelated{model.listings[0].lastError="A newer render failure needs attention."}
+     await model.syncGalleryPhotos(listingLocalID:id,listingServerID:server)
+     check(unrelated ? model.listings[0].lastError=="A newer render failure needs attention." : model.listings[0].lastError==nil,"Successful gallery retry clears only its own error prefix")
+     check(model.api.publications.isEmpty && UploadManager.shared.calls.isEmpty && model.readCount==1,"Automatic refresh performs no upload selection or cover write for every server-backed home")
+     check(before == (try files(dir)),"Automatic refresh preserves all local source/history bytes")
+    }
+   }
+   do {let(model,id,server,_)=try fixture("read-failure");model.readBoundary={throw FixtureError.selection};await model.syncGalleryPhotos(listingLocalID:id,listingServerID:server)
+    check(model.listings[0].lastError?.hasPrefix(AppModel.photoSyncErrorPrefix)==true,"Failed read remains visible without claiming publication")
+    check(model.api.publications.isEmpty && UploadManager.shared.calls.isEmpty,"Failed read cannot dispatch photo work")
+   }
+   for recorded in [false,true] {
+    let(model,id,server,dir)=try fixture("edit-refusal-\(recorded)",edited:true,recorded:recorded);let(fact,identity)=try prepare(model,id,server,dir,"clean");let before=try files(dir)
+    if recorded{model.api.attachBoundary={throw FixtureError.provenance}}
+    var completed=false;do{try await model.prepareMeasured(fact,org:identity.libraryOrgID,listingID:id,versionID:"clean",identity:identity,reviewed:true);completed=true}catch{}
+    check(!completed,"Missing/failed provenance never completes explicit preparation")
+    check(recorded ? model.api.provenance.count==1 : model.api.provenance.isEmpty,"Actual explicit provenance boundary is exercised")
+    check(before == (try files(dir)),"Provenance refusal preserves selected and retained bytes")
+   }
+   do {let(model,id,server,dir)=try fixture("changed-target");let(fact,identity)=try prepare(model,id,server,dir,"capture")
+    UploadManager.shared.boundary={url,_ in var data=try Data(contentsOf:url);data[0] ^= 1;try data.write(to:url);return UUID().uuidString}
+    var completed=false;do{try await model.prepareMeasured(fact,org:identity.libraryOrgID,listingID:id,versionID:"capture",identity:identity,reviewed:false);completed=true}catch{}
+    check(!completed,"Changed prepared target never completes explicit preparation")
+   }
+  }
+  if mode=="migration" {
+   for mutation in ["visit","capture","edit","remove"] {
+    let id=UUID(),server=UUID(),dir=EnhancedPhoto.directory(for:id);try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+    for old in ["a","b","c"]{try Data("original-\(old)".utf8).write(to:dir.appendingPathComponent("orig-\(old).jpg"));try Data("enhanced-\(old)".utf8).write(to:dir.appendingPathComponent("enh-\(old).jpg"))}
+    let before=try files(dir);var wanted:Set<String>=["a","b","c"]
+    if mutation=="capture"{try PhotoVersionHistory.saveCapture(original:Data("new-original".utf8),enhanced:Data("new-enhanced".utf8),id:"new",directory:dir);wanted.insert("new")}
+    if mutation=="edit"{_ = try PhotoVersionHistory.trackExisting(id:"a",imageFile:"enh-a.jpg",priorFile:"orig-a.jpg",directory:dir);_ = try PhotoVersionHistory.saveEdit(jpeg:Data("clean".utf8),id:"clean",parentID:"a",sourceID:"a",edit:"declutter",style:nil,disclosure:"Synthetic",provenanceID:"evidence",provenanceRecorded:true,directory:dir);wanted.remove("a");wanted.insert("clean")}
+    if mutation=="remove"{_ = try PhotoVersionHistory.trackExisting(id:"a",imageFile:"enh-a.jpg",priorFile:"orig-a.jpg",directory:dir);try PhotoVersionHistory.hide(id:"a",directory:dir);wanted.remove("a")}
+    let selected=try EnhancedPhoto.loadForListing(listingID:id)
+    check(Set(selected.map(\.id))==wanted,"Actual local reader retains every untouched legacy sibling after each mutation")
+    let after=try files(dir);check(before.allSatisfy{after[$0.key]==$0.value},"Legacy migration never deletes or rewrites predecessor bytes")
+    let model=AppModel(Listing(id:id,serverID:server,mainPhotoRelPath:nil,lastError:nil));UploadManager.shared.reset();await model.syncGalleryPhotos(listingLocalID:id,listingServerID:server)
+    check(model.api.publications.isEmpty && UploadManager.shared.calls.isEmpty,"Reconciled legacy history cannot silently republish a cloud gallery")
+   }
+   do {let(_,id,_,dir)=try fixture("stage");let stage=try PhotoVersionHistory.saveEdit(jpeg:Data("stage".utf8),id:"stage",parentID:"capture",sourceID:"capture",edit:"stage",style:"modern",disclosure:"Synthetic",provenanceID:"stage-evidence",provenanceRecorded:true,directory:dir)
+    check(!(try EnhancedPhoto.loadForListing(listingID:id)).contains{$0.id==stage.id},"Unreviewed staging stays out of local publication choice")
+    try PhotoVersionHistory.selectForPublication(id:stage.id,directory:dir,reviewed:true)
+    check((try EnhancedPhoto.loadForListing(listingID:id)).contains{$0.id==stage.id},"Reviewed staging remains an explicit local publication choice")
+   }
+  }
+  if mode=="original" {
+   func originalFixture(_ label:String)throws->(AppModel,UUID,UUID,URL,PhotoVersionHistory.Version){let(model,id,server,dir)=try fixture(label);let index=try PhotoVersionHistory.ensureOriginalSources(directory:dir);return(model,id,server,dir,index.versions["capture-original"]!)}
+   func replace(_ version:PhotoVersionHistory.Version,_ fields:[String:Any])throws->PhotoVersionHistory.Version{var object=try JSONSerialization.jsonObject(with:JSONEncoder().encode(version))as![String:Any];for(k,v)in fields{object[k]=v};return try JSONDecoder().decode(PhotoVersionHistory.Version.self,from:JSONSerialization.data(withJSONObject:object))}
+   func write(_ index:PhotoVersionHistory.Index,_ dir:URL)throws{try JSONEncoder().encode(index).write(to:dir.appendingPathComponent(".photo-history.json"),options:.atomic)}
+   do {let(model,id,server,dir,version)=try originalFixture("actual-original");let file=dir.appendingPathComponent(version.imageFile);let proof=try PhotoGalleryDisclosure.retainedOriginal(version:version,imageURL:file,sourceURL:file,maxBytes:9_500_000)
+    check(proof?.sha256=="__ORIGINAL_SHA__","Retained Original proof binds independent source SHA")
+    let(fact,identity)=try prepare(model,id,server,dir,version.id);var completed=false;do{try await model.prepareMeasured(fact,org:identity.libraryOrgID,listingID:id,versionID:version.id,identity:identity,reviewed:false);completed=true}catch{}
+    check(completed && model.api.provenance.isEmpty,"Verified retained Original completes explicit preparation without AI disclosure")
+   }
+   do {let(model,id,server,dir,version)=try originalFixture("spoofed-preparation");var index=try PhotoVersionHistory.load(directory:dir);index.versions[version.id]=try replace(version,["parentID":"capture","effects":["declutter"]]);try write(index,dir);let(fact,identity)=try prepare(model,id,server,dir,version.id)
+    var completed=false;do{try await model.prepareMeasured(fact,org:identity.libraryOrgID,listingID:id,versionID:version.id,identity:identity,reviewed:true);completed=true}catch{}
+    check(!completed && model.api.provenance.isEmpty,"Spoofed capture-original cannot skip explicit provenance")
+   }
+   do {let(model,id,server,dir,version)=try originalFixture("history-changed-during-upload");let(fact,identity)=try prepare(model,id,server,dir,version.id)
+    UploadManager.shared.boundary={_,_ in var index=try PhotoVersionHistory.load(directory:dir);index.versions["capture"]=try replace(index.versions["capture"]!,["originalVerified":false]);try write(index,dir);return UUID().uuidString}
+    var completed=false;do{try await model.prepareMeasured(fact,org:identity.libraryOrgID,listingID:id,versionID:version.id,identity:identity,reviewed:false);completed=true}catch{}
+    check(!completed,"Changed retained-original history cannot complete explicit preparation")
+   }
+   let spoofs:[[String:Any]]=[["effects":["stage"]],["effects":["declutter"]],["parentID":"capture"],["sourceID":"capture"],["stagingBaseID":"capture"],["originalVerified":false],["sourceHistoryKnown":false],["id":"other-original"],["familyID":"other"],["style":"modern"],["imageFile":"enh-capture.jpg"],["originalFile":"enh-capture.jpg"],["edit":"declutter"],["stagingReferenceID":"capture"],["stagingBrief":"stage it"],["customReviewed":false]]
+   for(offset,fields)in spoofs.enumerated(){let(_,_,_,dir,version)=try originalFixture("spoof-\(offset)");let spoof=try replace(version,fields);var index=try PhotoVersionHistory.load(directory:dir);if spoof.id==version.id && spoof.familyID==version.familyID{index.versions[spoof.id]=spoof;try write(index,dir)};let file=dir.appendingPathComponent(version.imageFile)
+    check(try PhotoGalleryDisclosure.retainedOriginal(version:spoof,imageURL:file,sourceURL:file,maxBytes:9_500_000)==nil,"Altered metadata never earns a retained Original exemption: \(offset)")
+   }
+   for fields in [["originalVerified":false],["effects":["stage"]],["parentID":"edit"]]as[[String:Any]]{let(_,_,_,dir,version)=try originalFixture("bad-root");var index=try PhotoVersionHistory.load(directory:dir);index.versions["capture"]=try replace(index.versions["capture"]!,fields);try write(index,dir);let file=dir.appendingPathComponent(version.imageFile);check(try PhotoGalleryDisclosure.retainedOriginal(version:version,imageURL:file,sourceURL:file,maxBytes:9_500_000)==nil,"Altered capture root cannot certify Original")}
+   do {let(_,_,_,dir,version)=try originalFixture("file-boundaries");let file=dir.appendingPathComponent(version.imageFile),other=dir.appendingPathComponent("enh-capture.jpg")
+    check(try PhotoGalleryDisclosure.retainedOriginal(version:version,imageURL:file,sourceURL:other,maxBytes:9_500_000)==nil,"Original must resolve to exact retained source URL")
+    check(try PhotoGalleryDisclosure.retainedOriginal(version:version,imageURL:other,sourceURL:file,maxBytes:9_500_000)==nil,"Enhanced bytes cannot impersonate Original")
+    check(try PhotoGalleryDisclosure.retainedOriginal(version:version,imageURL:file,sourceURL:file,maxBytes:1)==nil,"Original certification retains byte ceiling")
+    let bytes=try Data(contentsOf:file);try FileManager.default.removeItem(at:file);try FileManager.default.createSymbolicLink(at:file,withDestinationURL:other)
+    check(try PhotoGalleryDisclosure.retainedOriginal(version:version,imageURL:file,sourceURL:file,maxBytes:9_500_000)==nil,"Symlink cannot certify Original")
+    try FileManager.default.removeItem(at:file);try bytes.write(to:file)
+    let proof=try PhotoGalleryDisclosure.retainedOriginal(version:version,imageURL:file,sourceURL:file,maxBytes:9_500_000)!;var changed=bytes;changed[0] ^= 1;try changed.write(to:file);var refused=false;do{try PhotoGalleryDisclosure.requireUnchanged(proof,imageURL:file,sourceURL:file,maxBytes:9_500_000)}catch{refused=true}
+    check(refused,"Same-size source mutation invalidates retained Original proof")
+   }
+  }
+  print("\(count) assertions PASS (\(mode))")
+ }
+}

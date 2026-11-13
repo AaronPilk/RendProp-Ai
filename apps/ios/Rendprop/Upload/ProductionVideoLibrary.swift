@@ -44,6 +44,7 @@ import UniformTypeIdentifiers
     private var observation: AnyCancellable?
     private var task: Task<Void, Never>?
     private var contexts: [String: Context] = [:]
+    private var importingOwners: [String: Int] = [:]
     private var completionHandlers: [String: () -> Void] = [:]
 
     private init() {
@@ -93,11 +94,25 @@ import UniformTypeIdentifiers
         observe(UploadManager.shared.state)
     }
 
+    func isBusy(owner: String) -> Bool {
+        (importingOwners[owner] ?? 0) > 0 || activeContext?.owner == owner
+    }
+
+    func reloadAdopted(owner: String, listingIDs: Set<UUID>) {
+        for context in contexts.values where context.owner == owner && listingIDs.contains(context.listingID) {
+            groups[context.key] = nil
+            try? load(context)
+        }
+    }
+
     func importFile(_ url: URL, name: String, context: Context) async throws {
+        importingOwners[context.owner, default: 0] += 1
+        defer { importingOwners[context.owner, default: 1] -= 1 }
         try load(context)
         guard entries(context).count < 100 else { throw LibraryError.full }
         let asset = try await MediaImporter.makeAsset(from: url, isDrone: false, deleteOnFailure: false)
-        guard contexts[context.key] == context else { throw CancellationError() }
+        guard contexts[context.key] == context,
+              context.owner == (AuthStore.shared.userID ?? "device-only") else { throw CancellationError() }
         // Another picker may finish while metadata loading suspends this call.
         // Recheck on the main actor before the move/append transaction.
         guard entries(context).count < 100 else { throw LibraryError.full }

@@ -1,0 +1,7 @@
+body .real-estate-preview-notice { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding: 12px 24px; border-bottom: 1px solid #c9b6eb; background: #f4edff; color: #302044; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body .real-estate-preview-notice strong, body .real-estate-preview-notice span { display: block; }
+body .real-estate-preview-notice a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; margin-left: auto; padding: 8px 14px; border: 1px solid #aa8ad0; border-radius: 999px; color: #46236d; background: #fff; font: inherit; text-decoration: none; }
+body .real-estate-preview-notice a:focus-visible { outline: 3px solid #6c36a3; outline-offset: 3px; }
+body .real-estate-preview-notice p { flex-basis: 100%; margin: 0; }
+body .studio-shell.studio-glass > .sidebar, body .studio-shell.studio-glass > .sidebar::before { top: calc(var(--sg-edge) + var(--real-estate-preview-notice-height, 0px)); }
+@media (max-width: 720px) { body .real-estate-preview-notice { padding: 12px 16px; } body .real-estate-preview-notice a { margin-left: 0; } }

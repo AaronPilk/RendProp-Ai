@@ -3,8 +3,9 @@ import {
   assertEquals,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { bucketForKey, createStudioHandler, PAGE_SIZE } from "./handler.ts";
-import type { MediaScope, PhotoRow, StudioDependencies } from "./handler.ts";
+import type { MediaScope, PhotoRow, StudioDependencies, StudioMediaTiming } from "./handler.ts";
 import { HttpError } from "../_shared/http.ts";
+import { createPrivateMediaRequestSigner } from "../_shared/private-media.ts";
 const org = "10000000-0000-4000-8000-000000000001",
   listing = "20000000-0000-4000-8000-000000000002",
   user = "30000000-0000-4000-8000-000000000003";
@@ -25,6 +26,7 @@ function fixture() {
       signed.push(`${bucket}:${key}:${ttl}`);
       return "https://objects.example/read";
     },
+    assertSigningPolicyFresh: async () => {},
     now: () => Date.parse("2026-09-12T12:00:00Z"),
   };
   return { deps, signed, reads: () => reads };
@@ -82,6 +84,67 @@ Deno.test("OPTIONS requires no authorization or media read", async () => {
   assertEquals(f.reads(), 0);
 });
 
+Deno.test("media timing records fixed phases and status without tenant or object identities", async () => {
+  const f = fixture(), samples: StudioMediaTiming[] = [];
+  f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+  f.deps.observeTiming = sample => samples.push(sample);
+  const response = await createStudioHandler(f.deps)(request());
+  assertEquals(response.status, 200);
+  assertEquals(samples.length, 1);
+  const timing = samples[0];
+  assertEquals(timing.event, "studio_media_timing");
+  assertEquals(timing.status, 200);
+  assertEquals(timing.sign_calls, 1);
+  assertEquals(timing.photo_count, 1);
+  assertEquals(timing.video_count, 0);
+  assertEquals(timing.unavailable_count, 0);
+  for (const phase of ["total_ms", "authorize_initial_ms", "rate_limit_ms", "read_ms", "visibility_initial_ms", "signing_ms", "authorize_final_ms", "visibility_final_ms", "signing_policy_final_ms"] as const) {
+    assert(Number.isSafeInteger(timing[phase]) && timing[phase]! >= 0);
+  }
+  assert(!JSON.stringify(timing).includes(org));
+  assert(!JSON.stringify(timing).includes(listing));
+  assert(!JSON.stringify(timing).includes(key));
+
+  const denied = fixture(), errors: StudioMediaTiming[] = [];
+  denied.deps.authorize = async () => { throw new HttpError(403, "Not a member."); };
+  denied.deps.observeTiming = sample => errors.push(sample);
+  assertEquals((await createStudioHandler(denied.deps)(request())).status, 403);
+  assertEquals(errors.length, 1);
+  assertEquals(errors[0].status, 403);
+  assertEquals(errors[0].sign_calls, undefined);
+  assert(Number.isSafeInteger(errors[0].authorize_initial_ms));
+});
+Deno.test("a mid-request transport-policy switch or failed final lookup discards every signed Studio URL", async () => {
+  const prior = Deno.env.get("PRIVATE_MEDIA_DELIVERY");
+  Deno.env.set("PRIVATE_MEDIA_DELIVERY", "off");
+  try {
+    for (const final of [true, new Error("policy unavailable")]) {
+      const f = fixture();
+      f.deps.read = async () => ({ photos: [photo, { ...photo, id: "50000000-0000-4000-8000-000000000005", original_key: `uploads/${org}/${listing}/second.jpg` }], assets: [], renders: [] });
+      let checks = 0, signs = 0;
+      const order: string[] = [];
+      f.deps.authorize = async () => { order.push("authorize"); return scope; };
+      const visibility = f.deps.mediaVisibility;
+      f.deps.mediaVisibility = (authorized, refs) => { order.push("visibility"); return visibility(authorized, refs); };
+      const signer = createPrivateMediaRequestSigner(org, {
+        gatewayRequired: async () => { order.push("policy"); checks++; if (checks === 1) return false; if (final instanceof Error) throw final; return final; },
+        directSign: async () => { signs++; return "https://fixture.invalid/private-object"; },
+      });
+      f.deps.sign = (bucket, objectKey, seconds, authorized) => signer.sign({ actor: authorized.userId, org: authorized.orgId, listing: authorized.listingId, bucket, key: objectKey }, seconds);
+      f.deps.assertSigningPolicyFresh = () => signer.assertFresh();
+      const response = await createStudioHandler(f.deps)(request());
+      const body = await response.text();
+      assertEquals(response.status, 503);
+      assertEquals(checks, 2);
+      assertEquals(signs, 2);
+      assertEquals(order, ["authorize", "visibility", "policy", "authorize", "visibility", "policy"]);
+      assert(!body.includes("fixture.invalid") && !body.includes("photos"));
+    }
+  } finally {
+    prior === undefined ? Deno.env.delete("PRIVATE_MEDIA_DELIVERY") : Deno.env.set("PRIVATE_MEDIA_DELIVERY", prior);
+  }
+});
+
 Deno.test("revoked gallery links are filtered before signing", async () => {
   const f = fixture();
   f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
@@ -97,6 +160,103 @@ Deno.test("library never releases a URL when lineage is revoked during signing",
   f.deps.mediaVisibility = async () => ({ assets: {}, renders: {}, keys: { [key]: ++calls === 1 } });
   const response = await createStudioHandler(f.deps)(request());
   assertEquals(response.status, 404); assertEquals(f.signed.length, 1);
+  assert(!(await response.text()).includes("objects.example"));
+});
+Deno.test("signing uses four concurrent calls, preserves row order, and completes before the final fence", async () => {
+  const f = fixture();
+  const photos = Array.from({ length: 10 }, (_, index) => ({
+    ...photo,
+    id: `photo-${index}`,
+    original_key: `uploads/${org}/${listing}/${index}.jpg`,
+  }));
+  const assetId = "50000000-0000-4000-8000-000000000005";
+  const renderId = "60000000-0000-4000-8000-000000000006";
+  f.deps.read = async () => ({
+    photos,
+    assets: [{ id: assetId, listing_id: listing, storage_key: `uploads/${org}/${listing}/asset.mp4`, kind: "video", bucket: "uploads", uploaded: true, duration_s: 12, created_at: photo.created_at }],
+    renders: [{ id: renderId, listing_id: listing, video_key: `renders/${org}/${listing}/render.mp4`, duration_s: 14, created_at: photo.created_at }],
+  });
+  let active = 0, peak = 0, finished = 0, visibilityCalls = 0;
+  f.deps.sign = async (_bucket, objectKey) => {
+    active++;
+    peak = Math.max(peak, active);
+    const index = Number(objectKey.split("/").at(-1)?.replace(".jpg", ""));
+    await new Promise(resolve => setTimeout(resolve, Number.isNaN(index) ? 1 : 1 + (9 - index) % 4 * 3));
+    active--;
+    finished++;
+    return `https://objects.example/${objectKey.split("/").at(-1)}`;
+  };
+  f.deps.mediaVisibility = async (_scope, refs) => {
+    visibilityCalls++;
+    if (visibilityCalls === 2) {
+      assertEquals(active, 0);
+      assertEquals(finished, 12);
+      assertEquals(refs.assets, [assetId]);
+      assertEquals(refs.renders, [renderId]);
+      assertEquals(refs.keys?.length, 12);
+    }
+    return {
+      assets: Object.fromEntries((refs.assets ?? []).map(id => [id, true])),
+      renders: Object.fromEntries((refs.renders ?? []).map(id => [id, true])),
+      keys: Object.fromEntries((refs.keys ?? []).map(key => [key, true])),
+    };
+  };
+  const response = await createStudioHandler(f.deps)(request());
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(peak, 4);
+  assertEquals(visibilityCalls, 2);
+  assertEquals(body.photos.map((row: { id: string }) => row.id), photos.map(row => row.id));
+  assertEquals(body.videos.map((row: { id: string }) => row.id), [assetId, renderId]);
+  assertEquals(body.photos.map((row: { url: string }) => row.url), photos.map((_, index) => `https://objects.example/${index}.jpg`));
+});
+Deno.test("an unavailable selected photo does not sign its separate original", async () => {
+  const f = fixture();
+  const enhanced = `renders/${org}/${listing}/enhanced.jpg`;
+  f.deps.read = async () => ({ photos: [{ ...photo, enhanced_key: enhanced }], assets: [], renders: [] });
+  f.deps.sign = async (_bucket, objectKey) => {
+    f.signed.push(objectKey);
+    return "";
+  };
+  const response = await createStudioHandler(f.deps)(request());
+  assertEquals(response.status, 200);
+  assertEquals((await response.json()).photos, []);
+  assertEquals(f.signed, [enhanced]);
+});
+Deno.test("one failed signature drains in-flight calls and rejects the entire page", async () => {
+  const f = fixture();
+  const photos = Array.from({ length: 6 }, (_, index) => ({
+    ...photo,
+    id: `photo-${index}`,
+    original_key: `uploads/${org}/${listing}/${index}.jpg`,
+  }));
+  f.deps.read = () => Promise.resolve({ photos, assets: [], renders: [] });
+  let active = 0, started = 0, visibilityCalls = 0;
+  f.deps.mediaVisibility = (_scope, refs) => {
+    visibilityCalls++;
+    return Promise.resolve({
+      assets: {},
+      renders: {},
+      keys: Object.fromEntries((refs.keys ?? []).map(key => [key, true])),
+    });
+  };
+  f.deps.sign = async (_bucket, objectKey) => {
+    active++;
+    started++;
+    if (objectKey.endsWith("/0.jpg")) {
+      await Promise.resolve();
+      active--;
+      throw Error("private signing credential");
+    }
+    await new Promise(resolve => setTimeout(resolve, 5));
+    active--;
+    return "https://objects.example/read";
+  };
+  const response = await createStudioHandler(f.deps)(request());
+  assertEquals(response.status, 503);
+  assertEquals(active, 0);
+  assertEquals(started, 4);
+  assertEquals(visibilityCalls, 1);
   assert(!(await response.text()).includes("objects.example"));
 });
 Deno.test("POST cannot mutate anything", async () => {
@@ -188,12 +348,77 @@ Deno.test("returns literal contract, short lifetime, no cache", async () => {
       is_staged: true,
       is_altered: true,
       original_url: "https://objects.example/read",
+      edit_kind: null,
+      original_verified: false,
       sort: 0,
     },
   ]);
   assertEquals(body.next_offset, null);
   assertEquals(f.signed, [`uploads:${key}:600`]);
   assert(!JSON.stringify(body).includes(key));
+});
+Deno.test("the three final checks overlap, are all drained, and fail in membership, access, policy order", async () => {
+  const gate = () => { let open!: () => void; const wait = new Promise<void>(resolve => open = resolve); return { open, wait }; };
+  const f = fixture(), authorizeGate = gate();
+  f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+  const started: string[] = [];
+  let authorizations = 0, visibilities = 0;
+  f.deps.authorize = async () => { if (++authorizations === 2) { started.push("authorize"); await authorizeGate.wait; } return scope; };
+  const visibility = f.deps.mediaVisibility;
+  f.deps.mediaVisibility = (authorized, refs) => { if (++visibilities === 2) started.push("visibility"); return visibility(authorized, refs); };
+  f.deps.assertSigningPolicyFresh = async () => { started.push("policy"); };
+  const pending = createStudioHandler(f.deps)(request());
+  await new Promise(resolve => setTimeout(resolve, 5));
+  // Membership is still being rechecked, yet the other two checks have begun.
+  assertEquals(started, ["authorize", "visibility", "policy"]);
+  authorizeGate.open();
+  assertEquals((await pending).status, 200);
+
+  // Every combination of failing checks: nothing is released, and the reported
+  // failure is the first in the old sequential order.
+  for (const failing of [["authorize", "visibility", "policy"], ["visibility", "policy"], ["authorize", "policy"], ["policy"], ["authorize"], ["visibility"]]) {
+    const g = fixture(); let auth = 0, seen = 0, drained = 0;
+    g.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+    g.deps.authorize = async () => { if (++auth === 2) { await new Promise(resolve => setTimeout(resolve, 3)); drained++; if (failing.includes("authorize")) throw new HttpError(403, "Access changed."); } return scope; };
+    g.deps.mediaVisibility = async (_scope, refs) => { const final = ++seen === 2; if (final) drained++; return { assets: {}, renders: {}, keys: Object.fromEntries((refs.keys ?? []).map(key => [key, !(final && failing.includes("visibility"))])) }; };
+    g.deps.assertSigningPolicyFresh = async () => { await new Promise(resolve => setTimeout(resolve, 1)); drained++; if (failing.includes("policy")) throw new HttpError(503, "Media gateway activation pending."); };
+    const response = await createStudioHandler(g.deps)(request());
+    assertEquals(response.status, failing.includes("authorize") ? 403 : failing.includes("visibility") ? 404 : 503);
+    assertEquals(drained, 3, "no final check may be left running after the reply");
+    assert(!(await response.text()).includes("objects.example"));
+  }
+});
+Deno.test("a short first page signs only what was asked for and never pages", async () => {
+  const f = fixture(), previews: unknown[] = [];
+  const photos = Array.from({ length: 3 }, (_, index) => ({ ...photo, id: `photo-${index}`, original_key: `uploads/${org}/${listing}/${index}.jpg` }));
+  f.deps.read = async (...args) => { previews.push(args.length === 2 ? "ordinary" : args[2]); return { photos: photos.slice(0, args[2] ? args[2].limit + 1 : 3), assets: [], renders: [] }; };
+  const one = await createStudioHandler(f.deps)(request("&limit=1&cover=1"));
+  assertEquals(one.status, 200);
+  const body = await one.json();
+  assertEquals(body.photos.map((row: { id: string }) => row.id), ["photo-0"]);
+  assertEquals(body.next_offset, null); assertEquals(body.has_more, true);
+  assertEquals(f.signed.length, 1);
+  const two = await (await createStudioHandler(f.deps)(request("&limit=2"))).json();
+  assertEquals(two.photos.length, 2); assertEquals(two.has_more, true); assertEquals(two.next_offset, null);
+  // The ordinary page, and an explicit limit of 50, read exactly as before.
+  for (const query of ["", "&limit=50"]) {
+    const full = await (await createStudioHandler(f.deps)(request(query))).json();
+    assertEquals(full.photos.length, 3); assertEquals(full.next_offset, null); assertEquals(full.has_more, undefined);
+  }
+  assertEquals(previews, [{ limit: 1, cover: true }, { limit: 2, cover: false }, "ordinary", "ordinary"]);
+  // More rows than the preview asked for is a broken query, not a longer page.
+  const broken = fixture();
+  broken.deps.read = async () => ({ photos, assets: [], renders: [] });
+  assertEquals((await createStudioHandler(broken.deps)(request("&limit=1"))).status, 500);
+  assertEquals(broken.signed, []);
+});
+Deno.test("malformed preview sizes and a preview at a later offset are rejected before auth or read", async () => {
+  for (const query of ["&limit=0", "&limit=51", "&limit=1.5", "&limit=abc", "&limit=", "&limit=01", "&cover=0", "&cover=true", "&limit=1&offset=50", "&cover=1&offset=50"]) {
+    const f = fixture();
+    f.deps.authorize = () => { throw Error("should not run"); };
+    assertEquals((await createStudioHandler(f.deps)(request(query))).status, 400, query);
+    assertEquals(f.reads(), 0);
+  }
 });
 Deno.test(
   "unsigned references and pending captures never become URLs",
@@ -260,6 +485,15 @@ Deno.test(
   "stored render and photo deduplicate identical object keys",
   async () => {
     const f = fixture();
+    const visibilityKeys: string[][] = [];
+    f.deps.mediaVisibility = (_scope, refs) => {
+      visibilityKeys.push([...(refs.keys ?? [])]);
+      return Promise.resolve({
+        assets: Object.fromEntries((refs.assets ?? []).map(id => [id, true])),
+        renders: Object.fromEntries((refs.renders ?? []).map(id => [id, true])),
+        keys: Object.fromEntries((refs.keys ?? []).map(key => [key, true])),
+      });
+    };
     f.deps.read = async () => ({
       photos: [photo],
       assets: [
@@ -288,6 +522,8 @@ Deno.test(
     assertEquals(body.photos.length, 1);
     assertEquals(body.videos.length, 1);
     assertEquals(f.signed.length, 2);
+    assertEquals(visibilityKeys.length, 2);
+    assertEquals(visibilityKeys[1], [key, `renders/${org}/${listing}/export.mp4`]);
   },
 );
 Deno.test(

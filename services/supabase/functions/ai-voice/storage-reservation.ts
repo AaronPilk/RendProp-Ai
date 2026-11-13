@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError } from "../_shared/http.ts";
 export type VoiceStorageReservation = {reservation_id:string;key:string;write_deadline:string};
 export function validateVoiceReservation(raw: unknown, id: string, org: string, now = Date.now()): VoiceStorageReservation {

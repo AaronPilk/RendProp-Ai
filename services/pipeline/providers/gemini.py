@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
 """
-Google Gemini adapter — virtual restage via "Nano Banana"
-(Gemini 2.5 Flash Image). Best-in-class geometry + lighting preservation, and
-the cheapest direct route at ~$0.039/img.
+Google Gemini adapter — virtual restage through GenerateContent.
+The configured model defaults to gemini-3.1-flash-image. Image geometry is
+prompt-controlled and must still pass the separate drift check.
 
-We use the stable `:generateContent` REST surface (GA, and the one whose pricing
-maps exactly to the cost model: 1290 output tok/img × $30/1M = $0.0387 ≈ 3.9¢):
+The REST request is:
 
   POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
   header: x-goog-api-key: $GEMINI_API_KEY
   body:  { "contents":[{"role":"user","parts":[
               {"text": <edit prompt>},
               {"inline_data":{"mime_type":"image/jpeg","data":"<base64>"}} ]}],
-          "generationConfig":{"responseModalities":["IMAGE"]} }
+          "generationConfig":{"responseModalities":["IMAGE"],
+            "candidateCount":1,"maxOutputTokens":4096,
+            "imageConfig":{"imageSize":"1K"}} }
   resp:  { "candidates":[{"content":{"parts":[
               {"inlineData":{"mimeType":"image/png","data":"<base64>"}} ]}}] }
 
-The model id is configurable (GEMINI_IMAGE_MODEL). Google has since introduced a
-newer `/v1beta/interactions` surface (model e.g. `gemini-3.1-flash-image`, with
-`input:[{type,text},{type:image,mime_type,data}]` and `interaction.output_image`)
-— switching routes is a one-line config change; the $/img key lives in costs.py.
+The model id is configurable (GEMINI_IMAGE_MODEL). Paid dispatch requires the
+worker's funded session and a quote bound to the actual payload. Historical
+per-image cost estimates in costs.py are not provider invoices or authority
+to spend. Unknown models require explicit private testing sponsorship.
 
 CITATIONS:
-  https://ai.google.dev/gemini-api/docs/image-generation   (interactions + REST)
+  https://ai.google.dev/gemini-api/docs/generate-content/thinking#token-limits-and-max_output_tokens
+  https://ai.google.dev/gemini-api/docs/image-generation
   https://ai.google.dev/gemini-api/docs/image-understanding (inline_data input)
 """
 
@@ -39,6 +41,7 @@ from providers.base import (
     request_json,
     sniff_mime,
 )
+from providers.funding import IMAGE_MAX_OUTPUT_TOKENS
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -87,7 +90,9 @@ def restage(image: bytes, style_prompt: str, *, model: str | None = None) -> byt
             ],
         }],
         # Some model builds require ["TEXT","IMAGE"]; "IMAGE" keeps output lean.
-        "generationConfig": {"responseModalities": ["IMAGE"]},
+        "generationConfig": {"responseModalities": ["IMAGE"],
+                             "candidateCount": 1, "maxOutputTokens": IMAGE_MAX_OUTPUT_TOKENS,
+                             **({"imageConfig": {"imageSize": "1K"}} if model.startswith("gemini-3") else {})},
     }
     resp = request_json(url, method="POST", payload=payload,
                         headers={"x-goog-api-key": SETTINGS.gemini_api_key}, timeout=180, retries=2)

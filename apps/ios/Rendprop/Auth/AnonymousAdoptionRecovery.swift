@@ -14,6 +14,9 @@ final class AnonymousAdoptionRecovery {
         let destinationUserID: UUID
         var sourceAccessToken: String
         var sourceRefreshToken: String?
+        /// Only populated on the exact accepted server receipt, never inferred
+        /// from local key absence or a login/team selection.
+        var personalCardDisposition: String? = nil
     }
     enum RecoveryError: Error { case invalidIdentity, storage, conflict, malformed }
     typealias Transport = (URLRequest) async throws -> (Data, HTTPURLResponse)
@@ -26,7 +29,7 @@ final class AnonymousAdoptionRecovery {
     private let anonKey: String
     private let changed: (String?) -> Void
     private let prepareLocal: (Pending) -> Bool
-    private let finishLocal: (Pending, UUID) -> Bool
+    private let finishLocal: (Pending, UUID, Data) -> Bool
     private let discardLocal: (UUID?) -> Void
     private var running = false
 
@@ -35,7 +38,7 @@ final class AnonymousAdoptionRecovery {
          remove: @escaping () -> Bool, send: @escaping Transport,
          changed: @escaping (String?) -> Void = { _ in },
          prepareLocal: @escaping (Pending) -> Bool = { _ in false },
-         finishLocal: @escaping (Pending, UUID) -> Bool = { _, _ in false },
+         finishLocal: @escaping (Pending, UUID, Data) -> Bool = { _, _, _ in false },
          discardLocal: @escaping (UUID?) -> Void = { _ in }) {
         self.apiBase = apiBase; self.authBase = authBase; self.anonKey = anonKey
         self.read = read; self.write = write; self.remove = remove
@@ -136,6 +139,7 @@ final class AnonymousAdoptionRecovery {
     private struct Receipt: Decodable {
         let ok: Bool; let adopted: Bool; let operation_id: UUID
         let source_user_id: UUID; let destination_user_id: UUID; let org_id: UUID
+        let personal_card_disposition: String?
     }
     private struct SourceSession: Decodable {
         let access_token: String; let refresh_token: String
@@ -173,7 +177,21 @@ final class AnonymousAdoptionRecovery {
                    receipt.destination_user_id == value.destinationUserID {
                     // The local metadata rebind and its confirmation marker
                     // must commit atomically before discarding source recovery.
-                    guard finishLocal(value, receipt.org_id) else { throw RecoveryError.storage }
+                    // A durable adoption receipt is historical. An existing
+                    // named account may have edited its card after the remote
+                    // transfer and before a lost response was retried. Read its
+                    // CURRENT account-only card before activating local drafts.
+                    var cardRequest = URLRequest(url: apiBase.appendingPathComponent("me/card"))
+                    cardRequest.httpMethod = "GET"; cardRequest.timeoutInterval = 20
+                    cardRequest.setValue("Bearer \(destinationAccess)", forHTTPHeaderField: "Authorization")
+                    cardRequest.setValue(anonKey, forHTTPHeaderField: "apikey")
+                    let (cardData, cardResponse) = try await send(cardRequest)
+                    guard !Task.isCancelled, isCurrent() else { return }
+                    var verifiedValue = value
+                    verifiedValue.personalCardDisposition = receipt.personal_card_disposition
+                    guard (200..<300).contains(cardResponse.statusCode), cardData.count <= 24_000,
+                          receipt.personal_card_disposition == nil || ["source_copied", "destination_preserved", "no_source_card"].contains(receipt.personal_card_disposition!),
+                          finishLocal(verifiedValue, receipt.org_id, cardData) else { throw RecoveryError.storage }
                     guard remove() else { throw RecoveryError.storage }
                     changed(nil)
                     return

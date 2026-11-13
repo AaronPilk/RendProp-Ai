@@ -1,0 +1,52 @@
+\set ON_ERROR_STOP on
+begin;
+create temporary table retention_assertions(n integer not null default 0);insert into retention_assertions default values;
+grant all on retention_assertions to service_role;
+create function pg_temp.rcheck(ok boolean,label text)returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'RETENTION FAIL: %',label;end if;update retention_assertions set n=n+1;end$$;
+insert into auth.users(id,email,email_confirmed_at,is_anonymous)values('ca100607-0000-4000-8000-000000000001','retention-synthetic@example.invalid',now(),false);
+insert into orgs(id,name,plan,plan_source)select('ca200607-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'Synthetic retention '||n,'free','manual'from generate_series(1,7)n;
+insert into memberships(user_id,org_id,role)select'ca100607-0000-4000-8000-000000000001',id,'owner'from orgs where id::text like'ca200607-%';
+update profiles set is_admin=true where id='ca100607-0000-4000-8000-000000000001';
+update orgs set plan='team'where id='ca200607-0000-4000-8000-000000000005';
+insert into org_internal_testing_grants(org_id,owner_user_id,unmetered_business_allowances)values('ca200607-0000-4000-8000-000000000005','ca100607-0000-4000-8000-000000000001',true);
+set local role service_role;
+do $$declare u uuid:='ca100607-0000-4000-8000-000000000001';o uuid;e timestamptz;result jsonb;notice uuid;deadline timestamptz;zeros jsonb:='{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}';begin
+ for n in 2..6 loop
+  o:=('ca200607-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
+  deadline:=case n when 2 then now()+interval'20 days'when 3 then now()-interval'1 minute'when 4 then now()+interval'10 days'when 5 then now()-interval'1 day'else now()+interval'5 days'end;
+  e:=deadline-interval'90 days';
+  result:=public.provision_serving_funding(o,case when n=6 then'trial'else'retail'end,'synthetic-retention-'||n,case when n=6 then u else null end,case when n=6 then 0 else 10000 end,case when n=6 then 100 else 0 end,e-interval'1 month',e,1,zeros,repeat('a',64));
+ end loop;
+ perform public.revoke_serving_funding('ca200607-0000-4000-8000-000000000004','synthetic-retention-4',repeat('b',64));
+ perform pg_temp.rcheck(public.hosting_retention_state('ca200607-0000-4000-8000-000000000001')->>'policy'='preserved','legacy access preserved');
+ perform pg_temp.rcheck((public.hosting_retention_state('ca200607-0000-4000-8000-000000000002')->>'hosting_available')::boolean,'future hosting allowed');
+ perform pg_temp.rcheck(not(public.hosting_retention_state('ca200607-0000-4000-8000-000000000003')->>'hosting_available')::boolean,'expired hosting denied');
+ perform pg_temp.rcheck((public.hosting_retention_state('ca200607-0000-4000-8000-000000000004')->>'hosting_available')::boolean,'revoked funding retains promised grace');
+ result:=public.hosting_retention_state('ca200607-0000-4000-8000-000000000005');
+ perform pg_temp.rcheck((result->>'protected')::boolean and result->>'policy'='preserved','verified QA overrides retail cutoff');
+ perform pg_temp.rcheck(public.hosting_retention_state('ca200607-0000-4000-8000-000000000006')->>'policy'='prospective_90_day_grace','explicit funded trial recorded prospectively');
+ perform pg_temp.rcheck((select bool_and(retention_ends_at=ends_at+interval'90 days')from public.serving_funding where org_id::text like'ca200607-%'),'immutable funding grace is ninety days');
+ perform pg_temp.rcheck(not has_function_privilege('anon','public.hosting_retention_state(uuid)','execute'),'anonymous RPC denied');
+ perform pg_temp.rcheck(not has_function_privilege('authenticated','public.queue_hosting_retention_notices()','execute'),'tenant cannot queue retention notices');
+ perform pg_temp.rcheck(position('perform public.queue_hosting_retention_notices();'in pg_get_functiondef('public.notification_tick()'::regprocedure))>0,'scheduled tick has producer');
+ result:=public.queue_hosting_retention_notices();perform pg_temp.rcheck((result->>'queued')::integer=3,'one due stage per eligible org');
+ perform pg_temp.rcheck((public.queue_hosting_retention_notices()->>'queued')::integer=0,'notice deduplication');
+ select id into notice from public.notification_outbox where org_id='ca200607-0000-4000-8000-000000000002'and payload?'hosting_retention';
+ perform pg_temp.rcheck(public.hosting_retention_notice_current(notice),'current notice authorized');
+ e:=now()-interval'10 days';perform public.provision_serving_funding('ca200607-0000-4000-8000-000000000002','retail','synthetic-renewal',null,10000,0,e-interval'1 month',e,1,zeros,repeat('c',64));
+ perform pg_temp.rcheck((public.hosting_retention_state('ca200607-0000-4000-8000-000000000002')->>'retention_ends_at')::timestamptz>now()+interval'70 days','renewal extends hosting');
+ perform pg_temp.rcheck(not public.hosting_retention_notice_current(notice),'renewal cancels old notice');
+ perform pg_temp.rcheck((select state='expired'from public.notification_outbox where id=notice),'withdrawn notice stays expired');
+ perform public.notification_set_preferences(u,'{"allowance_low":false}');
+ e:=now()-interval'80 days';perform public.provision_serving_funding('ca200607-0000-4000-8000-000000000007','retail','synthetic-pref-off',null,10000,0,e-interval'1 month',e,1,zeros,repeat('d',64));
+ perform pg_temp.rcheck((public.queue_hosting_retention_notices()->>'queued')::integer=0,'existing alert preference honored');
+ perform public.notification_set_preferences(u,'{"allowance_low":true}');
+ perform pg_temp.rcheck((public.queue_hosting_retention_notices()->>'queued')::integer=1,'alert preference restores new notice');
+end$$;
+reset role;
+delete from memberships where org_id='ca200607-0000-4000-8000-000000000007'and user_id='ca100607-0000-4000-8000-000000000001';
+set local role service_role;
+select pg_temp.rcheck(not public.hosting_retention_notice_current((select id from public.notification_outbox where org_id='ca200607-0000-4000-8000-000000000007'and payload?'hosting_retention')),'membership withdrawal cancels notice');
+do $$begin if(select n from retention_assertions)<>19 then raise exception 'Unexpected retention assertion count';end if;end$$;
+rollback;
+\echo PASS hosting retention SQL: 19 assertions; all fixtures rolled back.

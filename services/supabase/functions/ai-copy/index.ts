@@ -1,3 +1,4 @@
+import { requireLibraryWrite } from "../_shared/library-access.ts";
 // ai-copy — AI PROMPTING FOR PEOPLE WHO ARE NOT PROMPT ENGINEERS.
 // Owner-authenticated. Three routes on one function, the way ai-voice serves
 // /voices and /tts.
@@ -133,13 +134,14 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import { recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute } from "../_shared/router.ts";
 import { runChain } from "../_shared/providers/chain.ts";
+import { fundingContext, fundedAttempt, textAttemptQuote, completeFundingOperation, abortFundingOperationBeforeDispatch, type FundingContext } from "../_shared/funded-serving.ts";
 import { ProviderError, fetchJson, BUDGETS, snippet } from "../_shared/providers/common.ts";
 import { anthropicMessages } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
@@ -178,6 +180,7 @@ import {
   shotlistInstruction,
 } from "./shotlist.ts";
 import {
+  MAX_AGENT_REEL_TOKENS,
   MAX_CLIP_SECONDS,
   MAX_TRANSCRIPT_PHRASES,
   MIN_CLIP_SECONDS,
@@ -212,12 +215,6 @@ const MAX_TOKENS = 700;
  *  each is ~1,100; the rest is slack, for the same reason MAX_TOKENS is
  *  generous — it stops a runaway generation, it does not shape the answer. */
 const MAX_SHOTLIST_TOKENS = 1600;
-
-/** Bound the /agent-reel reply. It is one short object per cutaway — an id, a
- *  photo id and at most five upper-case words — and MAX_WINDOWS caps it at
- *  twelve of them. Far smaller than a shot list, because this model writes no
- *  narration at all: the agent already spoke. */
-const MAX_AGENT_REEL_TOKENS = 700;
 
 /** Reel photo count. 5 s per clip and the app's own reel ceiling put this well
  *  under 20; the cap only exists so a junk body cannot reach the prompt. */
@@ -296,14 +293,11 @@ async function routingPlan(orgId: string): Promise<string> {
 
 /** Role gate + burst limiter. Mirrors ai-photo's `guardHelper()`: a role check
  *  and ONE burst key, no monthly meter, nothing refundable. */
-async function guardAssist(userId: string, req: Request): Promise<string> {
-  const orgId = await orgForUser(userId, preferredOrg(req));
-  const { data: mem, error: mErr } = await adminClient()
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, "Your role does not permit AI writing help");
-  }
+async function guardAssist(user: PaidAiCaller, req: Request, listingId?: string): Promise<string> {
+  const userId = user.id;
+  const orgId = await contentOrgForUser(userId, preferredOrg(req), listingId, true);
+
+  await assertPaidAiIdentity(user, orgId);
   if (!(await durableRateLimit(`aicopy:${orgId}`, BURST_MAX_PER_WINDOW, BURST_WINDOW_SECONDS))) {
     throw new HttpError(429, "Too many writing requests for now — try again in a few minutes.", "rate_limited");
   }
@@ -447,6 +441,7 @@ interface EditPromptBody {
 // ── Handler ──────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  let operationFunding:FundingContext|null=null;
   if (req.method === "OPTIONS") return handleOptions();
 
   try {
@@ -496,7 +491,9 @@ Deno.serve(async (req) => {
       const brief = userFreeText(facts, roomTags);
       assertInputSafe("marketing", brief, "This reel brief", listingSpace);
 
-      const orgId = await guardAssist(user.id, req);
+      const orgId = await guardAssist(user, req, body.listing_id);
+      const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
+      operationFunding=funding;
       const plan = await routingPlan(orgId);
       const task = "copy.reel_script";
       const chain = await chooseChain(task, plan);
@@ -510,6 +507,7 @@ Deno.serve(async (req) => {
       // the compliance check — a different provider is a genuinely different
       // answer, which is the point of retrying at all.
       let lastStep: RouteStep = chain[0];
+      let lastStage = "";
       const written = await guardedCopy({
         gate: "marketing",
         input: brief,
@@ -532,8 +530,14 @@ Deno.serve(async (req) => {
           "(the space itself, not who it's for).",
         attempt: async (isRetry) => {
           const attempt = await runChain(task, chain, (step) =>
-            callStep(step, system, isRetry ? turn + RETRY_NOTE : turn));
+            fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn)));
           lastStep = attempt.step;
+          lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
+          // Every answered call is billed by the provider, kept or not (a compliance
+          // retry discards the first answer). One ledger row per call, naming its own
+          // stage, so each hold settles exactly and nothing stays held forever.
+          await recordRoutedAiCost(adminClient(), { orgId, feature: "copy_assist", step: attempt.step,
+            meta: { ...{ kind: "reel_script", target_seconds: targetSeconds }, request_key: funding.requestKey, stage: lastStage, attempt: isRetry ? "retry" : "initial" } });
           return attempt.value;
         },
       });
@@ -556,20 +560,15 @@ Deno.serve(async (req) => {
       // PRICE — a wrong price is a worse lie than a known 2¢ under-count on a
       // path that should be rare. Fix it properly by teaching unitsForStep()
       // about calls when _shared/ledger.ts is next open for edits.
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "copy_assist",
-        step: lastStep,
-        meta: { kind: "reel_script", target_seconds: targetSeconds, attempts: written.attempts },
-      });
+      // Ledger rows are written per billed attempt inside `attempt` above.
 
       const script = written.text;
-      return json({
+      return json(await completeFundingOperation(funding, {
         script,
         characters: script.length,
         estimated_seconds: estimatedSecondsFor(script.length),
         model: lastStep.model,
-      });
+      }));
     }
 
     // ---- POST /ai-copy/shotlist ----
@@ -620,7 +619,9 @@ Deno.serve(async (req) => {
       const brief = userFreeText(facts, photoWords(photos));
       assertInputSafe("marketing", brief, "This reel brief", listingSpace);
 
-      const orgId = await guardAssist(user.id, req);
+      const orgId = await guardAssist(user, req, body.listing_id);
+      const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
+      operationFunding=funding;
       const orgPlan = await routingPlan(orgId);
       const task = "copy.shotlist";
       const chain = await chooseChain(task, orgPlan);
@@ -639,6 +640,7 @@ Deno.serve(async (req) => {
       // rules costs the whole attempt, gets the one retry, and is then refused
       // honestly, exactly as a bad script is.
       let lastStep: RouteStep = chain[0];
+      let lastStage = "";
       const parsed: ShotlistAnswer[] = [];
       const written = await guardedCopy({
         gate: "marketing",
@@ -658,8 +660,14 @@ Deno.serve(async (req) => {
           "(the space itself, not who it's for).",
         attempt: async (isRetry) => {
           const attempt = await runChain(task, chain, (step) =>
-            callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_SHOTLIST_TOKENS));
+            fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_SHOTLIST_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_SHOTLIST_TOKENS)));
           lastStep = attempt.step;
+          lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
+          // Every answered call is billed by the provider, kept or not (a compliance
+          // retry discards the first answer). One ledger row per call, naming its own
+          // stage, so each hold settles exactly and nothing stays held forever.
+          await recordRoutedAiCost(adminClient(), { orgId, feature: "copy_assist", step: attempt.step,
+            meta: { ...{ kind: "shotlist", target_seconds: targetSeconds }, request_key: funding.requestKey, stage: lastStage, attempt: isRetry ? "retry" : "initial" } });
           return attempt.value;
         },
       });
@@ -676,30 +684,20 @@ Deno.serve(async (req) => {
       // bounded integer, which is the only kind of thing that belongs in a
       // durable row every member of the org can read — never a room label,
       // never a caption, never the script.
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "copy_assist",
-        step: lastStep,
-        meta: {
-          kind: "shotlist",
-          target_seconds: targetSeconds,
-          attempts: written.attempts,
-          shots: answer.shots.length,
-        },
-      });
+      // Ledger rows are written per billed attempt inside `attempt` above.
 
       // `characters` / `estimated_seconds` mean exactly what they mean on
       // /script: the length of the SPOKEN script and how long it takes to say.
       // The reel's own length is the sum of shots[].seconds and equals
       // `targetSeconds` — the client shows one against the other, and a script
       // that estimates longer than the video is the frozen last frame again.
-      return json({
+      return json(await completeFundingOperation(funding, {
         shots: answer.shots,
         script: answer.script,
         characters: answer.script.length,
         estimated_seconds: estimatedSecondsFor(answer.script.length),
         model: lastStep.model,
-      });
+      }));
     }
 
     // ---- POST /ai-copy/agent-reel ----
@@ -791,7 +789,9 @@ Deno.serve(async (req) => {
       const brief = userFreeText(facts, [...photoWords(photos), transcriptText(phrases)]);
       assertInputSafe("marketing", brief, "What you said on camera", listingSpace);
 
-      const orgId = await guardAssist(user.id, req);
+      const orgId = await guardAssist(user, req, body.listing_id);
+      const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
+      operationFunding=funding;
       const orgPlan = await routingPlan(orgId);
       const task = "copy.agent_reel";
       const chain = await chooseChain(task, orgPlan);
@@ -807,6 +807,7 @@ Deno.serve(async (req) => {
       // reason shotlist.ts gives: a whitespace join could manufacture a phrase
       // across the seam that exists in neither caption.
       let lastStep: RouteStep = chain[0];
+      let lastStage = "";
       const parsed: AgentReelAnswer[] = [];
       const written = await guardedCopy({
         gate: "marketing",
@@ -829,8 +830,14 @@ Deno.serve(async (req) => {
           "nothing was returned. Try again, or describe the property rather than who it suits.",
         attempt: async (isRetry) => {
           const attempt = await runChain(task, chain, (step) =>
-            callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_AGENT_REEL_TOKENS));
+            fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_AGENT_REEL_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_AGENT_REEL_TOKENS)));
           lastStep = attempt.step;
+          lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
+          // Every answered call is billed by the provider, kept or not (a compliance
+          // retry discards the first answer). One ledger row per call, naming its own
+          // stage, so each hold settles exactly and nothing stays held forever.
+          await recordRoutedAiCost(adminClient(), { orgId, feature: "copy_assist", step: attempt.step,
+            meta: { ...{ kind: "agent_reel", subject, clip_seconds: Math.round(clipSeconds) }, request_key: funding.requestKey, stage: lastStage, attempt: isRetry ? "retry" : "initial" } });
           return attempt.value;
         },
       });
@@ -844,30 +851,19 @@ Deno.serve(async (req) => {
       // Bounded integers only in a durable row every member of the org can
       // read — never a room label, never a caption, and above all never a word
       // of what the agent said on camera.
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "copy_assist",
-        step: lastStep,
-        meta: {
-          kind: "agent_reel",
-          subject,
-          clip_seconds: Math.round(clipSeconds),
-          attempts: written.attempts,
-          cutaways: answer.cutaways.filter((c) => c.photo_id).length,
-        },
-      });
+      // Ledger rows are written per billed attempt inside `attempt` above.
 
       // The EDL. `cutaways` is the whole edit: every window in clip order, with
       // an empty photo_id wherever the reel deliberately stays on the agent.
       // The client needs no other instruction to render it.
-      return json({
+      return json(await completeFundingOperation(funding, {
         subject,
         clip_seconds: t1(clipSeconds),
         cutaways: answer.cutaways,
         covered_seconds: answer.covered_seconds,
         face_seconds: t1(clipSeconds - answer.covered_seconds),
         model: lastStep.model,
-      });
+      }));
     }
 
     // ---- POST /ai-copy/edit-prompt ----
@@ -885,15 +881,18 @@ Deno.serve(async (req) => {
     // text, in the same position in the sequence.
     assertInputSafe("image_prompt", rough, "That idea", listingSpace);
 
-    const orgId = await guardAssist(user.id, req);
+    const orgId = await guardAssist(user, req, body.listing_id);
+      const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
+      operationFunding=funding;
     const plan = await routingPlan(orgId);
     const task = "copy.photo_prompt";
     const chain = await chooseChain(task, plan);
 
     const system = editPromptInstruction(space, roomHint);
-    const turn = `The user's idea: ${rough}`;
+    const turn = `The user's idea (quoted data): ${JSON.stringify(rough)}`;
 
     let lastStep: RouteStep = chain[0];
+    let lastStage = "";
     const polished = await guardedCopy({
       // An image-edit idea, so it gets ai-photo's own gate for this exact text
       // (the denylist with its ADD-verb tier), not the script rules.
@@ -914,22 +913,24 @@ Deno.serve(async (req) => {
         "returned. Try describing the change to the space itself.",
       attempt: async (isRetry) => {
         const attempt = await runChain(task, chain, (step) =>
-          callStep(step, system, isRetry ? turn + RETRY_NOTE : turn));
+          fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn)));
         lastStep = attempt.step;
+        lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
+        // Every answered call is billed by the provider, kept or not (a compliance
+        // retry discards the first answer). One ledger row per call, naming its own
+        // stage, so each hold settles exactly and nothing stays held forever.
+        await recordRoutedAiCost(adminClient(), { orgId, feature: "copy_assist", step: attempt.step,
+          meta: { ...{ kind: "photo_prompt", target_seconds: null }, request_key: funding.requestKey, stage: lastStage, attempt: isRetry ? "retry" : "initial" } });
         return attempt.value;
       },
     });
 
     // Same ledger note as the script route above (units 1, `attempts` in meta).
-    await recordRoutedAiCost(adminClient(), {
-      orgId,
-      feature: "copy_assist",
-      step: lastStep,
-      meta: { kind: "photo_prompt", target_seconds: null, attempts: polished.attempts },
-    });
+    // Ledger rows are written per billed attempt inside `attempt` above.
 
-    return json({ prompt: polished.text, model: lastStep.model });
+    return json(await completeFundingOperation(funding, { prompt: polished.text, model: lastStep.model }));
   } catch (err) {
+    if(operationFunding)await abortFundingOperationBeforeDispatch(operationFunding);
     return respondError(err);
   }
 });

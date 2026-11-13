@@ -54,7 +54,7 @@ function KitSession({ services, workspace, listingId }: { services: StudioServic
     {open && <div className="listing-kit-options">
       {busy === "loading" && <p role="status">Checking saved property materials…</p>}
       {snapshot && <>
-        <p className="lw-help">Includes saved property details{snapshot.script.trim() ? " and script" : ""}. Unsaved field edits stay where you left them. {snapshot.published ? "Your latest published tour links and QR codes are included." : "No tour has been published, so this kit will have no tour links or QR codes."}</p>
+        <p className="lw-help">Saved details{snapshot.script.trim() ? " and script" : ""} are included. Unsaved edits stay here. {snapshot.published ? "Links and QR are checked." : "No public tour is saved."}</p>
         <div className="listing-kit-tools"><strong>{selected.length} of {snapshot.items.length} media items selected</strong><button disabled={!!busy} onClick={() => { setSelected([]); setReviewed(false); setNotice(""); }}>Clear selection</button><button disabled={!!busy} onClick={() => { setSelected(snapshot.items.filter(item => item.kind === "photo").slice(0, KIT_MAX_SELECTED).map(item => item.id)); setReviewed(false); setNotice(""); }}>Select gallery photos</button></div>
         <p className="lw-help">Choose up to 40 items. Altered photos include their paired original automatically. Videos stay unselected until you choose them. Maximum 256 MB per kit and 128 MB per file.</p>
         {snapshot.items.length ? <div className="listing-kit-grid">{snapshot.items.map(item => <article className="listing-kit-item" key={item.id}>

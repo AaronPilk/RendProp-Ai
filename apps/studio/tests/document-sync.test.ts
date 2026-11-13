@@ -18,3 +18,12 @@ test('lost earlier save reconciles then writes latest queued edits without a fal
 test('queue snapshots mutable arrays so later caller edits cannot change the requested version',async()=>{const f=fixture(),a=new DocumentSync(f.services,ORG,'planner',()=>{});await a.open();const payload={items:[{title:'Original'}]};a.queue(payload);payload.items[0].title='Mutated outside queue';await a.flush();assert.deepEqual(f.remote()?.payload,{items:[{title:'Original'}]});a.dispose();});
 test('remote changes surface on focus checks while local work remains intact',async()=>{const f=fixture(),a=new DocumentSync(f.services,ORG,'planner',()=>{});await a.open();f.set(doc(1,{title:'From phone'}));await a.checkRemote();assert.equal(a.state,'conflict');assert.equal(f.writes(),0);a.dispose();});
 test('undo to old saved value during uncertain save still syncs that deliberate undo',async()=>{const f=fixture();f.set(doc(1,{title:'Original'}));const a=new DocumentSync(f.services,ORG,'planner',()=>{});await a.open();f.lose();a.queue({title:'New title'});await a.flush();a.queue({title:'Original'});assert.equal(a.hasUnsavedWork,true);await a.retry();assert.equal(f.remote()?.payload.title,'Original');assert.equal(f.writes(),2);assert.equal(a.hasUnsavedWork,false);a.dispose();});
+test('explicit write refusals can preserve the prior editor; network and server failures stay uncertain',async()=>{
+ for(const status of [400,401,403,404,409,413,422,500,503,undefined]){
+  const refusal=status===undefined?new Error('Reply lost'):new StudioError('request-failed','Save refused',status);
+  const services={api:async(_path:string,options:{method?:string})=>{if(options.method==='POST')throw refusal;return{document:null};}} as StudioServices;
+  const writer=new DocumentSync(services,ORG,'planner',()=>{});await writer.open();writer.queue({title:'Keep this local edit'});await writer.flush();
+  assert.equal(writer.writeRejection,status!==undefined&&status<500?refusal:null,`HTTP ${status??'unknown'}`);
+  assert.equal(writer.confirmedRevision,0);assert.equal(writer.hasUnsavedWork,true);writer.dispose();
+ }
+});

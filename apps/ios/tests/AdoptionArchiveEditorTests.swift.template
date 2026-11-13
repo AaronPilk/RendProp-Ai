@@ -1,0 +1,135 @@
+// Closed dependencies; the editor actions, contact-card store and adoption
+// archive above are extracted verbatim from production Swift by the runner.
+final class AuthStore {
+    static let shared = AuthStore()
+    var userID: String?
+    var syncSessionRevision: UInt64 = 1
+}
+enum WorkspaceContext {
+    static var selectedOrgID: UUID?
+    static func owner() -> UUID? { AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) }
+    static var storagePrefix: String { "closed." + (AuthStore.shared.userID ?? "signed-out") + "." + (selectedOrgID?.uuidString ?? "local") + "." }
+}
+enum ProfileLogoStore { static func presentationHostedURL(prefix: String) -> String? { nil } }
+enum UserFacingError { static func message(_ error: Error, fallback: String) -> String { error.localizedDescription } }
+extension Notification.Name { static let rendpropCloudBrandUpdated = Notification.Name("closed.profile.updated") }
+struct UIImage {
+    let bytes: Data
+    init?(data: Data) { guard !data.isEmpty else { return nil }; bytes = data }
+}
+@MainActor final class ClosedCardAPI {
+    var receipt: PersonalCardReceipt
+    var reads = 0, writes = 0
+    var onRead: (() -> Void)?
+    var failSave = false
+    init(receipt: PersonalCardReceipt) { self.receipt = receipt }
+    func personalCard() async throws -> PersonalCardReceipt { reads += 1; await Task.yield(); onRead?(); return receipt }
+    func savePersonalCard(_ fields: [String:String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt {
+        writes += 1; await Task.yield()
+        if failSave { throw NSError(domain:"closed-save",code:500) }
+        precondition(expected == receipt, "Explicit archived Save uses the current named baseline")
+        var merged = receipt.publicCard ?? [:]
+        for (key,value) in fields { if value.isEmpty { merged.removeValue(forKey:key) } else { merged[key] = value } }
+        receipt = PersonalCardReceipt(ok:true,userID:receipt.userID,spaceType:spaceType,publicCard:merged)
+        return receipt
+    }
+}
+// EDITOR SUPPORT
+@MainActor final class ClosedArchiveEditor {
+    struct Model { let api: ClosedCardAPI }
+    let model: Model
+    let editingContext = ProfileShareContext.current
+    let editingWorkspace = WorkspaceContext.storagePrefix
+    let editingType = SpaceType.current
+    var contextInvalidated = false, loadingDetails = false, savingDetails = false
+    var name = "Named card", brokerage = "", phone = "", email = "", website = "", instagram = "", linkedin = "", tiktok = ""
+    var primaryTypeRaw = "real_estate"
+    var savedFields: [String:String] = [:]
+    var personalBaseline: PersonalCardReceipt?
+    var archivedReviews: [AdoptionOwnedIdentity.Review] = []
+    var loadedArchiveReview: AdoptionOwnedIdentity.Review?
+    var archivePortraitIsSelected = false
+    var headshot: UIImage?
+    var detailsMessage: String?
+    init(api: ClosedCardAPI) { model = Model(api:api) }
+// END EDITOR SUPPORT
+}
+// ACTUAL BODY TESTS
+extension AdoptionOwnedIdentityTests {
+    @MainActor static func exerciseActualArchiveEditor(root: URL) async throws {
+        let d = FixturePreferences.defaults
+        d.set("real_estate",forKey:"space.type")
+        func fixtureEditor(remoteType: String? = "real_estate") throws -> (ClosedArchiveEditor,AdoptionOwnedIdentity.Review,AdoptionLocalBindings,UUID,ClosedCardAPI) {
+            var (binding,id,org) = try fixture()
+            binding.personalCardDisposition = "destination_preserved"
+            try restore(binding,id:id,card:["name":"Named card"])
+            AuthStore.shared.userID = binding.destinationUserID.uuidString.lowercased()
+            AuthStore.shared.syncSessionRevision += 1
+            WorkspaceContext.selectedOrgID = org
+            d.set(true,forKey:AdoptionOwnedIdentity.prefix(binding.destinationUserID)+"migrated")
+            d.set("Named card",forKey:AdoptionOwnedIdentity.fieldKey(binding.destinationUserID,type:"real_estate",field:"name"))
+            let review = AdoptionOwnedIdentity.reviews(owner:binding.destinationUserID,type:"real_estate",defaults:d).first!
+            let api = ClosedCardAPI(receipt:.init(ok:true,userID:binding.destinationUserID,spaceType:remoteType,publicCard:["name":"Named card"]))
+            return (ClosedArchiveEditor(api:api),review,binding,id,api)
+        }
+        let (editor,review,binding,_,api) = try fixtureEditor()
+        let before = AgentCard.current.brandFields
+        await editor.reviewSavedDetails(review)
+        check(editor.name == "Guest real_estate" && editor.loadedArchiveReview == review, "Actual Review opens the guest archive in the editor")
+        check(AgentCard.current.brandFields == before && api.writes == 0, "Actual Review never changes the named card or posts automatically")
+        check(editor.archivePortraitIsSelected, "Actual Review retains explicit archived portrait provenance")
+        let newer = UIImage(data:Data("newer explicitly chosen portrait".utf8))!
+        editor.choosePreparedPortrait(newer)
+        await editor.saveDetails()
+        let targetPortrait = AdoptionOwnedIdentity.portrait(binding.destinationUserID,type:"real_estate",documents:root)
+        check(try! Data(contentsOf:targetPortrait) == newer.bytes, "Review then choose then Save preserves the newer portrait")
+        check(try! Data(contentsOf:AdoptionOwnedIdentity.portrait(binding.sourceUserID,type:"real_estate",documents:root)) == Data("synthetic portrait bytes".utf8), "Explicit named portrait never destroys the guest original")
+        check(api.writes == 1 && AgentCard.current.name == "Guest real_estate", "Actual explicit Save commits the reviewed text to the current named card")
+        check(AdoptionOwnedIdentity.reviews(owner:binding.destinationUserID,type:"real_estate",defaults:d).isEmpty, "Successfully reviewed archive no longer prompts again")
+        check(!PendingReelRequest.hasUnreadableAdoptionMetadata(.init(listingID:UUID(),serverListingID:nil,owner:binding.destinationUserID.uuidString.lowercased(),workspace:nil)), "Valid reviewed status does not masquerade as a corrupt adoption journal")
+
+        let (otherIndustry,otherReview,otherBinding,_,otherAPI) = try fixtureEditor(remoteType:"retail")
+        await otherIndustry.reviewSavedDetails(otherReview)
+        check(otherIndustry.primaryTypeRaw == "retail", "Archive Review refreshes the named hosted industry before Save")
+        await otherIndustry.saveDetails()
+        check(otherAPI.writes == 0 && otherIndustry.personalBaseline?.spaceType == "retail", "Different hosted industry requires explicit Use on hosted tours before replacement")
+        check(AgentCard.current.name == "Guest real_estate", "Different-industry archive remains useful as a local reviewed card")
+        check(AdoptionOwnedIdentity.reviews(owner:otherBinding.destinationUserID,type:"real_estate",defaults:d).isEmpty, "Successful local-only Save marks its archive reviewed")
+
+        let (nilIndustry,nilReview,_,_,_) = try fixtureEditor(remoteType:nil)
+        await nilIndustry.reviewSavedDetails(nilReview)
+        check(nilIndustry.primaryTypeRaw.isEmpty, "Fresh nil hosted industry clears stale primary state")
+
+        let (failed,failedReview,failedBinding,_,failedAPI) = try fixtureEditor()
+        await failed.reviewSavedDetails(failedReview)
+        failed.name = "Reviewed edit survives a failed Save"
+        failedAPI.failSave = true
+        await failed.saveDetails()
+        check(failed.loadedArchiveReview == failedReview && failed.archivePortraitIsSelected, "Failed Save retains archive review and portrait provenance for retry")
+        check(AdoptionOwnedIdentity.isCurrent(failedReview,owner:failedBinding.destinationUserID,type:"real_estate",defaults:d), "Failed hosted Save keeps the backup review visible")
+        check(AgentCard.current.name == "Reviewed edit survives a failed Save" && (try! PersonalCardStore.pending(owner:failedBinding.destinationUserID)) != nil, "Failed hosted Save retains deliberate named local edit and exact pending draft")
+        failedAPI.failSave = false
+        await failed.saveDetails()
+        check(failedAPI.writes == 2 && failed.loadedArchiveReview == nil, "Retry completes the explicit draft without losing the archive prematurely")
+
+        for mode in ["session", "owner", "workspace", "industry", "typed", "generation", "operation", "wrong-receipt"] {
+            let (held,heldReview,heldBinding,_,heldAPI) = try fixtureEditor()
+            heldAPI.onRead = {
+                switch mode {
+                case "session": AuthStore.shared.syncSessionRevision += 1
+                case "owner": AuthStore.shared.userID = UUID().uuidString.lowercased()
+                case "workspace": WorkspaceContext.selectedOrgID = UUID()
+                case "industry": d.set("retail",forKey:"space.type")
+                case "typed": held.name = "Newer typed details"
+                case "generation": d.set(AgentCard.personalReadVersion+1,forKey:AgentCard.personalPrefix+"generation")
+                case "operation": d.set(Data("corrupt replacement operation".utf8),forKey:AdoptionOwnedIdentity.key(heldBinding))
+                default: heldAPI.receipt = .init(ok:true,userID:UUID(),spaceType:"real_estate",publicCard:["name":"Wrong person"])
+                }
+            }
+            await held.reviewSavedDetails(heldReview)
+            check(held.loadedArchiveReview == nil && heldAPI.writes == 0, "Held Review rejects changed context without activation or POST: " + mode)
+            check(held.name == (mode == "typed" ? "Newer typed details" : "Named card"), "Held Review never replaces newer editor text: " + mode)
+            d.set("real_estate",forKey:"space.type")
+        }
+    }
+}

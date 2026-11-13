@@ -1,0 +1,280 @@
+{
+  "kind": "Photographer client delivery \u2014 production and internal TestFlight receipt",
+  "verifiedAt": "2026-10-01T23:51:17.263408+00:00",
+  "source": {
+    "branch": "feat/photographer-client-delivery-20261001",
+    "runtimeCommit": "971deb085f25f8f8b4ed34e0097e1c62e59a83f0",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/16",
+    "pullRequestBase": "fix/room-tour-usability-20261001",
+    "draftAtDelivery": true,
+    "note": "Delivery documentation is a later docs-only commit. Archived/deployed runtime source remains the exact SHA above. Shared branches were not force-pushed."
+  },
+  "ci": {
+    "sourceCommit": "971deb085f25f8f8b4ed34e0097e1c62e59a83f0",
+    "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36940470745",
+    "passedJobs": 12,
+    "requiredJobNames": [
+      "Cloudflare Worker (tour-host)",
+      "Cloudflare Worker (upload-gateway, deno check + tests)",
+      "Disposable PostgreSQL publication, invariant and deletion regression",
+      "Offline audit evidence, consent and adoption source gates",
+      "Offline reel-style preservation and blind-evaluation contracts",
+      "Python workers (render, spatial, training adapter)",
+      "Secret scan",
+      "Studio contracts, build and property workflows (offline)",
+      "Supabase edge functions (deno check + tests)",
+      "Supabase migrations (fresh replay + invariants)",
+      "Web parity inventory and design-token contracts (offline)",
+      "iOS static gates"
+    ],
+    "pullRequestMergeCommit": "73e5636c444f1b57641c1d2d9e971768b2ab53ba",
+    "mergeAndSourceTree": "775411450d6547e861f6eef6c6cf9c6084b3d7f4",
+    "mergeTreeMatchesRuntimeSource": true,
+    "earlierFailedRuns": [
+      {
+        "source": "17f42b7",
+        "run": 36939229209,
+        "reason": "New parity/API inventory and adoption harness registrations omitted; corrected in a8e37a6."
+      },
+      {
+        "source": "a8e37a6",
+        "run": 36939746735,
+        "reason": "Fixed-delay keyboard playback timing assertion failed; changed to bounded actual media-clock advancement, preserving stall failure. Exact CI scheduling cause unproven."
+      }
+    ]
+  },
+  "migration": {
+    "sourceFile": "services/supabase/migrations/20261001222809_photographer_client_delivery.sql",
+    "sourceVersion": "20261001222809",
+    "sourceSHA256": "8cba2047d6a46bdb57ff343dd1987eee2c95b42e9c986aa0ec9d610b1422b14c",
+    "liveLedgerVersion": "20261001233128",
+    "liveLedgerName": "photographer_client_delivery",
+    "metadataVerifiedAt": "2026-10-01T23:43:01.860040Z",
+    "checks": {
+      "all_six_triggers_match": true,
+      "profile_preference_contract": true,
+      "both_tables_deny_all_clients": true,
+      "notification_category_contract": true,
+      "all_19_function_contracts_match": true,
+      "live_allocated_migration_recorded": true
+    },
+    "functionBodiesCompared": 19,
+    "triggerContractsCompared": 6,
+    "denyAllTables": 2,
+    "note": "Source timestamp and allocated production ledger timestamp differ. Do not reapply the migration under its source filename."
+  },
+  "backend": {
+    "projectRef": "ymgqpbnjpztwjsyvceld",
+    "selectedFunctions": {
+      "me": {
+        "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
+        "version": 43,
+        "verifyJwt": true,
+        "matchedRuntimeFiles": 17,
+        "stagedTypeOnlyOutsideRuntime": []
+      },
+      "listings": {
+        "id": "04ed7098-03d4-4da2-a77c-8998a8402ce1",
+        "version": 37,
+        "verifyJwt": true,
+        "matchedRuntimeFiles": 10,
+        "stagedTypeOnlyOutsideRuntime": []
+      },
+      "uploads": {
+        "id": "202a9033-a7c7-491c-bdf0-991720548b63",
+        "version": 45,
+        "verifyJwt": true,
+        "matchedRuntimeFiles": 10,
+        "stagedTypeOnlyOutsideRuntime": []
+      },
+      "leads": {
+        "id": "26e4ad1a-8349-46cc-b77e-232bd62a7a1d",
+        "version": 36,
+        "verifyJwt": false,
+        "matchedRuntimeFiles": 9,
+        "stagedTypeOnlyOutsideRuntime": []
+      },
+      "notify": {
+        "id": "a7e83740-121c-40e2-8418-04d9133f5d48",
+        "version": 11,
+        "verifyJwt": true,
+        "matchedRuntimeFiles": 9,
+        "stagedTypeOnlyOutsideRuntime": []
+      },
+      "studio": {
+        "id": "48930645-bb3e-481a-a615-501f300e4dee",
+        "version": 15,
+        "verifyJwt": true,
+        "matchedRuntimeFiles": 44,
+        "stagedTypeOnlyOutsideRuntime": [
+          "_shared/providers/types.ts",
+          "studio/context.ts"
+        ]
+      },
+      "tours": {
+        "id": "513c3707-3d47-4411-87e0-33e40259fa23",
+        "version": 44,
+        "verifyJwt": true,
+        "matchedRuntimeFiles": 11,
+        "stagedTypeOnlyOutsideRuntime": [
+          "spatial/contract.ts"
+        ]
+      },
+      "ai-video": {
+        "id": "9dd26656-ea6d-454d-bb29-951a7e03b3dd",
+        "version": 45,
+        "verifyJwt": true,
+        "matchedRuntimeFiles": 29,
+        "stagedTypeOnlyOutsideRuntime": []
+      }
+    },
+    "uniqueStagedSourceFiles": 93,
+    "allSelectedRuntimeSourcesHashMatch": true,
+    "unauthorizedNegativeProbesPassed": 16,
+    "note": "leads keeps its public submission route with gateway JWT off; private routes verify identity and workspace. Adopt handler unchanged; its existing transaction RPC changed in the migration."
+  },
+  "web": {
+    "studio": {
+      "origin": "https://studio.rendprop.com",
+      "workerVersion": "1cc57a97-e685-4c7c-aae1-641901a0087d",
+      "readAt": "2026-10-01T23:41:49.247Z",
+      "servedFiles": 31,
+      "servedFilesHashMatch": true,
+      "spaFallback": true,
+      "bundleFiles": 28,
+      "gzipBytes": 330202,
+      "gzipBudgetBytes": 350000,
+      "initialGzipBytes": 136146,
+      "initialBudgetBytes": 160000,
+      "createGzipBytes": 217443,
+      "createBudgetBytes": 260000,
+      "accountLoginVerified": false,
+      "robotsCrawlBlockingVerified": false
+    },
+    "publicTourHost": {
+      "deploymentID": "4c2a275c-8b6e-4c45-8e2d-8481dc89fcb0",
+      "version": "4ad3ab1c-0709-442b-bbf9-6426a5fb0bb2",
+      "percentage": 100,
+      "verifiedAt": "2026-10-01T23:44:47.114Z",
+      "demoRendererPagesVerified": 2,
+      "staticLegalHealthRoutesVerified": 5,
+      "rendererEngineAndCSSHashMatch": true,
+      "fullRemoteWorkerSourceHashVerified": false,
+      "liveClientListingFlowVerified": false
+    }
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "39",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "createdAt": "2026-10-01T23:24:20+00:00",
+    "scheme": "RendpropSpatialTestFlight",
+    "explicitArchiveBuildOverride": "39",
+    "sourceInputs": 203,
+    "compiledTrackedSwiftInputs": 136,
+    "compiledGeneratedSwiftInputs": 1,
+    "signatureVerified": true,
+    "executableSHA256": "89fcb435c164a4de6106ac13680da501d720218d5bfbaaac3e6c93c20f6c528a",
+    "arm64UUID": "E1B0FD6A-C4ED-341B-BD25-98A0FC5E0B51",
+    "allUUIDsMatch": true,
+    "derivedDataAndArchiveDSYMBytesMatch": true,
+    "note": "Separate DerivedData app product is absent after archiving; no separate executable byte-match claim. Previous source archives were retained but never uploaded."
+  },
+  "upload": {
+    "attempts": 1,
+    "internalOnly": true,
+    "startedAt": "2026-10-01T23:32:48.786386+00:00",
+    "finishedAt": "2026-10-01T23:34:12.694065+00:00",
+    "exitCode": 0
+  },
+  "appleReadback": {
+    "checkedAt": "2026-10-01T23:41:47.609548+00:00",
+    "available": true,
+    "buildID": "f75a04c3-27cb-4509-8836-cb530fb3562c",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-10-01T16:34:58-07:00",
+    "usesNonExemptEncryption": false,
+    "minOsVersion": "16.0",
+    "internalBuildState": "IN_BETA_TESTING",
+    "existingGroup": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    },
+    "note": "Apple does not expose the local archive binary hash. Immutable source/archive/single-upload receipts bind the submitted artifact."
+  },
+  "testingInstructions": {
+    "verifiedAt": "2026-10-01T23:42:56.178547+00:00",
+    "buildID": "f75a04c3-27cb-4509-8836-cb530fb3562c",
+    "version": "1.0.3",
+    "build": "39",
+    "locale": "en-US",
+    "readbackVerified": true,
+    "sourceCommit": "971deb085f25f8f8b4ed34e0097e1c62e59a83f0",
+    "text": "Build 39 \u2014 photographer / videographer client listings.\n\nIn real estate onboarding choose Agent or Photographer / videographer. Existing accounts can change this in Settings \u2192 Real estate workflow.\n\nCreate a listing, then open Listing contact. Choose My client and enter the realtor/business name, brokerage, phone, public email and client photo. A separate private email can receive inquiries. Save before publishing. My account explicitly uses your own card instead.\n\nPublish two of your own test listings with different contacts. Verify each marketing page shows only its intended client. Hide Rendprop logos and app promotions if desired; the service domain/privacy disclosure remain. The MLS link omits contacts and inquiry forms.\n\nOpen the same listing in Studio \u2192 Create & publish \u2192 Details. Check the saved card, edit it, then reopen on the phone. Conflicting or unsaved changes must be resolved before publishing; interrupted saves must retain the draft and reuse a successful photo upload.\n\nSubmit an inquiry on your own test listing using an email you control. Check Leads and the intended inbox. The inquiry stays in the photographer account; Email sent means provider acceptance, not guaranteed inbox placement. Review the current recipient and explicitly resend once. Older inquiries use Send to client. Pending sends cancel when contact routing is disabled or changed; an already dispatched email cannot be recalled.\n\nCamera and actual cross-device/inbox behavior require your phone and controlled test accounts. Existing guided-room capture improvements remain included; room tours are still local exports and 3D reconstruction remains disabled.\n"
+  },
+  "softwareVerification": {
+    "studioUnitTests": 441,
+    "clientNativeChecks": 60,
+    "existingAdoptionChecks": 16,
+    "noncameraNavigationUITests": 1,
+    "publicBrowserAssertions": 150,
+    "targetedBackendTests": 123,
+    "actualSQLAssertionsFresh": 61,
+    "actualSQLAssertionsReplay": 61,
+    "overlappingSQLConcurrencyRacesPassed": true,
+    "offlineReleaseHelperNegativeControls": 15,
+    "unsignedNormalIPhoneCompile": "passed",
+    "signedLabIPhoneArchive": "passed"
+  },
+  "securityAdvisor": {
+    "beforeWarningEntries": 26,
+    "afterWarningEntries": 26,
+    "beforeWarningOrErrorFindingIdentities": 47,
+    "afterWarningOrErrorFindingIdentities": 47,
+    "newErrorOrWarningFindingIdentities": 0,
+    "existingWarningsRemain": true,
+    "denyAllTableInfoCountBefore": 40,
+    "denyAllTableInfoCountAfter": 42
+  },
+  "productionScope": {
+    "publicAppStoreReviewSubmitted": false,
+    "publicAppStoreVersionAttached": false,
+    "subscriptionPricesChanged": false,
+    "testersOrGroupsChanged": false,
+    "spatialActivated": false,
+    "paidProviderCalls": 0,
+    "realInquiryEmailsSentByVerification": 0
+  },
+  "privateEvidenceHashes": {
+    "ci-success.json": "5a3fb0a82a06f0b307b9bc3c10b056c31dea16a915fc9550168925b84217338d",
+    "ci-final-merge-tree-binding.json": "b0c1bb4ce7a231006656ff650af437f019066c739991220aef6f68c5db32f265",
+    "backend-deployment-receipt.json": "da16ba7a3edeed95d9e0bb574df36f8239d439965939628d6aa619b01a2a13e1",
+    "schema-final-readback.json": "fbbc6330aab9c3081c1c3c64087025eb561978a6a6d4fdf6f5c6528e7aeddf82",
+    "studio-deployed-readback.json": "9703b30658afd9ef934807ba86b96818f6de92c0fb5e210a38a97faac68f5433",
+    "live-release-readback.json": "fa8d0e54e4492305b5b40ca0acedfd176741e5a2c3764049ef37eebf513be919",
+    "advisors-comparison.json": "835bfad07bf6424690e623d9d02714c4949404933e7eddbf634c31af85e6bc56",
+    "advisors-finding-identity-verification.json": "984e3f65c8894c8efb466db5c1ab87cb3708594d57e22359dc58718a9d4ad80f",
+    "testflight39/source-manifest.json": "1664c8854373d442d38d6749dbda7ef8f4f3fb3bfb589dd4a2da5d0d10d78fba",
+    "testflight39/archive-source-binding.json": "f2b0701001bdbcf7ec767c6d27a927474cb033f65d41fd69218d9d3be2633e26",
+    "testflight39/archive-independent-preflight.json": "9a7548895351c84547d9172f6ed6e89c88a638dcaa5ce574613ed41166e0545b",
+    "testflight39/archive-review.json": "9d8c47b1f1507744a95301bf356008a87ee25af9422155cd4cd11dc7cf34f88a",
+    "testflight39/independent-helper-source-review.json": "5aa4d801bf86122d73f847e91f9f00d619597ba70ee19db157bfd2d71e359968",
+    "testflight39/owner-release-gate.json": "890d57cc2d1e0e247d37762733893e3461bf0f79cd35cae6ab3a94874365e7fd",
+    "testflight39/upload-attempt.json": "7aa9ec8094f5f67517c711ab7b2ab9c0c3064f00616e794d186e58df02c0d7b7",
+    "testflight39/upload-result.json": "0ab248e592f8a7520281c53642bc3ecb4682cfbb6af72aa15bbbd84e8fede0e6",
+    "testflight39/testflight-ready.json": "28541873a60be148534f86ddd92980ba588406ac4cbd1e24982bce42dd01f098",
+    "testflight39/test-notes-receipt.json": "c417c405d8df63f8f40e9c1956024f26b0fe1757ca695cf891a77274dc373f20"
+  },
+  "limitations": [
+    "Actual cross-device contact/headshot sync and phone publication require owner-controlled acceptance.",
+    "Provider acceptance is not inbox delivery. Verify a permitted inquiry in the intended inbox, photographer account and confirmed resend.",
+    "Hiding logos and app promotions does not hide the rendprop.com domain or truthful privacy disclosure.",
+    "Physical camera/capture and room-tour quality remain owner tests; this release does not enable 3D reconstruction."
+  ]
+}

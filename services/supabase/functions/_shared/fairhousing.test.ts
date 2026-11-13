@@ -33,6 +33,23 @@ function refusal(fn: () => void): HttpError | null {
 }
 
 const NON_HOUSING = ["venue", "restaurant", "retail", "fitness", "other"];
+
+Deno.test("existing copy guards screen compatibility characters, accents and invisible separators", () => {
+  for (const copy of ["ａｄｕｌｔｓ ｏｎｌｙ", "adults\u200b only", "idéál for families", "family\u00a0friendly"])
+    assertThrows(() => assertMarketingCopy(copy, "This script", "real_estate"), HttpError);
+  assertThrows(() => assertFairHousing("add a \u200bｆａｍｉｌｙ", "This edit", "real_estate"), HttpError);
+  assertMarketingCopy("A sunlit living room and a step-free entrance", "This script", "real_estate");
+});
+
+Deno.test("bounded multilingual copy rules preserve industry scope", () => {
+  for (const copy of ["Ideal para familias", "Apenas para adultos", "Proibido crianças", "Pas d’enfants", "Idéal pour les familles", "Solo cristianos"])
+    assertThrows(() => assertMarketingCopy(copy, "This script", "real_estate"), HttpError);
+  for (const industry of NON_HOUSING) {
+    assertMarketingCopy("Apenas para adultos", "This script", industry);
+    assertMarketingCopy("Idéal pour les familles", "This script", industry);
+    assertThrows(() => assertMarketingCopy("Sin extranjeros", "This script", industry), HttpError);
+  }
+});
 const HOUSING_MARKERS = ["HUD", "housing", "listing", "§3604", "buyer", "resident", "neighborhood", "property"];
 
 function assertNoHousingWording(message: string) {
@@ -204,4 +221,21 @@ Deno.test("HttpError shape is unchanged: 400 unsupported_edit with the term in d
   assertEquals(err.status, 400);
   assertEquals(err.code, "unsupported_edit");
   assertEquals((err.details as { term?: string } | undefined)?.term, "people");
+});
+
+Deno.test("image prompts: furniture and room words that contain a people or pet word are not refused; real people and pets still are", () => {
+  for (const space of ["real_estate", "restaurant", null]) {
+    for (const ok of [
+      "add a couple of armchairs by the window", "stage as a guest bedroom with a queen bed", "add a guest bed and a desk",
+      "stage a kids' room with bunk beds", "add a kid's desk and toys", "put a crib in the baby room", "furnish the family room with a sectional",
+      "add a dog bed in the corner", "place a cat tree near the window", "stage it like a model home", "make it look like a man cave with a leather sofa",
+      "add twin beds for a girls bedroom", "add a pet bowl by the door",
+    ]) assertEquals(checkFairHousing(ok, space), null, ok);
+    for (const refused of [
+      "add a couple of kids at the counter", "add a couple sitting on the sofa", "add a family in the living room", "put a dog on the patio",
+      "show guests arriving", "add a baby in the crib", "add a man reading in the chair", "add family photos of the kids on the wall",
+    ]) assertEquals(checkFairHousing(refused, space)?.tier, "add", refused);
+  }
+  // The always-blocked tier is untouched by the furnishing words.
+  assertEquals(checkFairHousing("stage a guest bedroom in a family-friendly neighborhood", "real_estate")?.tier, "always");
 });

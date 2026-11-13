@@ -43,7 +43,13 @@ import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts"
 import { adminClient, isServiceRole } from "../_shared/supabase.ts";
 import * as apns from "./apns.ts";
 import * as email from "./email.ts";
-import { deliverEmail, deliverPush, type DeviceRow, type OutboxRow } from "./deliver.ts";
+import { deliverEmail, deliverPush, pushNeedsEmailFallback, type DeviceRow, type OperationalEmailState, type OutboxRow } from "./deliver.ts";
+import { prepareClientMessage } from "./client-delivery.ts";
+import { hostingNoticeCurrent } from "../_shared/hosting-retention.ts";
+import { opsAlertCurrent } from "../_shared/ops-alert.ts";
+import {propertyVideoJob,propertyVideoNoticeCurrent,propertyVideoDeviceCurrent}from'./property-video.ts';
+import { leadNoticeCurrent } from "./lead-access.ts";
+import { tourNoticeCurrent, tourDeviceCurrent } from "./tour-access.ts";
 
 /** Same default as functions/me: the routed domain, never rendprop.app. */
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -110,6 +116,10 @@ async function handleDrain(limit: number): Promise<Response> {
     ...r,
     payload: (r.payload && typeof r.payload === "object" ? r.payload : {}) as Record<string, unknown>,
   }));
+  // An ops push has no native destination. If its paired email was claimed in
+  // this batch, deliver that actionable channel first so the push can close
+  // only after the email has a confirmed provider receipt.
+  rows.sort((a, b) => Number(b.category === "ops_alert" && b.channel === "email") - Number(a.category === "ops_alert" && a.channel === "email"));
   if (rows.length === 0) {
     return json({
       ok: true,
@@ -133,18 +143,20 @@ async function handleDrain(limit: number): Promise<Response> {
   // user_id is nullable since 0053 (an invitee has no account), and a row that
   // carries its own to_email needs no lookup at all — so both are filtered out
   // before the profile query rather than being sent as nulls.
+  const explicitRecipient = (row: OutboxRow) => ["team_invite", "client_lead_received", "client_recipient_verification"].includes(row.category);
   const mailUsers = [...new Set(
-    rows.filter((r) => r.channel === "email" && !r.to_email && r.user_id).map((r) => r.user_id as string),
+    rows.filter((r) => r.channel === "email" && !explicitRecipient(r) && r.user_id).map((r) => r.user_id as string),
   )];
 
   const devicesByUser = new Map<string, DeviceRow[]>();
+  let deviceLookupFailed = false;
   if (pushUsers.length > 0 && apns.configured()) {
     const { data, error } = await admin
       .from("notification_devices")
       .select("user_id, device_token, environment")
       .in("user_id", pushUsers)
       .is("disabled_at", null);
-    if (error) console.error("device lookup failed:", error.message);
+    if (error) { deviceLookupFailed = true; console.error("device lookup failed"); }
     for (const d of (data ?? []) as DeviceRow[]) {
       const list = devicesByUser.get(d.user_id) ?? [];
       list.push(d);
@@ -153,9 +165,12 @@ async function handleDrain(limit: number): Promise<Response> {
   }
 
   const emailByUser = new Map<string, string>();
+  let emailLookupFailed = false;
   if (mailUsers.length > 0 && email.configured()) {
-    const { data, error } = await admin.from("profiles").select("id, email").in("id", mailUsers);
-    if (error) console.error("profile lookup failed:", error.message);
+    // Editable profile contact details never select a private notification
+    // destination. Only the current verified, named Auth identity can do that.
+    const { data, error } = await admin.rpc("notification_verified_recipients", { p_users: mailUsers });
+    if (error) { emailLookupFailed = true; console.error("verified notification recipient lookup failed"); }
     for (const p of (data ?? []) as Array<{ id: string; email: string | null }>) {
       const address = (p.email ?? "").trim();
       if (address) emailByUser.set(p.id, address);
@@ -169,15 +184,68 @@ async function handleDrain(limit: number): Promise<Response> {
   const disabledTokens: string[] = [];
 
   for (const row of rows) {
+    let fallbackAttempted = false;
     try {
+      if (["first_tour_nudge", "free_week_ending"].includes(row.category)) {
+        await mark(row.id, "skipped", "Promotional lifecycle messages are disabled until explicit marketing opt-in is supported.", null);
+        skipped++; continue;
+      }
+      if (row.channel === "email" && !explicitRecipient(row) && emailLookupFailed) throw new Error("Verified notification recipient lookup is temporarily unavailable.");
+      const clientMessage=["client_lead_received", "client_recipient_verification"].includes(row.category) && email.configured() ? await prepareClientMessage(admin,row) : undefined;
+      // null means SQL already canceled/expired this claim. Do not revive it.
+      if(clientMessage===null){skipped++;continue;}
+      if(!await hostingNoticeCurrent(admin,row)){skipped++;continue;}
+      // An admin alert is re-validated at delivery: the finding must still be
+      // present and the recipient must still be an admin, or SQL expires it.
+      if(!await opsAlertCurrent(admin,row)){skipped++;continue;}
+      if(!await tourNoticeCurrent(admin,row)){await mark(row.id,"skipped","The published tour or account access changed, or its notification route is invalid.",null);skipped++;continue;}
+      if(!await propertyVideoNoticeCurrent(admin,row)){await mark(row.id,"skipped","The private video job or account access changed.",null);skipped++;continue;}
+      if(!await leadNoticeCurrent(admin,row)){await mark(row.id,"skipped","Inquiry or account access changed.",null);skipped++;continue;}
+      let operationalEmailState: OperationalEmailState = "missing";
+      if (row.channel === "push" && row.category === "ops_alert" && row.user_id && row.dedupe_key.endsWith(":push")) {
+        const emailKey = row.dedupe_key.slice(0, -":push".length) + ":email";
+        const { data: pair, error: pairError } = await admin.from("notification_outbox")
+          .select("state,sent_at")
+          .eq("dedupe_key", emailKey).eq("user_id", row.user_id)
+          .eq("category", "ops_alert").eq("channel", "email").maybeSingle();
+        if (pairError) operationalEmailState = "lookup_unavailable";
+        else if (pair?.state === "sent") operationalEmailState = pair.sent_at ? "sent" : "lookup_unavailable";
+        else if (pair && ["queued", "sending", "failed", "skipped", "expired"].includes(pair.state)) {
+          operationalEmailState = pair.state as OperationalEmailState;
+        }
+      }
+      if (row.channel === "push" && row.category !== "ops_alert" && deviceLookupFailed) {
+        throw new HttpError(503, "Current notification devices could not be read.");
+      }
       const outcome = row.channel === "push"
-        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE)
+        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE,fetch,propertyVideoJob(row)?device=>propertyVideoDeviceCurrent(admin,row,device):row.category==="render_ready"?device=>tourDeviceCurrent(admin,row,device):row.category==="lead_received"?()=>leadNoticeCurrent(admin,row):undefined,operationalEmailState)
         // to_email wins. An invitee has no profile to look an address up
         // from — that is precisely what is being invited — so the row carries
         // the destination itself (migration 0053). Ordinary rows leave it null
-        // and fall through to the profile lookup exactly as before.
-        : await deliverEmail(row, row.to_email ?? (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE);
+        // and fall through to the verified Auth lookup.
+        : await deliverEmail(row, explicitRecipient(row) ? row.to_email ?? null : (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE,fetch,clientMessage);
       disabledTokens.push(...outcome.deadTokens);
+
+      // The phone this push was queued for is gone. Queue the same facts as an
+      // e-mail BEFORE closing the push, so a crash between the two leaves a
+      // retryable `sending` row rather than a closed row with no fallback. The
+      // e-mail is re-validated by its own drain (access, verified address).
+      if (pushNeedsEmailFallback(row, outcome)) {
+        // SQL owns the saved claim, current access, derived twin and atomic
+        // close. A stale response cannot close a later attempt by ID alone.
+        fallbackAttempted = true;
+        const { data: fallback, error: fallbackError } = await admin.rpc("notification_email_fallback_enqueue", {
+          p_push: row.id, p_attempt: row.attempts, p_reason: outcome.reason,
+          p_expected: { outbox_id: row.id, org_id: row.org_id, recipient_user_id: row.user_id,
+            category: row.category, channel: row.channel, dedupe_key: row.dedupe_key,
+            payload: row.payload, to_email: row.to_email ?? null },
+        });
+        if (fallbackError || typeof fallback !== "string" || !["queued", "duplicate", "denied", "stale", "retry"].includes(fallback)) {
+          throw new HttpError(503, "Notification email fallback outcome could not be verified.");
+        }
+        if (fallback === "retry") failed++; else skipped++;
+        continue;
+      }
 
       await mark(row.id, outcome.state, outcome.reason, outcome.providerId);
       if (outcome.state === "sent") {
@@ -192,7 +260,10 @@ async function handleDrain(limit: number): Promise<Response> {
       const reason = e instanceof Error ? e.message : String(e);
       console.error(`notify row ${row.id} threw:`, reason);
       failed++;
-      await mark(row.id, "failed", `unexpected: ${reason}`.slice(0, 400), null).catch(() => {});
+      // The RPC may already have committed, or another claim may now own the
+      // row. Leave uncertain Sending work to notification_sweep's verified
+      // lease recovery; never overwrite a later attempt by ID-only marking.
+      if (!fallbackAttempted) await mark(row.id, "failed", `unexpected: ${reason}`.slice(0, 400), null).catch(() => {});
     }
   }
 

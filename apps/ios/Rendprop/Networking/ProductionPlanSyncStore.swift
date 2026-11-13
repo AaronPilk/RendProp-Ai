@@ -28,7 +28,9 @@ import Combine
     }
     func acceptRemote(_ draft: ProductionPlanCache.Draft, context: Context) throws {
         cancelPending(context)
-        try replace(draft, context: context)
+        var accepted = draft
+        accepted.adoptedOperationID = drafts[context.key]?.adoptedOperationID
+        try replace(accepted, context: context)
         errors[context.key] = nil; notices[context.key] = nil
     }
 

@@ -1,3 +1,4 @@
+import { requireContentWrite } from "../_shared/library-access.ts";
 import { HttpError, json, readJsonLimited } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
 import { projectAssetQuality } from "./creative-quality.ts";
@@ -52,7 +53,7 @@ function assetScope(asset: Row | undefined, orgId: string, listingId: string) {
     ["uploads", "renders"].includes(asset.bucket) &&
     typeof asset.storage_key === "string" &&
     asset.storage_key.startsWith(`${asset.bucket}/${orgId}/${listingId}/`) &&
-    !asset.storage_key.includes("..") && asset.storage_key.length <= 1024;
+    !asset.storage_key.includes("..") && !asset.storage_key.includes("/contact-") && asset.storage_key.length <= 1024;
 }
 /** Source selection is a declaration. Only the source records, scope, and existing QC are verified here. */
 export function resolveEditSources(
@@ -100,13 +101,7 @@ export async function handleEditOutput(
   }
   const input = editOutputInput(raw as Row);
   await context.authorizeListing(input.listingId);
-  const role = await context.db.rpc("org_role", { target: context.orgId });
-  if (role.error) {
-    throw new HttpError(503, "Workspace permissions could not be checked.");
-  }
-  if (!["owner", "admin", "agent"].includes(role.data)) {
-    throw new HttpError(403, "Your role cannot save edited media.");
-  }
+  await requireContentWrite(context.admin, context.userId, context.orgId, input.listingId);
   if (input.musicSha256) {
     const music = await propertyMusicRow(context, input.listingId, input.musicSha256);
     if (music.actor_id !== context.userId) {

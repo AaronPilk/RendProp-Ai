@@ -1,0 +1,308 @@
+{
+  "kind": "iOS crash hardening \u2014 internal TestFlight40 and events telemetry deployment",
+  "verifiedAt": "2026-10-02T01:20:35.806565+00:00",
+  "source": {
+    "branch": "fix/ios-crash-hardening-20261002",
+    "runtimeCommit": "4580f761713885f7a1381953817a73e74022fc89",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/17",
+    "pullRequestBase": "feat/photographer-client-delivery-20261001",
+    "draftAtDelivery": true,
+    "note": "Delivery documentation is a later docs-only commit. Shared branches and Claude checkout were not rewritten."
+  },
+  "fixes": [
+    "Named concrete listing toolbox and launch view boundaries reduce Swift metadata construction depth while preserving actions/current listing reads.",
+    "Checked duration/FPS conversion prevents reproducible nonfinite/out-of-range integer traps.",
+    "Duplicate saved listing IDs cause a recoverable sync error before constructing the unique-key dictionary; saved rows and media remain intact.",
+    "Narrow diagnostic app_version preservation fixes future crash-build attribution without bypassing generic scrubbing for arbitrary strings."
+  ],
+  "crashInventory": {
+    "startedAt": "2026-10-02T00:01:44.027939+00:00",
+    "completedAt": "2026-10-02T00:01:46.918370+00:00",
+    "verifiedAppIdentity": true,
+    "availableTestFlightCrashFeedbackReports": 1,
+    "paging": {
+      "pages": 1,
+      "reportedTotal": 1,
+      "listedRows": 1,
+      "exhaustedNextLink": true
+    },
+    "actualCrashLogsDownloaded": 1,
+    "uniqueAvailableCrashClasses": 1,
+    "requestCount": 4,
+    "allRequestsGET": true,
+    "allRequests200": true,
+    "signedURLDownloads": 0,
+    "rawPrivacy": "Raw submissions, tester identifiers and logs remain private outside Git.",
+    "localMatchingReports": 0,
+    "reportedBuild": "1.0.3 (37)",
+    "reportedDevice": "iPhone18,2 / iPhone17 Pro Max",
+    "reportedOS": "iOS26.6.2 (23G90)",
+    "reportedArchitecture": "arm64e",
+    "secondsAfterLaunch": 8.0269,
+    "diagnosis": "Stack-guard failure during Swift metadata resolution in toolbox/body; precise listing branch and runtime trigger unproven.",
+    "scopeLimit": "Available feedback inventory does not establish all automatic crashes or build38/39 safety."
+  },
+  "telemetryInventory": {
+    "windowStart": "2026-09-18T00:25:23.836865+00:00",
+    "windowEnd": "2026-10-02T00:25:23.836865+00:00",
+    "acceptedCrashSummaries": 3,
+    "reportingBuild": "1.0.3 (37)",
+    "signal": 11,
+    "exceptionType": 1,
+    "swiftRuntimeTopFrameCount": 3,
+    "originalDiagnosticVersionsRedacted": 3,
+    "dailyMetricsNamedError": 6,
+    "metricsReportingBuild": "1.0.2 (25)",
+    "build39TelemetryPresent": false,
+    "scopeLimit": "Counts are accepted summaries, not distinct crash certification; original build/call site is not recoverable from redacted historical telemetry."
+  },
+  "ci": {
+    "sourceCommit": "4580f761713885f7a1381953817a73e74022fc89",
+    "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36949062717",
+    "passedJobs": 12,
+    "requiredJobNames": [
+      "Cloudflare Worker (tour-host)",
+      "Cloudflare Worker (upload-gateway, deno check + tests)",
+      "Disposable PostgreSQL publication, invariant and deletion regression",
+      "Offline audit evidence, consent and adoption source gates",
+      "Offline reel-style preservation and blind-evaluation contracts",
+      "Python workers (render, spatial, training adapter)",
+      "Secret scan",
+      "Studio contracts, build and property workflows (offline)",
+      "Supabase edge functions (deno check + tests)",
+      "Supabase migrations (fresh replay + invariants)",
+      "Web parity inventory and design-token contracts (offline)",
+      "iOS static gates"
+    ],
+    "pullRequestMergeCommit": "f1ce3406c41f92ef035a72b160ead91ba21f76d0",
+    "mergeAndSourceTree": "2ef087d97236087d895aa02bd6a683a6fea54a0d",
+    "mergeTreeMatchesRuntimeSource": true,
+    "earlierFailedRun": {
+      "run": 36948054021,
+      "sourceCommit": "5a02154c3059f2ed965174142901afd3aea8a51a",
+      "failedAssertion": "Unchanged published-page actual media-clock advancement timed out after decoded720p/pause checks.",
+      "independentExactGateLocalAssertions": 150,
+      "exactTransientCauseProven": false,
+      "finalExactSourceAll12Passed": true
+    }
+  },
+  "softwareChecks": {
+    "newExecutableProductionSourceAssertions": 79,
+    "numericAssertions": 61,
+    "persistenceAndSyncAssertions": 18,
+    "unsafeMutantsReproduceSIGTRAP": 3,
+    "deliberateNegativeControlsFailed": true,
+    "nativeClientAssertions": 60,
+    "nativeAdoptionAssertions": 16,
+    "phase1TestsPassed": 29,
+    "normalUnsignedDebugIPhoneBuildPassed": true,
+    "releaseArchivePassed": true,
+    "releaseHelperOfflineControlsPassed": 15
+  },
+  "releaseUI": {
+    "uniqueSelectedTestsWithSuccess": 19,
+    "formalSkips": 0,
+    "singleAllGreen19TestRun": false,
+    "productionSourceTree": "9996b6ebe5cba614098789b7432f0152e2f1c842",
+    "note": "Separate Release runs share identical production app source. Earlier failed runs remain failed; test harness prerequisites/scroll/selector were corrected without removing product assertions.",
+    "runs": [
+      {
+        "compiledSource": "0bda7e7de00f875b1dfd620089624c27d3acc77f",
+        "resultBundleLabel": "DetailRelease-final.xcresult",
+        "counts": {
+          "totalTestCount": 19,
+          "passedTests": 16,
+          "failedTests": 3,
+          "skippedTests": 0,
+          "result": "Failed"
+        },
+        "logSHA256": "212866b7b921500bb3343bc5291cfcc738007267082e6936d9773aac08775d67",
+        "summarySHA256": "34f5509d03b1826c43a7ca47b309321813f9bf159b11c9af389c90277f5ff057"
+      },
+      {
+        "compiledSource": "5a02154c3059f2ed965174142901afd3aea8a51a",
+        "resultBundleLabel": "DetailRelease-accepted.xcresult",
+        "counts": {
+          "totalTestCount": 7,
+          "passedTests": 6,
+          "failedTests": 1,
+          "skippedTests": 0,
+          "result": "Failed"
+        },
+        "logSHA256": "d5880461959177ff7fba4a97c73425a3165d21a13049699c2226e01efc843b3b",
+        "summarySHA256": "f4a44152fe87c00d298c849e60cc0663a6d8d10e9c43ff5e49213916ed319824"
+      },
+      {
+        "compiledSource": "5a02154c3059f2ed965174142901afd3aea8a51a",
+        "resultBundleLabel": "ReviewerFullRelease.xcresult",
+        "counts": {
+          "totalTestCount": 1,
+          "passedTests": 1,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "result": "Passed"
+        },
+        "logSHA256": "792125846dbcd05693a57885cefdbe2b0c6bee99c16e9a89d21e763b279b10ae",
+        "summarySHA256": "5cb89349036687d4ed828e3325ae5a063b130ce987da798a8b9d33e30252337a"
+      },
+      {
+        "compiledSource": "5a02154c3059f2ed965174142901afd3aea8a51a",
+        "resultBundleLabel": "ReviewerFocusedRelease.xcresult",
+        "counts": {
+          "totalTestCount": 2,
+          "passedTests": 2,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "result": "Passed"
+        },
+        "logSHA256": "514f0974f827fbb04981df2bb6b9ee4e76ebb687f395e79743ec176344fb61ec",
+        "summarySHA256": "d5d638295582f22da513da7f0e57091e732dfb579f05e4886ac919c7dc1b9209"
+      },
+      {
+        "compiledSource": "4580f761713885f7a1381953817a73e74022fc89",
+        "resultBundleLabel": "DetailRichFinalRelease.xcresult",
+        "counts": {
+          "totalTestCount": 1,
+          "passedTests": 1,
+          "failedTests": 0,
+          "skippedTests": 0,
+          "result": "Passed"
+        },
+        "logSHA256": "a082590382398a2dc171431ab2fe05c938263028df1a6129b16ff57e88e42fa6",
+        "summarySHA256": "a5662245aa2450a3fff190ee6b80f15d33002aae7dc29b1843ae1151b75ddac6"
+      }
+    ],
+    "successfulCases": [
+      "DetailMetadataRegressionUITests/testCapturedUnrenderedListingKeepsRoomTaggingAndNoRerenderTile",
+      "DetailMetadataRegressionUITests/testEmptyListingStillOpensPhotoLibraryStudioAndFloorPlan",
+      "DetailMetadataRegressionUITests/testMissingSourceIsAPlainUnavailableCardEvenWithLocalTour",
+      "DetailMetadataRegressionUITests/testPublishedLinkWithoutCaptureKeepsShareAndDisabledRoomTagging",
+      "DetailMetadataRegressionUITests/testSampleHasAllSevenToolsDisabled",
+      "DetailMetadataRegressionUITests/testVenueKeepsIndustryAreaNounsAndRerenderNavigation",
+      "GuidedPanoramaNavigationTests/testAccessibilityTextKeepsInstructionsStartAndBackReachable",
+      "GuidedPanoramaNavigationTests/testHomeEntryInstructionsAndEmptyLibraryReopen",
+      "GuidedPanoramaNavigationTests/testSettingsEntryAndRelaunchReachTheSameHub",
+      "GuidedPhotoNavigationTests/testExteriorCameraAndLargeTextKeepCloseReachable",
+      "GuidedPhotoNavigationTests/testPhotosCameraUnavailableCloseAndReopen",
+      "PhotographerClientFlowTests/testOnboardingRoleAndClientCardSaveWithoutCapture",
+      "ProductionPlanUITests/testPhotoFirstPropertyCanPlanWithoutVideoAndPreservesChecklist",
+      "ReviewerWalk/testAskAILabelOnLongTitle",
+      "SubscriptionNavigationTests/testPaidHomeBannerOpensPlanManagement",
+      "SubscriptionNavigationTests/testSettingsPlanAndRecoveryRoutesRemainVisible",
+      "ReviewerWalk/testReviewerWalk",
+      "ReviewerWalk/testAIConsentDecisions",
+      "DetailMetadataRegressionUITests/testPhotosCaptureTourAerialAndClientNavigateEveryTool"
+    ],
+    "finalRichElapsedSeconds": 122.682,
+    "scopeLimit": "Synthetic local media and actual navigation/consent/client save routes. r10 sign-in mock excluded. Plan buttons are not completed purchase/restore; no physical camera/arm64e proof."
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "40",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "createdAt": "2026-10-02T01:06:45+00:00",
+    "scheme": "RendpropSpatialTestFlight",
+    "explicitArchiveBuildOverride": "40",
+    "sourceInputs": 204,
+    "compiledTrackedSwiftInputs": 136,
+    "compiledGeneratedSwiftInputs": 1,
+    "signatureVerified": true,
+    "executableSHA256": "316c218f77c460677e4dbe5534941cceae38a8fd6c94990d31a8247146219088",
+    "arm64UUID": "24EC1030-4816-3A2A-860C-FDA313739A59",
+    "allUUIDsMatch": true,
+    "derivedDataAndArchiveDSYMBytesMatch": true,
+    "simulatorFixtureMarkersAbsentFromDeviceBinaryAndDSYM": true,
+    "note": "Separate DerivedData executable product absent after archiving; no separate executable byte-match claim."
+  },
+  "upload": {
+    "startedAt": "2026-10-02T01:13:09.901888+00:00",
+    "finishedAt": "2026-10-02T01:14:45.163950+00:00",
+    "exitCode": 0,
+    "attempts": 1,
+    "internalOnly": true
+  },
+  "appleReadback": {
+    "checkedAt": "2026-10-02T01:18:15.427630+00:00",
+    "available": true,
+    "buildID": "9834e942-6cb4-4be7-bc30-d4bee59544f0",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-10-01T18:15:33-07:00",
+    "minOSVersion": "16.0",
+    "usesNonExemptEncryption": false,
+    "internalBuildState": "IN_BETA_TESTING",
+    "groupName": "Rendprop team",
+    "existingGroupBuildIncluded": true
+  },
+  "testNotes": {
+    "verifiedAt": "2026-10-02T01:18:39.420248+00:00",
+    "locale": "en-US",
+    "readbackVerified": true,
+    "textSHA256": "4f53eea972fb1d976f8717d97ce06009ae659143d1d37000aefb67a27298f2cd"
+  },
+  "backend": {
+    "projectRef": "ymgqpbnjpztwjsyvceld",
+    "function": "events",
+    "previousVersion": 25,
+    "version": 26,
+    "status": "ACTIVE",
+    "verifyJWT": true,
+    "importMap": false,
+    "deploymentAttempts": 1,
+    "verifiedAt": "2026-10-02T01:18:29.064900+00:00",
+    "allSixLiveSourceHashesMatch": true,
+    "sourceHashes": {
+      "functions/events/index.ts": "c3f734c9dfe5550b183f9b66d349911fb952e7549cf554f612cb1a5edb416776",
+      "functions/_shared/cors.ts": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c",
+      "functions/_shared/http.ts": "d215a595f409506730a529d753d58a9ff6efc68dfc053913adfb5c6527eeb6a9",
+      "functions/_shared/ratelimit.ts": "d8833a1cd766fe624950e18f62fd822c70df55efeb47de4447f5562a8f0c1430",
+      "functions/_shared/supabase.ts": "cfe93768d4e8fb945f2dceb4c3d941e8e49404e391eef5ef231b43c2a7609f66",
+      "functions/events/schema.ts": "5ee6d0e7e5b8a2ebe7cd69b4714cc70016fa87bb6f4fbc73cef5b08097f83e6e"
+    },
+    "changedSource": [
+      "functions/events/schema.ts"
+    ],
+    "downloadedSchemaTestsPassed": 30,
+    "downloadedEntrypointTypecheckPassed": true,
+    "productionSyntheticIngestCalls": 0,
+    "migrations": 0,
+    "customerWrites": 0
+  },
+  "evidenceSHA256": {
+    "crash-triage-sanitized.json": "f38203a2f3ab51bc79f33dcfa8e754ddb18239ba5b1192b22c7690134384f78f",
+    "aggregate-crash-inventory.json": "800b1bcf38f335ef02c92aa713e15bb0dc5683a4bbd04c236d67798a4c5219c6",
+    "numeric-regression-receipt.json": "31c898519cf8ade91c3ada852c99ed7acdb9c0d70b77302eb6964e160f17e177",
+    "native-release-ui-final-review.json": "7188173bc65e70986773f445156aff6be59e11e8d37d97b2989806751c57544e",
+    "ci-success.json": "855fdc06ecec5c420d3349368fe5fedf4db15d62613b21b108380d6bf598812e",
+    "ci-tree-binding.json": "f721094f22041557711159447b4b9d66fff409609522847bd64232e0ef385e95",
+    "testflight40/source-manifest.json": "4e0201fa24db8f69205794219bbfbc03f7c069db982f197eef1dc72eae222f99",
+    "testflight40/archive-source-binding.json": "746337a0f4af86fdf97dd284cab7de8d44cde3e8219bcf4e355b798b229a5dfc",
+    "testflight40/archive-independent-preflight.json": "61f2cc30321131ecf748fa990d61c2db46c6928d8018eb64558ab3a5fc56f9ab",
+    "testflight40/archive-independent-source-review.json": "18c7aa72ef5ccac6209bbaafd8d2b94115ab81f1ccc8c2d1e51ac0f3a9c3f094",
+    "testflight40/independent-helper-source-review.json": "e95e4d596814b6bf3a1f3a818f3aaeb8643eea1a98f349e9570b1cd57d36800e",
+    "testflight40/owner-release-gate.json": "d0bc5c34dbdf0be205d3e9a7200330e74dd176da5bd909667d66d42ad3c6a15b",
+    "testflight40/upload-result.json": "843cbeea7def586921d4afc15e24701a273ff27e7d032be009aa70a3e730d3af",
+    "testflight40/testflight-ready.json": "eca7e09215324c15f0003e7786421ca150101c80175b6102030a7eaf8d900d21",
+    "testflight40/test-notes-receipt.json": "3519ba302ec4e8a2d73b7309becb71503297b211bf2892b6f14b79d14661a1f2",
+    "events-version-regression-tightened/receipt.json": "652b93b0fc3a9b16871b2502bb6945cce6de9867834dc0570121ace6dc6b4b14",
+    "events-deployment/events-deployment-readback-receipt-4580f76.json": "0b38ff22cca50accce27853a7b11dff47c1ec20345338b36d7a631943bfd5fbe",
+    "ci-browser-failure/independent-investigation.json": "4cd8e47ded21d04143ad6ee54e9b642cb11420d383ea34187cc5ec9f451594ef"
+  },
+  "remainingAcceptance": [
+    "Previously affected physical iPhone cold-launch listing/toolbox navigation.",
+    "Actual camera/lens, room-tour comfort/coverage/stitching and real-footage rendering/playback.",
+    "Controlled Apple sign-in/purchase/restore, phone-to-Studio contacts and client inbox delivery."
+  ],
+  "scope": {
+    "publicAppStoreRelease": false,
+    "testerOrGroupConfigurationChanges": false,
+    "paidAIOrGPUCalls": 0,
+    "spatialGlobalFlagEnabled": false,
+    "spatialBudgetChanged": false,
+    "claudeCheckoutTouched": false
+  }
+}

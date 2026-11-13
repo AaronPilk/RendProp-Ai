@@ -1,3 +1,4 @@
+import { libraryBillingOrg } from "../_shared/library-access.ts";
 // ai-photo — single-image AI edits (twilight | sky | lawn | declutter | stage |
 // custom) via Gemini image edit ("Nano Banana"). Owner-authenticated.
 // Mirrors services/pipeline providers/gemini.py + router.PHOTO_EDIT_PROMPTS.
@@ -8,22 +9,23 @@
 //                     disclosure, provenance: { id, recorded, reason? } }
 //
 //   edit       = twilight | sky | lawn | declutter | stage | custom
-//   style      = modern | rustic | minimalist | scandinavian   (stage only; default modern)
+//   style      = modern | rustic | minimalist | contemporary (legacy scandinavian accepted)   (stage only; default modern)
 //   space_type = real_estate | venue | restaurant | retail | fitness | other (default real_estate)
 //                Selects the industry prompt set: a restaurant is dressed for
 //                service, a gym gets equipment, a store gets merchandised — not
 //                a sofa and coffee table (audit F-A-07 / F-supabase-10).
 //
-// Two cheap text/vision helper modes. They are NOT charged against the monthly
-// photo-edit allowance (they generate no image); they have their own burst
-// limiter (aiphotohelp:<org>, 120 / 5 min) and the same role gate:
+// Text/vision helper modes use separately priced shared-wallet holds on paid
+// accounts and preserve private QA sponsorship. They do not use a photo credit;
+// only the separately budgeted Declutter assessment is available in a bounded
+// trial. General suggestions retain their trial fence and burst limiter:
 //
 //   edit:"suggest"         { image_b64, mime?, space_type? }  ->  { suggestions: [{ edit, reason, confidence }] }
 //       Looks at the photo and recommends up to 3 edits (from the 5 canned ones)
 //       that would genuinely improve it — e.g. twilight only for exteriors.
 //
 //   edit:"improve_prompt"  { prompt, space_type? }            ->  { prompt }
-//       Rewrites the user's rough custom-edit idea (≤300 chars) into a precise,
+//       Rewrites the user's rough custom-edit idea (≤600 chars) into a precise,
 //       photorealistic edit instruction (≤400 chars). The improved prompt is
 //       meant to be sent back as edit:"custom", where the architecture-lock
 //       guardrails are appended server-side as usual. (The image is not needed
@@ -66,38 +68,47 @@
 // objects added, nothing that singles people out) but not the housing-steering
 // rules or the HUD wording — see _shared/fairhousing.ts, SCOPE.
 //
-// PROVENANCE. A successful edit records one media_provenance row (migration
-// 0012) via the record_provenance RPC when `listing_id` is sent, mapping
-// stage → virtual_stage, declutter → declutter, everything else → photo_edit.
-// The response always carries `disclosure` (the exact sentence the public tour
-// will print for this asset — CA AB 723 / NorthstarMLS) and `provenance`
-// ({ id, recorded, reason? }). Recording is BEST EFFORT: a failed audit insert
-// never fails an edit the caller has already paid for.
+// PROVENANCE. Prospective edits retain exact private source/candidate evidence.
+// A separate funded fixed-feature photo review must atomically record matching
+// paid receipts, QC and provenance before ordinary delivery is allowed. Pending
+// or uncertain checks return their saved IDs without image bytes or an asset key.
+// Historical photo_output replays preserve their original disclosure receipt.
 // `original_asset_id` (optional) is the untouched source uploaded via
 // POST /uploads role:"original", which makes "View original" a real public link
 // — the access-to-the-original half of AB 723.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { HttpError, assert, json, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
+import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
-import { type ProvenanceKind, recordProvenance } from "../_shared/provenance.ts";
+import { CUSTOM_PHOTO_FIXED_FEATURES } from "../_shared/custom-photo-prompt.ts";
+import { buildRealEstateStagePrompt, REAL_ESTATE_STAGE_STYLES } from "../_shared/photo-stage-prompt.ts";
+import { buildRealEstateDeclutterPrompt } from "../_shared/photo-declutter-prompt.ts";
+import { buildTwilightPrompt, buildSkyPrompt, buildLawnPrompt, buildCustomEditPrompt, type PhotoSubject } from "../_shared/photo-edit-prompts.ts";
+import { assertCustomPhotoPrompt, assertCustomPhotoOutput } from "../ai-copy/guard.ts";
+import { type ProvenanceKind, disclosureFallback } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
+import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, inputHash, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
+import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput, ownerQaPhotoPro4KStep, prepareOwnerQaPhotoPro4KInput } from "./owner-photo-qa.ts";
+import { preparePhoto2KInput, photo2KChain, assertPhoto2KGeometry, assertPhotoPro4KGeometry, deliverableOffSizePhoto } from "./photo-quality.ts";
+import { priceMaskedPhotoChain, isMaskedFillStep } from "./masked-photo-pricing.ts";
+import { supportsStagingReference,submitPreparedGeminiPhoto } from "../_shared/providers/gemini.ts";
 import {
   BUDGETS,
   ProviderError,
+  ProviderHttpError, definitiveSubmitRejection, classifyStatus,
   awaitJob,
   inlineBase64,
   inlineImageResult,
-  routedR2Key,
 } from "../_shared/providers/common.ts";
-import type { GenerateInput } from "../_shared/providers/types.ts";
+import type { DoneState, GenerateInput } from "../_shared/providers/types.ts";
 // THE SHARED PROMPT POLISHER. Yes, this reaches into a sibling function's
 // folder — the same mechanism `../_shared/…` uses (both live under functions/
 // and both are followed by the bundler at deploy). ai-copy/prompt.ts imports
@@ -105,12 +116,28 @@ import type { GenerateInput } from "../_shared/providers/types.ts";
 // handler, its router glue or its Supabase clients into this function's bundle.
 // See ai-copy/prompt.ts's header and improvePrompt() below.
 import { MAX_PROMPT_INPUT, MAX_PROMPT_OUTPUT, editPromptInstruction } from "../ai-copy/prompt.ts";
+import { restorePhotoResult, type PhotoResultPointer } from "./photo-result.ts";
+import { photoJsonResponse } from "./photo-response.ts";
+import { validatePhotoInputs, validatePhotoPrompt, decodePhotoOutput } from "./input-policy.ts";
+import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from "./helper-policy.ts";
+import {DECLUTTER_ASSESSMENT_PROTOCOL,DECLUTTER_ASSESSMENT_INSTRUCTION,parseDeclutterAssessment,unavailableDeclutterAssessment,type DeclutterAssessment} from "./declutter-assessment.ts";
+import {decodeBase64Bytes} from "../_shared/base64-bytes.ts";
+import {lookupPhotoQuality,statusPhotoQuality,requestPhotoQualityStatus,photoUUID,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,releasePhotoQuality,photoReleased,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
+import * as photoComparisonClient from "../photo-quality-worker/client.ts";
+import {photoGenerationRetryable} from "./photo-retry.ts";
+import {waitForPhotoQuality,continuePhotoQualityAfterResponse,PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from "./photo-qc-wait.ts";
+import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
+import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from "./protocol.ts";
+import {recordPhotoRecipe} from "./photo-recipe.ts";
 
-// Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
+// Money admission uses the actual conservative payload hold independently of
+// these burst/monthly feature counters.
 const EDIT_MAX_PER_WINDOW = 40;
 const EDIT_WINDOW_SECONDS = 300; // 40 photo edits / 5 min / org
 const MONTH_SECONDS = 30 * 86400;
-// Helper modes are ~0.1¢ of text tokens: burst-limited only.
+// Paid helpers spend the shared funded wallet separately from photo credits.
+// Trial Declutter assessment has its own hard SQL budget; general suggestions
+// remain fenced so the five image admissions retain cash.
 const HELP_MAX_PER_WINDOW = 120;
 const HELP_WINDOW_SECONDS = 300; // 120 suggest/improve calls / 5 min / org
 
@@ -118,14 +145,11 @@ const HELP_WINDOW_SECONDS = 300; // 120 suggest/improve calls / 5 min / org
 // enforced number and the published number are the same number.
 
 /** Role gate shared by both guards: marketing is read-only. */
-async function requireEditorRole(userId: string, req: Request, what: string): Promise<string> {
-  const orgId = await orgForUser(userId, preferredOrg(req));
-  const { data: mem, error: mErr } = await adminClient()
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, `Your role does not permit ${what}`);
-  }
+async function requireEditorRole(user: PaidAiCaller, req: Request, what: string, listingId?: string): Promise<string> {
+  const userId = user.id;
+  const orgId = await contentOrgForUser(userId, preferredOrg(req), listingId, true);
+
+  await assertPaidAiIdentity(user, orgId);
   return orgId;
 }
 
@@ -136,6 +160,30 @@ interface EditCharge {
   plan: string;
   monthlyKey: string;
   burstKey: string;
+  monthlyReceipt?: RateChargeReceipt;
+  burstReceipt: RateChargeReceipt;
+  credit?: {actorId:string;orgId:string;requestKey:string;environment:"Production"|"Sandbox"};
+}
+
+const DECLUTTER_CREDIT_TARIFF="photo-declutter-v1";
+// Stage uses the same bounded photo supplier journal, but a distinct immutable
+// customer quote. Its catalog row remains inactive until the matching client
+// and retail funding are available in App Store Connect.
+const STAGE_CREDIT_TARIFF="photo-stage-v1";
+function photoCreditQuote(edit:string|undefined):{operation:string;version:string}|null {
+  if(edit==="declutter")return {operation:"photo.declutter",version:DECLUTTER_CREDIT_TARIFF};
+  if(edit==="stage")return {operation:"photo.stage",version:STAGE_CREDIT_TARIFF};
+  return null;
+}
+
+async function finishEditCredit(charge:EditCharge,state:"settled"|"released"):Promise<void>{
+  if(!charge.credit)return;
+  const {data,error}=await adminClient().rpc("credit_wallet_finish",{
+    p_actor:charge.credit.actorId,p_org:charge.credit.orgId,p_environment:charge.credit.environment,
+    p_key:charge.credit.requestKey,p_state:state,
+  });
+  if(error)throw new HttpError(503,"We couldn't update your credit balance just now. Check this edit again in a minute. A second edit is not started.","upstream");
+  assert(data?.state===state,503,"We couldn't update your credit balance just now. Check this edit again in a minute. A second edit is not started.","upstream");
 }
 
 /**
@@ -144,34 +192,63 @@ interface EditCharge {
  * an org's burst + monthly quota with `{}` bodies that never reached Gemini
  * (audit round 4).
  */
-async function guardEdit(userId: string, req: Request): Promise<EditCharge> {
-  const orgId = await requireEditorRole(userId, req, "AI photo edits");
+async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string, edit?:string): Promise<EditCharge> {
+  const orgId = await requireEditorRole(user, req, "AI photo edits", listingId);
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.photo_edits_per_month;
-  if (monthlyCap <= 0) throw quotaError("AI photo edit", 0, 0, ent.plan);
-
-  // Idempotency soft-dedupe: NOT refunded on failure, deliberately (mirrors
-  // ai-chapters/index.ts guardChapters) — it is a short dedupe guard, not spend.
-  const idem = req.headers.get("idempotency-key")?.trim();
-  if (idem && idem.length <= 128) {
-    if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — this edit was already started.", "conflict");
+  // Permanent serving-operation admission now owns replay. A time-window
+  // counter must not prevent recovery or renew an admitted paid operation.
+  const requestKey=requiredIdempotencyKey(req);
+  const billingOrgId = await libraryBillingOrg(adminClient(), orgId, user.id);
+  const quote=req.headers.get("x-rendprop-credit-tariff");
+  const environment=req.headers.get("x-rendprop-credit-environment")??"Production";
+  const creditQuote=photoCreditQuote(edit);
+  if(environment!=="Production"&&environment!=="Sandbox")
+    throw new HttpError(400,"Choose a valid App Store credit environment.");
+  if(quote!==null && (!creditQuote || quote!==creditQuote.version))
+    throw new HttpError(400,"The credit price for this edit has changed. Review the price shown, then confirm again. You were not charged.");
+  const primaryResult=creditQuote
+    ?await adminClient().rpc("credit_primary_subscription",{p_org:billingOrgId,p_environment:environment})
+    :{data:false,error:null};
+  if(primaryResult.error||typeof primaryResult.data!=="boolean")
+    throw new HttpError(503,"We couldn't check your plan and credits just now. No edit was sent, so you were not charged. Try again in a minute.","upstream");
+  if(primaryResult.data && quote===null)
+    throw new HttpError(402,"This edit uses credits. Review the price shown, then confirm to start. You were not charged.","credit_quote_required",
+      {operation:creditQuote!.operation,tariff_version:creditQuote!.version});
+  const creditMode=quote!==null;
+  if(!creditMode && monthlyCap<=0)throw quotaError("AI photo edit",0,0,ent.plan);
+  const burstKey = `aiphoto:${billingOrgId}`;
+  const monthlyKey = `aiphotomo:${billingOrgId}`;
+  const burst = await chargeRateReceipt(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS);
+  if (!burst.accepted) {
+    throw new HttpError(429, "You are editing photos very quickly. Wait a few minutes, then try again. You were not charged for this one.", "rate_limited");
+  }
+  if(creditMode){
+    let held;
+    try{held=await adminClient().rpc("credit_wallet_reserve",{
+      p_actor:user.id,p_org:billingOrgId,p_environment:environment,p_key:requestKey,
+      p_operation:creditQuote!.operation,p_version:creditQuote!.version,
+    });}
+    catch{await refundRateReceipt(burst.receipt);throw new HttpError(503,"We couldn't set aside the credits for this edit. No edit was sent, so you were not charged. Try again in a minute.","upstream");}
+    if(held.error){await refundRateReceipt(burst.receipt);throwRpc(held.error.message);}
+    if(held.data?.reserved!==true||!Number.isInteger(held.data?.credits)||held.data.credits<=0){
+      await refundRateReceipt(burst.receipt);
+      throw new HttpError(503,"We couldn't set aside the credits for this edit. No edit was sent, so you were not charged. Try again in a minute.","upstream");
     }
+    return {orgId,plan:ent.plan,monthlyKey,burstKey,burstReceipt:burst.receipt,
+      credit:{actorId:user.id,orgId:billingOrgId,requestKey,environment}};
   }
-  const burstKey = `aiphoto:${orgId}`;
-  const monthlyKey = `aiphotomo:${orgId}`;
-  if (!(await durableRateLimit(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
-    throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.", "rate_limited");
-  }
-  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
+  const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  if (!monthly.accepted) {
+    await refundRateReceipt(burst.receipt);
     throw quotaError("AI photo edit", monthlyCap, monthlyCap, ent.plan);
   }
   // Return the org the quota was charged to, so the handler can attribute the
   // cost_ledger row (F-E-15) and refund the same keys on failure (F-E-16).
   // The effective plan rides along for the router's RouteContext: it is the
   // number entitlementForCharge() just read, not a second lookup.
-  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey, monthlyReceipt: monthly.receipt, burstReceipt: burst.receipt };
 }
 
 /**
@@ -179,32 +256,38 @@ async function guardEdit(userId: string, req: Request): Promise<EditCharge> {
  * ai-chapters/index.ts refundCharge exactly). Call ONLY when route resolution or the provider
  * chain threw — once runChain returns a value the provider ran and billed,
  * and the ledger write right after it is what records that; nothing past that
- * point is ever refunded. Best effort and never throws — see refundRateLimit().
+ * point is ever refunded. Each receipt names the original SQL charge window.
  */
 async function refundEditCharge(charge: EditCharge): Promise<void> {
-  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
-  await refundRateLimit(charge.burstKey, EDIT_WINDOW_SECONDS, 1);
+  if(charge.credit){
+    try{await finishEditCredit(charge,"released");}
+    catch{console.error("Credit hold retained for saved provider outcome recovery");}
+  }
+  if(charge.monthlyReceipt)await refundRateReceipt(charge.monthlyReceipt);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 /** What guardHelper() charged — burst only, never the monthly meter. */
 interface HelperCharge {
   orgId: string;
   burstKey: string;
+  burstReceipt: RateChargeReceipt;
 }
 
 /** Helper modes: role gate + burst limiter only. Never touches the monthly meter. */
-async function guardHelper(userId: string, req: Request): Promise<HelperCharge> {
-  const orgId = await requireEditorRole(userId, req, "AI photo suggestions");
+async function guardHelper(user: PaidAiCaller, req: Request, listingId?: string): Promise<HelperCharge> {
+  const orgId = await requireEditorRole(user, req, "AI photo suggestions", listingId);
   const burstKey = `aiphotohelp:${orgId}`;
-  if (!(await durableRateLimit(burstKey, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS))) {
+  const burst = await chargeRateReceipt(burstKey, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS);
+  if (!burst.accepted) {
     throw new HttpError(429, "Too many suggestion requests for now — try again in a few minutes.", "rate_limited");
   }
-  return { orgId, burstKey };
+  return { orgId, burstKey, burstReceipt: burst.receipt };
 }
 
 /** Hand back a helper-mode burst charge on failure (audit item 2). Never throws. */
 async function refundHelperCharge(charge: HelperCharge): Promise<void> {
-  await refundRateLimit(charge.burstKey, HELP_WINDOW_SECONDS, 1);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 // Bound the inline base64 image so a caller can't push unbounded memory
@@ -212,7 +295,7 @@ async function refundHelperCharge(charge: HelperCharge): Promise<void> {
 const MAX_IMAGE_B64_CHARS = 12_000_000;
 const ALLOWED_MIMES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 
-const MODEL = (Deno.env.get("GEMINI_IMAGE_MODEL")?.trim() || "gemini-2.5-flash-image");
+const MODEL = (Deno.env.get("GEMINI_IMAGE_MODEL")?.trim() || "gemini-3.1-flash-image");
 // Text+vision model for the suggest / improve_prompt helper modes (NOT the
 // image model — these are plain generateContent calls returning JSON).
 // Text/vision helper model (suggest + improve_prompt). `gemini-2.5-flash` was
@@ -321,8 +404,9 @@ const PROFILES: Record<SpaceType, Profile> = {
 /**
  * THE MATERIAL-FACT LINE.
  *
- * Every prompt above locks the ARCHITECTURE — walls, dimensions, window and
- * door placement. None of them locked the CONDITION, and that is a different
+ * Every prompt above instructs the model to preserve ARCHITECTURE — walls,
+ * dimensions, window and door placement. That instruction is not verified
+ * geometry or a quality guarantee. The CONDITION instruction covers a different
  * thing: an inpainting model asked to tidy a room will happily smooth a cracked
  * wall or a water stain on the way past, because a clean wall is what "tidy"
  * looks like in its training data. Nothing in this file told it not to.
@@ -339,7 +423,8 @@ const PROFILES: Record<SpaceType, Profile> = {
  * a misrepresentation of a material fact, which is the thing that ends licences
  * — and it is the one edit no disclosure sentence makes acceptable, because the
  * buyer's complaint is not "this was AI", it is "the house is not what you
- * showed me". So it is enforced here, in the prompt itself, on every route.
+ * showed me". The instruction is included on every route; the output must
+ * still be compared with the original before publication.
  */
 const CONDITION_LOCK =
   "CRITICAL — MATERIAL FACTS: never repair, patch, hide, clean away, smooth over or " +
@@ -357,15 +442,21 @@ const CONDITION_LOCK =
 
 const LOCK =
   "Do not change the building's architecture, structure, dimensions, walls, or " +
-  "window/door placement. " + CONDITION_LOCK +
+  "window/door placement. Never add or remove a window, doorway, wall or opening. " +
+  CUSTOM_PHOTO_FIXED_FEATURES + " " +
+  "Keep fixed appliances, including refrigerators, ovens, sinks and their connections, in their exact original positions. " + CONDITION_LOCK +
   "Photorealistic, natural, consistent perspective and shadows.";
 
-// Staging must NEVER remodel the room — only add furnishings.
+// Staging instruction; generated results still require original-image review.
 const STAGE_LOCK =
   "CRITICAL: keep the room's architecture EXACTLY as photographed — identical walls, " +
   "windows, doors, ceiling, flooring material, trim, built-ins, light fixtures, the view " +
   "through the windows, camera angle, and perspective. Only ADD furniture and decor; do not " +
   "remodel, repaint, resurface, or alter the structure or lighting direction in any way. " +
+  "Never invent a window or opening. Do not move, replace or remove refrigerators, ovens, sinks, " +
+  "cabinets, counters or other fixed appliances and built-ins. Keep doors, door swings, exits and " +
+  "walking routes unobstructed; never put furniture across an opening or into a wall. " +
+  CUSTOM_PHOTO_FIXED_FEATURES + " " +
   CONDITION_LOCK +
   "Photorealistic materials with shadows and reflections that match the room's existing light.";
 
@@ -390,71 +481,40 @@ const REFLECTION_CLAUSE =
   "or any other glossy surface — rebuild the reflection as the empty surface would " +
   "look, reflecting only the room itself. ";
 
-// The proven real-estate prompt set — VERBATIM from the shipped version (the
-// industry templates below are for the other space types only).
+// Real-estate-only prompt set. Declutter uses a removal-only retouch contract;
+// the industry templates below retain their existing space-specific behavior.
+//
+// Twilight, sky and lawn were rewritten on 12 Nov 2026 (_shared/photo-edit-prompts.ts):
+// one concrete description of the change, then one short paragraph of what
+// stays, instead of the shared LOCK block. Declutter is unchanged: it is the
+// edit that works, and it keeps LOCK exactly as it was.
+function photoSubject(p: Profile): PhotoSubject {
+  return { photo: p.photo, exterior: p.exterior, greenery: p.greenery, housing: p === PROFILES.real_estate };
+}
+
 const RE_PROMPTS: Record<string, string> = {
-  twilight:
-    "Convert this daytime exterior real-estate photo into a stunning twilight/dusk shot: " +
-    "deep blue-to-warm-orange gradient sky, warm glowing interior window lights, subtle " +
-    "landscape/path lighting, professional dusk real-estate photography. Keep the house, " +
-    "landscaping, driveway, and composition exactly the same — only change the sky and lighting. " + LOCK,
-  sky:
-    "Replace the dull, grey, or overcast sky in this real-estate photo with a bright, clear " +
-    "blue sky with soft natural clouds. Keep the house, trees, and ground exactly the same and " +
-    "match the lighting, shadows, and reflections naturally. " + LOCK,
-  lawn:
-    "Repair and green the lawn in this real-estate photo: lush, healthy, vibrant green grass; " +
-    "remove brown/dead patches, dirt, and weeds. Keep the house, hardscape, driveway, plants, " +
-    "and everything else identical. " + LOCK,
+  twilight: buildTwilightPrompt(photoSubject(PROFILES.real_estate)),
+  sky: buildSkyPrompt(photoSubject(PROFILES.real_estate)),
+  lawn: buildLawnPrompt(photoSubject(PROFILES.real_estate)),
   declutter:
-    "Remove all clutter, mess, and personal items from this real-estate photo: shoes, bags, " +
-    "boxes, cords, laundry, dishes, papers, toys, toiletries, fridge magnets, and stray items " +
-    "on floors, counters, and surfaces. " + REFLECTION_CLAUSE +
-    "Keep the room, furniture, decor, and architecture " +
-    "IDENTICAL — same walls, windows, doors, flooring, fixtures, camera angle, and lighting. " +
-    "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
+    buildRealEstateDeclutterPrompt(LOCK,REFLECTION_CLAUSE),
 };
 
-// Real-estate staging furniture sets (verbatim from the shipped version).
-const RE_STAGE_STYLES: Record<string, string> = {
-  modern:
-    "modern contemporary furniture: clean-lined sofa and chairs, a low-profile coffee table, " +
-    "a large area rug, tasteful wall art, and designer accent lighting in a neutral palette " +
-    "with warm accents",
-  rustic:
-    "rustic farmhouse furniture: warm natural woods, a comfortable linen-upholstered sofa, " +
-    "woven and vintage accents, layered cozy textiles, and earthy tones",
-  minimalist:
-    "minimalist furniture: a few essential low-profile pieces, uncluttered surfaces, a " +
-    "restrained monochrome palette, and plenty of intentional negative space",
-  scandinavian:
-    "Scandinavian furniture: light woods, soft whites with muted pastel accents, simple " +
-    "functional pieces, hygge textiles like wool throws and sheepskin, and airy styling",
-};
+// Real-estate staging styles: look, palette and materials per style. The
+// furniture for each kind of room is listed in the staging prompt itself.
+const RE_STAGE_STYLES: Record<string, string> = REAL_ESTATE_STAGE_STYLES;
 
 function reStagePrompt(styleDesc: string): string {
-  return (
-    "Virtually stage this real-estate photo: furnish the room with " + styleDesc + ". " +
-    "Use realistic scale and placement appropriate to the room type, resting naturally on the " +
-    "existing floor. If the room already has furniture, replace it cleanly with the new set. " +
-    STAGE_LOCK
-  );
+  // Style describes movable furnishings; it does not restyle the photographed
+  // building. This remains a prompt instruction, subject to manual review.
+  return buildRealEstateStagePrompt(styleDesc);
 }
 
 function prompts(p: Profile): Record<string, string> {
   return {
-    twilight:
-      `Convert this daytime exterior ${p.photo} into a stunning twilight/dusk shot: ` +
-      "deep blue-to-warm-orange gradient sky, warm glowing interior window lights, subtle " +
-      `landscape/path lighting, professional dusk photography. Keep the ${p.exterior}, ` +
-      "landscaping, driveway, signage, and composition exactly the same — only change the sky and lighting. " + LOCK,
-    sky:
-      `Replace the dull, grey, or overcast sky in this ${p.photo} with a bright, clear ` +
-      `blue sky with soft natural clouds. Keep the ${p.exterior}, trees, and ground exactly the same and ` +
-      "match the lighting, shadows, and reflections naturally. " + LOCK,
-    lawn:
-      `Repair and green ${p.greenery} in this ${p.photo}. Keep the ${p.exterior}, hardscape, driveway, plants, ` +
-      "and everything else identical. " + LOCK,
+    twilight: buildTwilightPrompt(photoSubject(p)),
+    sky: buildSkyPrompt(photoSubject(p)),
+    lawn: buildLawnPrompt(photoSubject(p)),
     declutter:
       `Remove all clutter, mess, and personal items from this ${p.photo}: ${p.clutter}. ` +
       REFLECTION_CLAUSE +
@@ -474,6 +534,10 @@ const STAGE_STYLES: Record<string, string> = {
   minimalist:
     "a minimalist style: a few essential low-profile pieces, uncluttered surfaces, a restrained " +
     "monochrome palette, and plenty of intentional negative space",
+  contemporary:
+    "a contemporary style: softly curved seating, sculptural movable tables, layered linen " +
+    "and textured upholstery, warm neutrals with restrained deep accents, and refined " +
+    "freestanding decor; apply this aesthetic only to movable furnishings, not fixed finishes",
   scandinavian:
     "a Scandinavian style: light woods, soft whites with muted pastel accents, simple functional " +
     "pieces, hygge textiles like wool throws and sheepskin, and airy styling",
@@ -489,12 +553,17 @@ function stagePrompt(p: Profile, styleDesc: string): string {
 }
 
 interface Body {
+  /** Additive analysis contract. Legacy suggestions and image POSTs are unchanged. */
+  declutter_assessment_protocol?: string;
+  source_sha256?: string;
   image_b64?: string;
   mime?: string;
   edit?: string;
   style?: string;
-  /** Free-text instruction for edit:"custom" (Mirino-style prompting). */
+  /** Custom instruction or a staging furnishing brief. */
   prompt?: string;
+  staging_reference_b64?: string;
+  staging_reference_mime?: string;
   space_type?: string;
   /** Compliance (W2-B3): the listing this photo belongs to. Without it the edit
    *  still runs, but it cannot be entered in the org's AI audit log. */
@@ -560,26 +629,47 @@ function provenanceKind(edit: string): ProvenanceKind {
 const MAX_CUSTOM_PROMPT = 600;
 // The improve_prompt caps now come from the SHARED polisher module so this
 // function and POST /ai-copy/edit-prompt cannot disagree about them. Same
-// numbers as before (300 in / 400 out) — this is a re-export, not a change.
+// 600 characters in / 400 out; generation never truncates the user's request.
 const MAX_IMPROVE_INPUT = MAX_PROMPT_INPUT;   // rough idea in
 const MAX_IMPROVE_OUTPUT = MAX_PROMPT_OUTPUT; // polished instruction out
 
-/** Wrap a user's free-text instruction with the guardrails every edit gets. */
-function customPrompt(p: Profile, userText: string): string {
-  const truth = p === PROFILES.real_estate
-    ? "this is a real property listing"
-    : "this is a real place being marketed";
-  return (
-    `Edit this ${p.photo} as follows: ` + userText.trim() + ". " +
-    `Stay photorealistic and true to the space — ${truth}. ` + LOCK
-  );
+/** Frame a prepared free-text request (see analyzeCustomPhotoPrompt) for the
+ * image model: what the photo is, the request, how the change should sit in
+ * the photo and what stays. */
+function customPrompt(p: Profile, preparedInstruction: string): string {
+  return buildCustomEditPrompt(photoSubject(p), preparedInstruction);
 }
 
-Deno.serve(async (req) => {
+export async function handleAIPhoto(req:Request):Promise<Response>{
+  const requestDeadline=Date.now()+PHOTO_MAIN_REQUEST_BUDGET_MS;
+  const qualityDeadline=requestDeadline-PHOTO_MAIN_RESPONSE_RESERVE_MS;
   if (req.method === "OPTIONS") return handleOptions();
   try {
     const user = await getUser(req); // owner auth; RLS not needed (no DB touch beyond quota)
+    if(req.method==="GET"&&new URL(req.url).pathname.endsWith("/ai-photo/status")){
+      const params=new URL(req.url).searchParams;
+      let row:PhotoQualityEnvelope;
+      if(params.has("request_key")){
+        assert(!params.has("check_id")&&params.getAll("request_key").length===1&&params.getAll("listing_id").length<=1&&[...params.keys()].every(key=>key==="request_key"||key==="listing_id"),400,"Choose one exact saved photo request.");
+        const requestKey=params.get("request_key")!,listingParam=params.get("listing_id");
+        assert(photoUUID(requestKey)&&(listingParam===null||photoUUID(listingParam)),400,"Choose valid saved photo request and listing identities.");
+        assert(preferredOrg(req),400,"Select the saved photo's library.");
+        const listingId=listingParam?.toLowerCase()??null;
+        const orgId=await requireEditorRole(user,req,"Saved photo edits",listingId??undefined);
+        // Preserve the opaque key's casing and the original nullable listing.
+        // This branch performs lookup/delivery only, never the paid POST path.
+        row=await requestPhotoQualityStatus(adminClient(),{actorId:user.id,orgId,requestKey,listingId},preferredOrg(req)??null);
+      }else row=await statusPhotoQuality(adminClient(),user.id,params.get("check_id")??"",preferredOrg(req)??null);
+      return await photoQualityResponse(adminClient(),row,user.id,preferredOrg(req)??null);
+    }
     if (req.method !== "POST") throw new HttpError(405, "POST only");
+    if(new URL(req.url).pathname.endsWith("/ai-photo/check-existing")){
+      const body=calibrationRequest(await readJsonLimited(req,12_100_000));
+      const org=await requireEditorRole(user,req,"Photo quality checks",body.generation_request_body.listing_id);
+      const row=await beginPhotoCalibration(adminClient(),{actor:user.id,org,selected:preferredOrg(req)??null,body});
+      const checked=await waitForPhotoQuality(adminClient(),row,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.generation_request_body.prompt,deadline:qualityDeadline});
+      return await photoQualityResponse(adminClient(),checked,user.id,preferredOrg(req)??null);
+    }
     if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set", "internal");
 
     // VALIDATE FIRST, CHARGE SECOND (audit round 4). Every quota consumption
@@ -604,7 +694,7 @@ Deno.serve(async (req) => {
     if (body.image_b64 !== undefined) {
       assert(typeof body.image_b64 === "string", 400, "image_b64 must be a string");
       assert(body.image_b64.length <= MAX_IMAGE_B64_CHARS, 413,
-             "image is too large — resize it before sending", "payload_too_large");
+             "This photo is too large to edit. Use a smaller copy of the photo and try again. You were not charged.", "payload_too_large");
       assert(ALLOWED_MIMES.includes(mime), 400, `mime must be one of ${ALLOWED_MIMES.join(", ")}`);
     }
     // Same bound on the optional router mask: an unbounded second image would
@@ -612,37 +702,98 @@ Deno.serve(async (req) => {
     if (body.mask_b64 !== undefined) {
       assert(typeof body.mask_b64 === "string", 400, "mask_b64 must be a string");
       assert(body.mask_b64.length <= MAX_IMAGE_B64_CHARS, 413,
-             "mask is too large — resize it before sending", "payload_too_large");
+             "The area you marked is too large to send. Use a smaller copy of the photo and try again. You were not charged.", "payload_too_large");
       const mm = String(body.mask_mime ?? "image/png").split(";")[0].trim().toLowerCase();
       assert(ALLOWED_MIMES.includes(mm), 400, `mask_mime must be one of ${ALLOWED_MIMES.join(", ")}`);
     }
 
     // Helper modes: text/vision analysis only — no image generation, no monthly charge.
+    const referenceB64 = body.staging_reference_b64;
+    const referenceMime = String(body.staging_reference_mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
+    if (referenceB64 !== undefined) {
+      assert(edit === "stage" && typeof referenceB64 === "string" && referenceB64.length > 0, 400,
+        "A furniture reference is supported only for staging.");
+      assert(referenceB64.length <= 6_000_000 && (body.image_b64?.length ?? 0) + referenceB64.length <= MAX_IMAGE_B64_CHARS,
+        413, "These photos are too large to stage together. Use smaller copies and try again. You were not charged.", "payload_too_large");
+      assert(["image/jpeg", "image/png", "image/webp"].includes(referenceMime), 400,
+        "The furniture reference must be JPEG, PNG or WebP.");
+      // The route's per-output-image price does not cover input tokens. A
+      // second image cannot dispatch until an approved conservative cost
+      // preflight covers both inputs. Refuse before any quota is consumed.
+      throw new HttpError(503, "Staging with your own furniture photo is not available yet. No edit was sent, so you were not charged. Stage the room without a furniture photo for now.", "upstream");
+    }
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
-      const helperCharge = await guardHelper(user.id, req);
+      const assessmentRequested=body.declutter_assessment_protocol!==undefined;
+      assert(!assessmentRequested||body.declutter_assessment_protocol===DECLUTTER_ASSESSMENT_PROTOCOL&&typeof body.source_sha256==="string"&&/^[a-f0-9]{64}$/.test(body.source_sha256),400,"Use the exact photo assessment protocol and source identity.");
+      const helperCharge = await guardHelper(user, req, body.listing_id);
       try {
-        return json({ suggestions: await suggestEdits(body.image_b64, mime, profile), space_type: space });
+        const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        try { assertPhotoRecoveryProtocol(req); }
+        catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
+        await assertPhotoHelperSponsorship(funding,assessmentRequested);
+        try { validatePhotoInputs(body.image_b64,mime); }
+        catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
+        if(assessmentRequested){
+          const bytes=decodeBase64Bytes(body.image_b64),digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");
+          if(digest!==body.source_sha256){await abortFundingOperationBeforeDispatch(funding);throw new HttpError(400,"The photo changed while we were looking at it, so nothing was started. Choose the photo again and retry.");}
+          const admission=await adminClient().rpc("photo_declutter_assessment_admit",{
+            p_actor:user.id,p_org:helperCharge.orgId,p_key:funding.requestKey,
+            p_source_sha256:body.source_sha256,
+          });
+          if(admission.error || admission.data?.admitted!==true){
+            await abortFundingOperationBeforeDispatch(funding);
+            if(admission.error && /RP\d{3}:/.test(admission.error.message??""))throwRpc(admission.error.message);
+            throw new HttpError(503,"We couldn't start the photo check just now, so nothing was sent. Try again in a minute.","upstream");
+          }
+        }
+        const step = legacyPhotoStep("photo.suggest");
+        step.provider = "gemini"; step.model = TEXT_MODEL;
+        const payload=photoHelperPayload([{text:suggestInstruction(profile)+(assessmentRequested?"\n\n"+DECLUTTER_ASSESSMENT_INSTRUCTION:"")},{inline_data:{mime_type:mime,data:body.image_b64!}}]);
+        const assessment:{value?:DeclutterAssessment}|undefined=assessmentRequested?{}:undefined;
+        const suggestions = await fundedAttempt(funding, "photo.suggest", step, body, photoHelperQuote(step.model,payload), () => suggestEdits(payload,assessment));
+        // Billed text call: the ledger row names the hold so it settles.
+        await recordRoutedAiCost(adminClient(), { orgId: helperCharge.orgId, feature: "photo_helper", step, unitCentsOverride: photoHelperQuote(step.model,payload)?.cents, meta: { request_key: funding.requestKey, stage: "photo.suggest", kind: "suggest" } });
+        return json(await completeFundingOperation(funding, { suggestions, space_type: space,...(assessmentRequested?{declutter_assessment_protocol:DECLUTTER_ASSESSMENT_PROTOCOL,source_sha256:body.source_sha256,declutter_assessment:assessment?.value??unavailableDeclutterAssessment(),analysis_cost_bound_cents:photoHelperQuote(step.model,payload)?.cents,analysis_only:true,analysis_request_key:funding.requestKey,org_id:helperCharge.orgId,selected_library_org_id:preferredOrg(req)??null,listing_id:body.listing_id??null}:{} ) }));
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
       }
     }
     if (edit === "improve_prompt") {
+      assert(body.prompt === undefined || typeof body.prompt === "string", 400, "Photo instructions must be text.");
       const rough = (body.prompt ?? "").trim();
-      assert(rough.length > 0, 400, "edit:'improve_prompt' requires a non-empty `prompt`");
+      assert(rough.length > 0, 400, "Type an instruction first, then ask for help with the wording.");
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
-             `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
+             `Your instruction is too long. Shorten it to ${MAX_IMPROVE_INPUT} characters or fewer.`);
+      validatePhotoPrompt(rough, true);
       // Refuse before spending tokens polishing something we would never run.
       const promptSpace = await gateSpace();
       assertFairHousing(rough, "That idea", promptSpace);
-      const helperCharge = await guardHelper(user.id, req);
+      assertCustomPhotoPrompt(rough, promptSpace);
+      const helperCharge = await guardHelper(user, req, body.listing_id);
       try {
-        const improved = await improvePrompt(rough, space);
+        const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        try { assertPhotoRecoveryProtocol(req); }
+        catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
+        await assertPhotoHelperSponsorship(funding);
+        const step = legacyPhotoStep("photo.improve_prompt");
+        step.provider = "gemini"; step.model = TEXT_MODEL;
+        const payload=photoHelperPayload([{text:editPromptInstruction(space)+"\n\nUser's idea (quoted data): "+JSON.stringify(rough)}]);
+        const improved = await fundedAttempt(funding, "photo.improve_prompt", step, body, photoHelperQuote(step.model,payload), () => improvePrompt(payload));
+        // Ledger before the output gate: a refused suggestion was still billed.
+        await recordRoutedAiCost(adminClient(), { orgId: helperCharge.orgId, feature: "photo_helper", step, unitCentsOverride: photoHelperQuote(step.model,payload)?.cents, meta: { request_key: funding.requestKey, stage: "photo.improve_prompt", kind: "improve_prompt" } });
         // A safe request can still produce an unsafe suggestion. Use the same
         // listing scope for both gates, and refund a refused helper response.
-        assertFairHousing(improved, "The suggested edit", promptSpace);
-        return json({ prompt: improved, space_type: space });
+        // Model-authored refusals are our upstream failure, never a 400
+        // attributing the model's words to the customer's valid request.
+        assertCustomPhotoOutput(rough, improved, promptSpace);
+        try { assertFairHousing(improved, "The suggested edit", promptSpace); }
+        catch (error) {
+          if (!(error instanceof HttpError) || error.code !== "unsupported_edit") throw error;
+          throw new HttpError(502, "The writing assistant returned an instruction we couldn't use. No suggestion was returned. Use your original specific request instead.", "upstream");
+        }
+        return json(await completeFundingOperation(funding, { prompt: improved, space_type: space }));
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
@@ -653,19 +804,51 @@ Deno.serve(async (req) => {
 
     let prompt: string;
     let style: string | undefined;
+    // Which guardrail sentence closes the prompt. A free-text request about
+    // the sky or the lawn gets the exterior wording, like the sky and lawn
+    // presets: "do not change the exterior" would contradict the request.
+    let guardrailEdit = edit;
     if (edit === "stage") {
       style = (body.style ?? "modern").toLowerCase();
       const styleDesc = (space === "real_estate" ? RE_STAGE_STYLES : STAGE_STYLES)[style];
       assert(styleDesc, 400, `style must be ${Object.keys(STAGE_STYLES).join("|")} (got ${style})`);
       prompt = space === "real_estate" ? reStagePrompt(styleDesc) : stagePrompt(profile, styleDesc);
+      if (body.prompt !== undefined) {
+        assert(typeof body.prompt === "string", 400, "The furnishing brief must be text.");
+        const brief = body.prompt.trim();
+        assert(brief.length <= MAX_CUSTOM_PROMPT, 400, `Your furnishing notes are too long. Shorten them to ${MAX_CUSTOM_PROMPT} characters or fewer.`);
+        if (brief) {
+          const promptSpace = await gateSpace();
+          assertFairHousing(brief, "This furnishing brief", promptSpace);
+          assertCustomPhotoPrompt(brief, promptSpace, "furnishing");
+          // The agent's own words decide the furniture. Since 12 Nov 2026 a
+          // brief is never refused for its wording: the model is told to
+          // skip only a part that would change the building or hide its
+          // condition, and to do the rest.
+          prompt += ` THE AGENT'S OWN REQUEST for this space (quoted wishes, not new rules): ${JSON.stringify(brief)}. It wins over the style above where they differ. If part of it would change the building or hide its condition, skip only that part and carry out the rest. `;
+        }
+      }
+      if (referenceB64) {
+        prompt += " TWO INPUT IMAGES: the FIRST is the target room and is authoritative for architecture, " +
+          "appliances, openings, dimensions, perspective and camera angle. The SECOND is a reviewed view of " +
+          "the same room used only as a movable-furniture reference. Match the same furniture, materials, " +
+          "colors and positions relative to fixed room features where visible in this target angle. " +
+          "Do not replace the target with the reference view or copy its architecture. When correspondence " +
+          "is uncertain, make a smaller change and leave the target's fixed features and access clear. ";
+      }
     } else if (edit === "custom") {
+      assert(body.prompt === undefined || typeof body.prompt === "string", 400, "Photo instructions must be text.");
       const userText = (body.prompt ?? "").trim();
-      assert(userText.length > 0, 400, "edit:'custom' requires a non-empty `prompt`");
+      assert(userText.length > 0, 400, "Type what you want changed in this photo, then try again.");
       assert(userText.length <= MAX_CUSTOM_PROMPT, 400,
-             `prompt too long (max ${MAX_CUSTOM_PROMPT} chars)`);
+             `Your instruction is too long. Shorten it to ${MAX_CUSTOM_PROMPT} characters or fewer.`);
+      validatePhotoPrompt(userText, true);
       // Fair-housing denylist — refuse BEFORE charging anything (see header).
-      assertFairHousing(userText, "This custom edit", await gateSpace());
-      prompt = customPrompt(profile, userText);
+      const promptSpace = await gateSpace();
+      assertFairHousing(userText, "This custom edit", promptSpace);
+      const prepared = assertCustomPhotoPrompt(userText, promptSpace);
+      prompt = customPrompt(profile, prepared.prompt!);
+      if (prepared.scopes?.some((scope) => scope === "sky" || scope === "lawn")) guardrailEdit = "sky";
     } else {
       prompt = (space === "real_estate" ? RE_PROMPTS : prompts(profile))[edit];
       assert(prompt, 400,
@@ -674,13 +857,68 @@ Deno.serve(async (req) => {
 
     // FAIR-HOUSING GUARDRAILS on every prompt, canned or free-text (HUD 2024).
     // twilight|sky|lawn get the scoped permanence clause — see fairhousing.ts.
-    prompt = `${prompt} ${guardrailsFor(edit)}`;
+    prompt = `${prompt} ${guardrailsFor(guardrailEdit)}`;
 
     // Everything validated — NOW charge the quota, immediately before the
     // billable provider call. Keep the org it charged for the cost_ledger row,
     // and the plan for the router's RouteContext.
-    const charge = await guardEdit(user.id, req);
-    const { orgId, plan } = charge;
+    const orgId = await requireEditorRole(user, req, "AI photo edits", body.listing_id);
+    const requestKey = requiredIdempotencyKey(req).trim();
+    const resultIdentity = { actorId: user.id, orgId, requestKey, listingId: body.listing_id ?? null };
+    let funding: FundingContext = {actorId:user.id,orgId,requestKey,rpc:(name,args)=>adminClient().rpc(name,args)};
+    try {
+      funding = await fundingContext(user.id, orgId, req, body, funding.rpc);
+    } catch (error) {
+      if (error instanceof SavedFundingResponse || (error instanceof HttpError && error.details?.funding_operation_replay === true)) {
+        // The serving-operation begin above checks the complete request hash.
+        // Resolve prospective policy FIRST, even when its pointer ACK was lost.
+        const quality=await lookupPhotoQuality(adminClient(),resultIdentity);
+        if(quality){
+          assert(quality.evidence.request_sha256===await inputHash(body),409,"This edit was already started with a different instruction. Start a new edit to use the new instruction.","conflict");
+          await photoQualityScope(adminClient(),quality,user.id,preferredOrg(req)??null);
+          // A privately released edit is answered at once with its honest
+          // review state. Its saved check is only nudged, never awaited.
+          const releasedReplay=photoReleased(quality);
+          if(releasedReplay&&hasPhotoRecoveryProtocol(req)&&quality.can_continue)continuePhotoQualityAfterResponse(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,url:req.url,instruction:body.prompt,deadline:qualityDeadline});
+          const continued=!releasedReplay&&hasPhotoRecoveryProtocol(req)?await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt,deadline:qualityDeadline}):quality;
+          return await photoQualityResponse(adminClient(),continued,user.id,preferredOrg(req)??null,{space_type:space});
+        }
+        const stored=error instanceof SavedFundingResponse?error.saved_response:undefined;
+        assert(stored?.kind!=="photo_quality",503,"We couldn't load your saved edit just now. No new edit was started and there is no new charge. Try again in a minute.","upstream");
+        const pointer = stored as unknown as PhotoResultPointer|undefined;
+        const saved = await restorePhotoResult(adminClient(), resultIdentity, pointer);
+        if (!saved) throw new HttpError(409, "This edit is already being made and its picture is not ready yet. Check this edit again in a moment. A second edit is not started.", "conflict");
+        const metadata = pointer?.metadata ?? {
+          edit, space_type: space, ...(style ? {style} : {}),
+          disclosure: disclosureFallback(provenanceKind(edit), edit),
+          provenance: { id: null, recorded: false, reason: "The image was recovered before its disclosure receipt was saved. Review the original before publishing." },
+        };
+        if (!pointer) await completeFundingOperation(funding, {kind:"photo_output",bucket:"renders",key:saved.key,mime:saved.mime,metadata});
+        return photoJsonResponse(metadata,saved.image_b64,saved.mime,saved.key);
+      }
+      throw error;
+    }
+    // Historical replay above remains available without a new client capability.
+    // Fresh paid work requires exact retained-operation recovery before quotas.
+    try { assertPhotoRecoveryProtocol(req); }
+    catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
+    // Saved results above retain their original request/history. The new
+    // still-image and UTF-8 policy governs prospective dispatch only.
+    try {
+      validatePhotoInputs(body.image_b64,mime,body.mask_b64,
+        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());
+      if(edit==="custom" || edit==="stage")validatePhotoPrompt(String(body.prompt??"").trim(),true);
+      validatePhotoPrompt(prompt);
+    }catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
+    let charge: EditCharge;
+    try { charge = await guardEdit(user, req, body.listing_id, edit); }
+    catch (error) { await abortFundingOperationBeforeDispatch(funding); throw error; }
+    if(charge.credit)funding.credit={orgId:charge.credit.orgId,
+      requestKey:charge.credit.requestKey,environment:charge.credit.environment};
+    // A lapsed member can use already-purchased credits; route eligibility is
+    // paid for this single edit, while the actual entitlement remains Free.
+    const plan=charge.credit&&charge.plan==="free"?"pro":charge.plan;
+    if (charge.orgId !== orgId) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw new HttpError(409,"Your workspace changed while this edit was starting. No edit was sent, so you were not charged. Try again.","conflict"); }
 
     // ── ROUTER (flag-gated, additive) ────────────────────────────────────────
     // The fair-housing gate above has already run — contract §4 puts it BEFORE
@@ -697,6 +935,10 @@ Deno.serve(async (req) => {
     const routerOn = await routerEnabled();
     let steps: RouteStep[];
     try {
+      // Ordinary photo edits use the priced 2K Flash route. The former
+      // preservation profile selected Pro 4K for Stage/Declutter and could
+      // overflow the response envelope on an ordinary phone photo. Historical
+      // operations replay above; only new edits use this route.
       steps = await resolveChain(
         task,
         {
@@ -710,10 +952,11 @@ Deno.serve(async (req) => {
     } catch (e) {
       // No authorized route means no provider ran; return both quota charges.
       await refundEditCharge(charge);
+      await abortFundingOperationBeforeDispatch(funding);
       throw e;
     }
 
-    const genInput: GenerateInput = {
+    let genInput: GenerateInput = {
       task,
       prompt,
       image_b64: body.image_b64,
@@ -729,59 +972,154 @@ Deno.serve(async (req) => {
     // table. While the router is OFF it still wins for the legacy gemini step,
     // so the flag-off path stays exactly what THIS deploy runs today even if
     // the secret and the seeded legacy row ever disagree.
-    const chain = routerOn ? steps : steps.map((s) =>
+    let chain = routerOn ? steps : steps.map((s) =>
       s.provider === "gemini" && s.model === "gemini-2.5-flash-image" && MODEL !== s.model ? { ...s, model: MODEL } : s
     );
+    if (referenceB64) {
+      // Preserve route retirement, privacy, plan and operator eligibility. Never
+      // silently drop a reference or send it to a single-image adapter.
+      chain = chain.filter((step) => step.provider === "gemini" && supportsStagingReference(step.model));
+      if (chain.length === 0) {
+        await refundEditCharge(charge);
+        await abortFundingOperationBeforeDispatch(funding);
+        throw new HttpError(503, "Staging with your own furniture photo is not available right now. No edit was sent, so you were not charged. Stage the room without a furniture photo.", "upstream");
+      }
+      genInput.extra = { ...genInput.extra, staging_reference_b64: referenceB64, staging_reference_mime: referenceMime };
+    }
+
+    const ownerPhotoPro4KStep = await ownerQaPhotoPro4KStep({actorId:user.id,orgId,listingId:body.listing_id,task});
+    const ownerPhotoStep = ownerPhotoPro4KStep ?? await ownerQaPhotoStep({actorId:user.id,orgId,listingId:body.listing_id,task});
+    if (ownerPhotoStep) {
+      try {
+        genInput = ownerPhotoPro4KStep ? prepareOwnerQaPhotoPro4KInput(genInput) : prepareOwnerQaPhotoInput(genInput);
+        if(ownerPhotoPro4KStep){const quote=mediaAttemptQuote(ownerPhotoStep,genInput);assert(quote,503,"The Pro4K comparison could not be priced. No edit was sent.");ownerPhotoStep.unit_cents=quote.cents;}
+      }
+      catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
+      // An explicit comparison is one priced model/size, never a quiet fallback.
+      chain = [ownerPhotoStep];
+    }
+    const normalPhoto2K = !ownerPhotoStep && !maskB64;
+    if (normalPhoto2K) {
+      try {
+        genInput = preparePhoto2KInput(genInput);
+        chain = photo2KChain(chain, genInput);
+      }
+      catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
+    }
+    const timedPhoto=normalPhoto2K||!!ownerPhotoPro4KStep;
+    // Masked Fill keeps its legacy resolution, but its per-megapixel quote
+    // and the successful ledger entry must use the same complete source bound.
+    try {
+      if (maskB64) chain = priceMaskedPhotoChain(chain, genInput);
+      chain = await boundedPhotoChain(funding, chain, genInput);
+    }
+    catch(error) {
+      await refundEditCharge(charge);
+      await abortFundingOperationBeforeDispatch(funding);
+      throw error;
+    }
+
+    // This is the sole new-generation owner. While policy is disabled begin
+    // fails before supplier dispatch; historical saved results above still work.
+    let quality:PhotoQualityEnvelope;
+    try{
+      quality=await beginPhotoQuality(adminClient(),resultIdentity,{edit,style,instruction:body.prompt,originalAsset:body.original_asset_id,imageB64:body.image_b64,mime});
+      if(quality.created!==true){
+        await refundEditCharge(charge);
+        return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space});
+      }
+    }catch(error){await refundEditCharge(charge);await abortFundingOperationBeforeDispatch(funding);throw error;}
+
+    // Boot the comparison process while the edit generates (qc-worker lane).
+    // Best effort and never awaited: it claims nothing, and a refusal, a
+    // timeout or an older worker changes nothing for this edit. The helper is
+    // read off the module namespace, so this is a no-op until that lane's
+    // prewarmPhotoComparison export is merged.
+    try{
+      const prewarm=(photoComparisonClient as unknown as {prewarmPhotoComparison?:(checkId:string,signal?:AbortSignal)=>Promise<unknown>}).prewarmPhotoComparison;
+      if(typeof prewarm==="function")void Promise.resolve(prewarm(quality.check.id,req.signal)).catch(()=>{});
+    }catch{/* warm-up is optional */}
+
+    // Record this generation's immutable recipe identity (PHOTO_RECIPE_REVISION
+    // and the SHA-256 of the exact final prompt handed to the provider adapter)
+    // BEFORE any provider dispatch. A failure aborts exactly like a failed
+    // begin: evidence closed, quota refunded, operation fenced as never
+    // dispatched, and no provider is called.
+    try{await recordPhotoRecipe(adminClient(),quality,genInput.prompt??"");}
+    catch(error){
+      try{quality=await failPhotoQuality(adminClient(),quality,"recipe_recording",{provider_cost_incurred:false,no_provider_dispatch:true,retained_output:false,message:"The edit recipe could not be recorded. No edit was sent."});}catch{/* The evidence row still prevents another generator. */}
+      await refundEditCharge(charge);await abortFundingOperationBeforeDispatch(funding);throw error;
+    }
 
     // The chain throwing means every step failed (or a validation/nsfw refusal
     // fired) — no image was produced, so hand the quota back (audit item 2 /
     // F-E-16). Once runChain RETURNS, a provider ran and produced bytes; the
     // ledger write just below is what records that, and nothing past this
     // point is ever refunded.
-    let attempt: ChainResult<{ b64: string; mime: string; assetKey: string | null }>;
+    let attempt: ChainResult<{ b64: string; mime: string; local: DoneState; stage: string; retried: boolean }>;
     try {
       attempt = await runChain(task, chain, async (step) => {
+        if (ownerPhotoStep) {
+          const currentOrg = await requireEditorRole(user, req, "AI photo edits", body.listing_id);
+          const freshComparison=ownerPhotoPro4KStep?await ownerQaPhotoPro4KStep({actorId:user.id,orgId,listingId:body.listing_id,task}):await ownerQaPhotoStep({actorId:user.id,orgId,listingId:body.listing_id,task});
+          if (currentOrg !== orgId || !freshComparison || freshComparison.model!==step.model)
+            throw new HttpError(403,"The temporary photo comparison authorization ended. No new edit was sent.","forbidden");
+        }
         const adapter = adapterFor(step.provider);
-        const ref = await adapter.submit(step, genInput);
-        const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
-        // One download, reused for both the inline answer and the R2 copy.
-        const local = await inlineImageResult(step.provider, done);
-        const b64 = inlineBase64(local);
-        if (!b64) throw new ProviderError(step.provider, "upstream", `${step.provider} returned no image bytes`);
+        const generate = async (stage: string, retried: boolean) => {
+          const ref = await fundedAttempt(funding, stage, step, genInput, mediaAttemptQuote(step, genInput), async() => {
+            return timedPhoto
+              ? await submitPreparedGeminiPhoto(step,genInput,{deadline:requestDeadline-PHOTO_MAIN_PERSIST_RESERVE_MS,signal:req.signal})
+              : await adapter.submit(step, genInput);
+          });
+          const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
+          // One download, reused for both the inline answer and the R2 copy.
+          const local = await inlineImageResult(step.provider, done);
+          const b64 = inlineBase64(local);
+          if (!b64) throw new ProviderError(step.provider, "upstream", `${step.provider} returned no image bytes`);
 
-        // persist(): the canonical asset is ours (contract §4).
-        //
-        // Only while the router is ON — with the flag off this function stores
-        // nothing today, and a no-op deploy must not start writing objects (or
-        // spending the latency) behind an operator's back.
-        //
-        // BEST EFFORT even then, and only here: unlike a video, the edited photo
-        // is returned inline in this very response, so the caller already has the
-        // bytes and a storage hiccup must not destroy an edit they paid for.
-        let assetKey: string | null = null;
-        if (routerOn) {
-          try {
-            const stored = await adapter.persist(local, routedR2Key(orgId, task, local.mime));
-            assetKey = stored.key;
-          } catch (e) {
-            console.error("ai-photo: persist to R2 failed (edit still returned):", e instanceof Error ? e.message : e);
+          return { b64, mime: local.mime, local, stage, retried };
+        };
+        try { return await generate(`${task}:${chain.indexOf(step)}`, false); }
+        catch (first) {
+          // ONE AUTOMATIC RETRY on the same route for a transient failure
+          // (photo-retry.ts). It is a second funded attempt under the SAME
+          // customer charge: guardEdit ran once and is settled once below, the
+          // ledger row names the attempt that produced the image, and the
+          // first attempt's reservation keeps whatever state fundedAttempt
+          // gave it (released when definitively rejected, retained when
+          // uncertain). Its stage is numeric and outside the chain's own
+          // indexes because credit-funded edits only admit `task:<number>`.
+          if (!photoGenerationRetryable(first, {remainingMs:requestDeadline-PHOTO_MAIN_PERSIST_RESERVE_MS-Date.now(),clientGone:req.signal.aborted,ownerComparison:!!ownerPhotoStep})) throw first;
+          try { return await generate(`${task}:${chain.length+chain.indexOf(step)}`, true); }
+          catch (second) {
+            // A retry the funding rules will not admit (for example a credit
+            // quote that cannot cover a second hold) is not this edit's
+            // failure; report the provider failure that actually happened.
+            if (second && typeof second === "object" && "funding_admission" in second && second.funding_admission === true) throw first;
+            throw second;
           }
         }
-        return { b64, mime: local.mime, assetKey };
       });
     } catch (e) {
-      await refundEditCharge(charge);
+      const retainCharge=e instanceof HttpError&&e.details?.retain_feature_charge===true;
+      if(!retainCharge)await refundEditCharge(charge);
+      try{
+        quality=await failPhotoQuality(adminClient(),quality,retainCharge?"photo_provider_wire_size":"generation",{provider_cost_incurred:"possible",retained_output:false,...(retainCharge?{max_response_bytes:e.details?.max_response_bytes}:{}),message:"The generation did not return a confirmed image. No repeat generation was started."});
+        return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
+      }catch(statusError){if(statusError instanceof HttpError&&statusError.code.startsWith("photo_quality_"))throw statusError;}
       throw e;
     }
     const step = attempt.step;
-    const outB64 = attempt.value.b64;
+    let outB64 = attempt.value.b64;
     const outMime = attempt.value.mime;
+    await completeFundingOperation(funding,{kind:"photo_quality",evidence_id:quality.evidence.id});
 
     // COST LEDGER (F-E-15): the image edit succeeded and is billed, so record
     // ONE org-scoped cost_ledger row with job_id = NULL. This is what the owner
     // spend console and the per-org monthly COGS view read for app AI. The
     // provider/model/price come from the step that ACTUALLY ran (contract §4);
-    // with the flag off, 0056 selects the existing 6.7c Gemini photo route.
+    // Normal unmasked edits price the complete requested 2K bound on that route.
     // Best effort — a failed insert must never fail an edit the caller has paid
     // for (see recordAppAiCost). Only reached on success, so a failure above
     // (which F-E-16 refunds) writes no row: no double-count.
@@ -790,51 +1128,75 @@ Deno.serve(async (req) => {
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, ...(style ? { style } : {}) },
+      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto2K) ? {image_size:ownerPhotoPro4KStep?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:ownerPhotoPro4KStep?"complete_input_4096_text_2000_pro_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), ...(maskB64&&isMaskedFillStep(step)?{cost_basis:"source_megapixels_rounded_up_5_cents_bound",priced_megapixels:step.unit_cents/5}:{}), request_key: funding.requestKey, stage: attempt.value.stage, ...(attempt.value.retried ? { automatic_retry: true } : {}), ...(style ? { style } : {}),
+        ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
+          ...(timedPhoto ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
     });
+    // A confirmed generated image consumes this one quoted customer charge.
+    // The same hold continues to fund the saved fixed-feature judge below.
+    await finishEditCredit(charge,"settled");
 
-    // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
-    // exact sentence the public tour will print. Best effort — never fatal (the
-    // image is already generated and already billed). See _shared/provenance.ts.
-    const prov = await recordProvenance(req, {
-      listingId: body.listing_id,
-      kind: provenanceKind(edit),
-      label: body.label ?? null,
-      modelId: step.model,
-      edit,
-      style: style ?? null,
-      // Free-text only, and only the user's own words (the canned guardrails
-      // add nothing). Bounded and stripped by the RPC; never public.
-      promptSummary: edit === "custom" ? (body.prompt ?? "").trim().slice(0, 300) : null,
-      originalAssetId: body.original_asset_id ?? null,
-    });
-
-    return json({
-      image_b64: outB64,
-      mime: outMime ?? "image/png",
-      edit,
-      space_type: space,
-      ...(style ? { style } : {}),
-      // ADDITIVE, and only while the router is on: with the flag off the body
-      // is byte-for-byte what shipped.
-      ...(routerOn
-        ? {
-          route: { provider: step.provider, model: step.model, route_id: step.route_id },
-          ...(attempt.value.assetKey ? { asset_key: attempt.value.assetKey } : {}),
-        }
-        : {}),
-      // The disclosure this edit carries onto the tour (CA AB 723 / NorthstarMLS).
-      disclosure: prov.disclosure,
-      provenance: {
-        id: prov.id,
-        recorded: prov.recorded,
-        ...(prov.reason ? { reason: prov.reason } : {}),
-      },
-    });
+    // Ledger liability above survives every later quality/storage refusal.
+    // Decode once within the measured output envelope, retain exact quarantine
+    // bytes, then evaluate requested geometry. Even a wrong-size valid photo
+    // remains private evidence rather than being silently discarded.
+    let phase="photo_output_validation";
+    // A complete, readable photo that is merely not the requested 2K size is
+    // kept for delivery with an honest resolution note (see below) instead of
+    // ending the paid edit without an image. It is never reported as 2K.
+    let offSize=false,measured:{width:number;height:number}|null=null;
+    try{
+      const decoded=decodePhotoOutput(outB64,outMime);
+      measured={width:decoded.width,height:decoded.height};
+      phase="evidence_persistence";
+      quality=await retainPhotoCandidate(adminClient(),quality,decoded,{stage:attempt.value.stage,provider:step.provider,model:step.model});
+      phase="photo_output_geometry";
+      if(ownerPhotoPro4KStep)assertPhotoPro4KGeometry(decoded);
+      else if(ownerPhotoStep)assertOwnerQaPhotoOutput(outB64,outMime);
+      else if(normalPhoto2K)assertPhoto2KGeometry(decoded);
+    }catch(error){
+      const over=error instanceof HttpError&&error.details?.failure_phase==="photo_output_size";
+      // Only the ordinary 2K size window is soft, and only once the exact
+      // bytes and their disclosure record are retained. Owner comparisons,
+      // undecodable output, storage failures and the 25 MiB bound stay hard.
+      offSize=phase==="photo_output_geometry"&&normalPhoto2K&&!over&&error instanceof HttpError&&measured!==null&&deliverableOffSizePhoto(measured)&&!!quality.evidence.output_etag&&!!quality.evidence.provenance_id;
+      if(!offSize){
+        quality=await failPhotoQuality(adminClient(),quality,over?"photo_output_size":phase,{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:over?"The paid image exceeded the safe25MiB output bound and could not be retained.":"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
+        return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
+      }
+    }
+    const releaseFacts:Record<string,unknown>={delivered:"before_advisory_check",stage:attempt.value.stage,...(attempt.value.retried?{automatic_retry:true}:{}),
+      geometry:{requested:ownerPhotoPro4KStep?"4K":normalPhoto2K?"2K":null,width:measured?.width??null,height:measured?.height??null,meets_request:!offSize}};
+    // The heavy judge runs in its separate service function. Retain this exact
+    // already-validated base64 for the eventual accepted reply, avoiding another
+    //whole-photo download/decode/encode in the generation isolate.
+    const inlineCandidate={imageB64:outB64,key:quality.evidence.output!.key,mime:outMime,sha256:quality.evidence.output!.sha256,bytes:quality.evidence.output!.bytes};
+    attempt.value.b64="";attempt.value.local={status:"done",mime:outMime,result_url:""};
+    // FAST DELIVERY. The ledger row, the settled charge, the exact retained
+    // bytes and the disclosure record all exist at this point. No check
+    // outcome may block or delay an edit (owner decisions, 6 and 12 Nov), so
+    // SQL accepts the edit now: delivery receipts, accepted state and a
+    // publishable disclosure record, usable on the listing at once. The check
+    // continues after the reply and appends its review to the release record.
+    // When release is unavailable (migration not applied, switch off, SQL
+    // refusal) the previous wait-for-the-check path runs.
+    const released=await releasePhotoQuality(adminClient(),quality,releaseFacts);
+    if(released){
+      continuePhotoQualityAfterResponse(adminClient(),released,{actor:user.id,selected:preferredOrg(req)??null,url:req.url,instruction:body.prompt,deadline:qualityDeadline});
+      return await photoQualityResponse(adminClient(),released,user.id,preferredOrg(req)??null,{space_type:space,...(routerOn?{route:{provider:step.provider,model:step.model,route_id:step.route_id}}:{})},undefined,inlineCandidate);
+    }
+    if(offSize){
+      // No release receipt means no honest way to hand over an off-size image.
+      quality=await failPhotoQuality(adminClient(),quality,"photo_output_geometry",{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
+      return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
+    }
+    quality=await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt,deadline:qualityDeadline});
+    return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space,...(routerOn?{route:{provider:step.provider,model:step.model,route_id:step.route_id}}:{})},undefined,inlineCandidate);
   } catch (err) {
     return respondError(err);
   }
-});
+}
+if(import.meta.main)Deno.serve(handleAIPhoto);
 
 // ── helper modes: suggest / improve_prompt (text+vision, JSON out) ────────────
 
@@ -868,16 +1230,25 @@ function suggestInstruction(p: Profile): string {
 }
 
 /** edit:"suggest" — analyze the photo and pick up to 3 genuinely useful edits. */
-async function suggestEdits(imageB64: string, mime: string, profile: Profile): Promise<Suggestion[]> {
-  const raw = await geminiText(
-    [
-      { text: suggestInstruction(profile) },
-      { inline_data: { mime_type: mime, data: imageB64 } },
-    ],
-    true,
-  );
+async function suggestEdits(payload:PhotoHelperPayload,assessment?:{value?:DeclutterAssessment}): Promise<Suggestion[]> {
+  const raw = await geminiText(payload);
 
   const parsed = parseJsonLoose(raw);
+  if(assessment){
+    const candidate=(parsed as Record<string,unknown>)?.declutter_assessment;
+    assessment.value=parseDeclutterAssessment(candidate);
+    // 4 of 11 assessments on 2026-11-06 came back as the fixed "needs your
+    // review" fallback. Record WHY the strict parser declined, with no image
+    // bytes and no reason text, so the drift can be seen in the logs.
+    if(assessment.value.confidence===0&&assessment.value.decision==="uncertain"){
+      const shape=candidate&&typeof candidate==="object"&&!Array.isArray(candidate)?candidate as Record<string,unknown>:null;
+      console.error(JSON.stringify({event:"declutter_assessment_fallback",parsed:parsed!==null&&typeof parsed==="object",raw_chars:raw.length,
+        keys:shape?Object.keys(shape).sort():null,decision:shape&&typeof shape.decision==="string"?shape.decision.slice(0,16):null,
+        confidence:shape&&typeof shape.confidence==="number"?shape.confidence:null,
+        reason_chars:shape&&typeof shape.reason==="string"?shape.reason.length:null,
+        targets:shape&&Array.isArray(shape.targets)?shape.targets.map(t=>typeof t==="string"?t.slice(0,32):typeof t).slice(0,8):null}));
+    }
+  }
   const list = Array.isArray((parsed as Record<string, unknown>)?.suggestions)
     ? (parsed as { suggestions: unknown[] }).suggestions
     : Array.isArray(parsed)
@@ -918,14 +1289,11 @@ async function suggestEdits(imageB64: string, mime: string, profile: Profile): P
  * NOTHING THE CLIENT SEES MOVES. Shipped app builds still call
  * `edit:"improve_prompt"` on THIS function; the request body, the response
  * shape ({ prompt, space_type }), the caps (300 in / 400 out), the gate order,
- * the model (TEXT_MODEL) and the helper limiter are all unchanged. Only the
- * words inside the prompt changed.
+ * the model (TEXT_MODEL) and helper limiter remain unchanged. Paid helpers use
+ * their separately priced shared wallet; bounded trial helpers are excluded.
  */
-async function improvePrompt(rough: string, space: SpaceType): Promise<string> {
-  const raw = await geminiText(
-    [{ text: editPromptInstruction(space) + "\n\nUser's idea: " + rough }],
-    true,
-  );
+async function improvePrompt(payload:PhotoHelperPayload): Promise<string> {
+  const raw = await geminiText(payload);
 
   const parsed = parseJsonLoose(raw);
   let improved = "";
@@ -935,28 +1303,27 @@ async function improvePrompt(rough: string, space: SpaceType): Promise<string> {
     // Model ignored the JSON contract — fall back to its plain text.
     improved = raw.replace(/^```(?:json)?|```$/g, "").replace(/^"|"$/g, "").trim();
   }
-  if (!improved) throw new HttpError(502, "Gemini returned no improved prompt", "upstream");
-  return improved.replace(/\s+/g, " ").slice(0, MAX_IMPROVE_OUTPUT);
+  if (!improved) throw new HttpError(502, "The AI writing helper did not come back with a suggestion. Try again, or use your own wording.", "upstream");
+  improved = improved.replace(/\s+/g, " ");
+  if (improved.length > MAX_IMPROVE_OUTPUT) throw new HttpError(502, "The writing assistant returned an instruction that was too long. No suggestion was returned.", "upstream");
+  return improved;
 }
 
 /** One text/vision generateContent call on the cheap flash model → first text part. */
-async function geminiText(parts: unknown[], wantJson: boolean): Promise<string> {
+async function geminiText(payload:PhotoHelperPayload): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`;
-  const payload = {
-    contents: [{ role: "user", parts }],
-    generationConfig: {
-      temperature: 0.4,
-      ...(wantJson ? { responseMimeType: "application/json" } : {}),
-    },
-  };
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY! },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30_000),
   });
-  const data = await res.json().catch(() => ({} as Record<string, unknown>));
+  let parsed = true;
+  const data = await res.json().catch(() => { parsed = false; return {} as Record<string, unknown>; });
   if (!res.ok) {
-    throw new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`, "upstream");
+    const rejected = parsed && !!data && typeof data === "object" && !Array.isArray(data) && definitiveSubmitRejection(res.status, data);
+    throw new ProviderHttpError(new HttpError(502, "The AI helper is not answering right now. Try again in a minute.", "upstream"),
+      new ProviderError("gemini", classifyStatus(res.status), "Gemini helper submit failed", res.status, rejected));
   }
   // deno-lint-ignore no-explicit-any
   for (const cand of ((data as any).candidates ?? [])) {
@@ -964,7 +1331,7 @@ async function geminiText(parts: unknown[], wantJson: boolean): Promise<string> 
       if (typeof part.text === "string" && part.text.trim()) return part.text as string;
     }
   }
-  throw new HttpError(502, `Gemini returned no text. ${JSON.stringify(data).slice(0, 200)}`, "upstream");
+  throw new HttpError(502, "The AI helper did not come back with an answer. Try again in a minute.", "upstream");
 }
 
 /** Defensive JSON parse: strip code fences, else grab the first {...} block. */

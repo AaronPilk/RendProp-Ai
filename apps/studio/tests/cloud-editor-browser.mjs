@@ -6,9 +6,23 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { build } from "vite";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
+import { collectRunnerFacts, quickLoad } from "./runner-facts.mjs";
+import { startNativeTraceObserver, summarizeRecordingSilence, NATIVE_TRACE_EXPORT_LIMITS } from "./native-trace-observer.mjs";
+import { startNodeSchedulingProbe } from "./scheduling-probe.mjs";
+import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} from "./export-audio-output.mjs";
+import { emitFailureAnnotation } from "./ci-failure-annotation.mjs";
+import { startMediaTraceObserver, summarizeMediaTrace } from "./native-media-trace-observer.mjs";
+const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
+const mediaTraceFlags=args.filter(argument=>argument==="--media-trace");
+assert(mediaTraceFlags.length<=1,"Duplicate --media-trace option");
+assert.equal(args.length,mediaTraceFlags.length,"Unknown cloud editor test option");
+const mediaTraceEnabled=mediaTraceFlags.length===1;
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
-const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
+const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx","tests/runner-facts.mjs","tests/native-trace-observer.mjs","tests/scheduling-probe.mjs","tests/ci-failure-annotation.mjs","tests/native-media-trace-observer.mjs","src/editor/VideoEditor.tsx","src/features/sync/CloudEditor.tsx","src/data/documents.ts",...['export','export-canvas-ready','recording-clock','mp4-cadence','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
+const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
+const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), audioOutput, mediaTrace:{enabled:mediaTraceEnabled,optInFlag:"--media-trace",scope:"first-narrated-studio-only",testOnly:true}, runnerFacts: collectRunnerFacts(), loadBeforeExport: [], checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
 const timingDevices=[];
 // Test-only observation: every wrapper returns the original native result and
@@ -56,18 +70,57 @@ function installMediaTimingFixture() {
 async function captureMediaTiming() {
   for(const device of timingDevices){
     if(device.tab.isClosed())continue;
-    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());}
+    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());device.clockRefusals=await device.tab.evaluate(()=>window.exportClockRefusals??[]);device.cadenceRefusals=await device.tab.evaluate(()=>window.exportCadenceRefusals??[]);}
     catch(error){device.captureError=String(error);}
   }
-  receipt.mediaTiming=timingDevices.map(({id,listing,trace,captureError})=>({id,listing,trace,captureError}));
+  receipt.mediaTiming=timingDevices.map(({id,listing,trace,clockRefusals,cadenceRefusals,captureError})=>({id,listing,trace,clockRefusals,cadenceRefusals,captureError}));
 }
-async function closeDevice(tab){await captureMediaTiming();await tab.close();}
+async function captureAudioOutputDevice(tab){
+  const device=timingDevices.find(device=>device.tab===tab);
+  assert(device,"Audio output must belong to a known browser device");
+  device.audioOutput=await verifyTestAudioOutput(tab,audioOutput);
+}
+async function closeDevice(tab){await captureAudioOutputDevice(tab);await captureMediaTiming();await tab.context().close();}
 async function saveExportDiagnostics(label,path,probe){await captureMediaTiming();receipt.exportProbes.push({label,path,ffprobe:probe});await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));}
 
-const pro=async tab=>{await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
+const pro=async tab=>{await tab.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
 const advancedTools=async tab=>{const details=tab.locator("details.creation-advanced").filter({has:tab.locator("summary",{hasText:"Capture plan & extra editing tools"})});if(!await details.evaluate(node=>node.open))await details.locator("summary").click();};
+// Retain the actual guard's cause on a refused export. No clock arguments,
+// scheduling, thresholds or thrown errors change; successful reads are untouched.
+const exportRefusalReceiptPlugin={name:"cloud-export-refusal-receipt",enforce:"pre",transform(code,id){
+  if(id.endsWith('/src/editor/recording-clock.ts')){
+    const seam='export class RecordingClock {';
+    assert.equal(code.split(seam).length,2,"Actual recording-clock observation anchor missing");
+    return code.replace(seam,'class ShippingRecordingClock {')+`
+export class RecordingClock extends ShippingRecordingClock {
+  read(wall: number, timeline: number, audio?: number): void {
+    try { super.read(wall,timeline,audio); }
+    catch(error) {
+      const observations = (window as any).exportClockRefusals ??= [];
+      observations.push({atMs:performance.now(),message:(error as Error).message,cause:(error as Error).cause});
+      throw error;
+    }
+  }
+}`;
+  }
+  if(id.endsWith('/src/editor/mp4-cadence.ts')){
+    const seam='export async function verifyMp4FrameCadence(';
+    assert.equal(code.split(seam).length,2,"Actual encoded-cadence observation anchor missing");
+    return code.replace(seam,'async function shippingVerifyMp4FrameCadence(')+`
+export async function verifyMp4FrameCadence(blob: Blob, transitions: EncodedTransition[], signal?: AbortSignal): Promise<void> {
+  try { await shippingVerifyMp4FrameCadence(blob, transitions, signal); }
+  catch(error) {
+    if ((error as Error).message === "Encoded video frames were skipped. No download was created. Close other busy tabs and retry.") {
+      const observations = (window as any).exportCadenceRefusals ??= [];
+      if (observations.length < 4) observations.push({atMs:performance.now(),message:(error as Error).message,cause:(error as Error).cause ?? null});
+    }
+    throw error;
+  }
+}`;
+  }
+}};
 try {
-  await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
+  await build({ configFile: false, root, publicDir: false, logLevel: "error", plugins:[exportRefusalReceiptPlugin], build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
   server = createServer(async (request, response) => { const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`); if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end(); try { response.setHeader("Content-Type", ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css" })[extname(path)] ?? "application/octet-stream"); response.end(await readFile(path)); } catch { response.writeHead(404).end(); } });
   await new Promise((done) => server.listen(0, "127.0.0.1", done)); const origin = `http://127.0.0.1:${server.address().port}`;
   const sourceVideo = join(artifacts, "source-blue.mp4"), agentVideo = join(artifacts, "agent-green.mp4"), voiceFile = join(artifacts, "narration.wav");
@@ -78,11 +131,14 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   async function device(seed, listing = "20000000-0000-4000-8000-000000000002") {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, serviceWorkers: "block" });
+    await installTestAudioOutput(context, audioOutput);
     await context.addInitScript(installMediaTimingFixture);
     if (seed) await context.addInitScript(value => localStorage.setItem("fixture-cloud", JSON.stringify(value)), seed);
     await context.route("**/*", route => { const url = new URL(route.request().url()); if(url.href === `https://${"a".repeat(32)}.r2.cloudflarestorage.com/fixture/narration.wav`) return route.fulfill({status:200,contentType:"audio/wav",body:voiceBytes}); if (url.origin === origin && route.request().method() === "GET" || url.protocol === "blob:") return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
     const tab = await context.newPage(); timingDevices.push({id:timingDevices.length+1,listing,tab}); tab.on("pageerror", error => receipt.errors.push(error.message)); tab.setDefaultTimeout(10000);
-    await tab.goto(`${origin}/tests/cloud-editor-fixture.html?listing=${listing}`); await pro(tab); return tab;
+    await tab.goto(`${origin}/tests/cloud-editor-fixture.html?listing=${listing}`);
+    await verifyTestAudioOutput(tab, audioOutput);
+    await pro(tab); return tab;
   }
   page = await device();
   await expect(page.getByLabel("Title overlay", { exact: true })).toBeVisible();
@@ -110,6 +166,10 @@ try {
   await expect.poll(async () => (await page.evaluate(() => window.cloudFixture.snapshot())).documents["edit:20000000-0000-4000-8000-000000000002"]?.payload.draft?.title).toBe("Office to phone edit");
   const first = await page.evaluate(() => window.cloudFixture.snapshot()); assert.equal(first.tickets, 1); assert.equal(first.assets[0].uploaded, true);
   receipt.checks.push("Import automatically uploads the exact source and CAS-saves edit plus source asset reference");
+  // The saved document is the handoff evidence. Retire this whole browser
+  // context before opening its replacement so its editor, preview and media
+  // decoder cannot compete with a later guarded export on a small runner.
+  await closeDevice(page);
   const second = await device(first); page = second;
   await expect(second.getByLabel("Title overlay", { exact: true })).toHaveValue("Office to phone edit");
   await expect(second.getByRole("button", { name: /Select clip 1:/ })).toBeVisible();
@@ -127,6 +187,7 @@ try {
   receipt.checks.push("A second browser restores both the complete conversation and its actual edited draft, including later manual refinements, while reusing the same original media");
 
   await second.getByRole("combobox", { name: "Property reel", exact: true }).selectOption("20000000-0000-4000-8000-000000000003");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByLabel("Title overlay", {exact:true})).toHaveValue("");
   await expect(second.getByRole("button", {name:/Select clip /})).toHaveCount(0);
@@ -169,8 +230,37 @@ try {
   assert.equal((await third.evaluate(() => window.cloudFixture.snapshot())).tickets,advanced.tickets);
   await closeDevice(third); await second.bringToFront();
   receipt.checks.push("Fresh device restores narration by trusted result ID, exact video bytes, speed, styled captions and both transition choices");
+  receipt.loadBeforeExport.push({export:"narrated-studio",attempt:1,...quickLoad()});
+  const narratedMediaTrace=mediaTraceEnabled ? await startMediaTraceObserver({browser,page:second,artifacts,
+    syncId:"cloud-narrated-media-before-click",sourceHashes:receipt.sourceHashes,
+    rawFileName:"native-media-trace-cloud-narrated.raw.private.json"}) : undefined;
+  try {
   await second.getByRole("button", { name: "Export MP4", exact: true }).click();
-  await expect(second.getByRole("button", { name: "Save video to listing", exact: true })).toBeVisible({ timeout: 20000 });
+  const firstSave=second.getByRole("button", { name: "Save video to listing", exact: true });
+  await expect.poll(async()=>{
+    if(await firstSave.isVisible())return "ready";
+    const notice=(await second.locator(".rp-editor-notice").textContent())??"";
+    return notice.includes("No download was created.")?"refused":"pending";
+  },{timeout:20000,message:"Narrated Studio MP4 export should become available or report its refusal"}).toMatch(/^(ready|refused)$/);
+  narratedMediaTrace?.stopCapture("outcome-observed");
+  if(!await firstSave.isVisible()){
+    const notice=((await second.locator(".rp-editor-notice").textContent())??"").trim();
+    const cadence=await second.evaluate(()=>(window.exportCadenceRefusals??[]).at(-1)?.cause??null);
+    receipt.firstExportRefusal={notice,cadence,runner:quickLoad()};
+    throw new Error(`Narrated Studio MP4 export refused: ${notice}; encoded cadence: ${JSON.stringify(cadence)}`);
+  }
+  } finally {
+    narratedMediaTrace?.stopCapture("poll-finished");
+    if(narratedMediaTrace){
+      await narratedMediaTrace.finish();
+      receipt.mediaTrace.facts=narratedMediaTrace.facts;
+      let recorderStart;
+      try { recorderStart=await second.evaluate(()=>window.mediaTimingFixture?.snapshot().events.find(event=>event.kind==="recorder.call.start")?.atMs); }
+      catch { receipt.mediaTrace.alignmentObservationError="existing-recorder-start-unavailable"; }
+      receipt.mediaTrace.summary=summarizeMediaTrace(narratedMediaTrace.facts,
+        Number.isFinite(recorderStart)?[{event:"start.call",at:recorderStart}]:[]);
+    }
+  }
   const download = second.waitForEvent("download"); await second.getByRole("link",{name:/Download MP4/}).click(); const exported = join(artifacts,"narrated-studio.mp4"); await (await download).saveAs(exported);
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",exported],{encoding:"utf8"}));
   await saveExportDiagnostics("narrated-studio",exported,probe);
@@ -179,8 +269,25 @@ try {
   for(let i=0;i<pcm.length;i+=2){const v=pcm.readInt16LE(i)/32768;power+=v*v;if(i>=2&&pcm.readInt16LE(i-2)<0&&v>=0)crossings++;}
   const rms=Math.sqrt(power/(pcm.length/2)); assert(rms>0.02); assert(crossings>600&&crossings<720,`Narration frequency ${crossings}`);
   const pixel=(time,x=100)=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",exported,"-frames:v","1","-vf",`format=rgb24,crop=1:1:${x}:400`,"-f","rawvideo","pipe:1"])];
-  const dissolve=pixel(.64);assert(dissolve[0]>20&&dissolve[0]<100&&dissolve[2]>170&&dissolve[2]<245,`Dissolve mixed outgoing purple and incoming blue: ${dissolve}`);
-  const whipLeft=pixel(2.6,100),whipRight=pixel(2.6,650);assert(whipLeft[2]>200&&whipLeft[0]<30&&whipRight[0]>200&&whipRight[2]<30,"Whip frame must contain outgoing blue and incoming red at different horizontal positions");
+  // Inspect a fixed window around the 0.5s boundary and 0.28s dissolve.
+  // Encoded frames may arrive late; require progressing blends, not one
+  // hand-picked midpoint. A hard cut or frozen blend cannot pass.
+  const dissolve={before:pixel(.4),samples:[.54,.58,.62,.66,.70,.74,.78,.82,.86].map(time=>({time,rgb:pixel(time)})),after:pixel(1.1)};
+  receipt.exportProbes.at(-1).transitionPixels={dissolve};
+  const blends=dissolve.samples.filter(({rgb})=>rgb[0]>20&&rgb[0]<100&&rgb[2]>170&&rgb[2]<245);
+  assert(blends.some((sample,index)=>blends.slice(index+1).some(later=>sample.rgb[0]-later.rgb[0]>=8&&later.rgb[2]-sample.rgb[2]>=8)),`Dissolve must progress from purple toward blue within the bounded window: ${JSON.stringify(dissolve.samples)}`);
+  assert(dissolve.before[0]>100&&dissolve.before[0]<135&&dissolve.before[1]>65&&dissolve.before[1]<95&&dissolve.before[2]>135&&dissolve.before[2]<175,"The preceding shot must still be purple before the dissolve");
+  assert(dissolve.after[0]<10&&dissolve.after[1]<10&&dissolve.after[2]>240,"The following shot must be fully blue after the dissolve");
+  const isWhip=({left,right})=>left[2]>200&&left[0]<30&&right[0]>200&&right[2]<30;
+  const whipPixels=time=>({time,left:pixel(time,100),right:pixel(time,650)});
+  // Match the export-resume gate: MediaRecorder can shift the 180 ms whip by
+  // a few encoded frames. Require the spatial split inside a bounded window,
+  // plus the intact preceding/following shots; a hard cut cannot pass.
+  const transitionPixels={dissolve,beforeWhip:whipPixels(2.4),whip:[2.54,2.58,2.62,2.66,2.70,2.74].map(whipPixels),afterWhip:whipPixels(2.9)};
+  receipt.exportProbes.at(-1).transitionPixels=transitionPixels;
+  assert(transitionPixels.whip.some(isWhip),`Whip frames must contain outgoing blue and incoming red at different horizontal positions within the bounded timeline window: ${JSON.stringify(transitionPixels.whip)}`);
+  assert(transitionPixels.beforeWhip.left[2]>200&&transitionPixels.beforeWhip.right[2]>200&&!isWhip(transitionPixels.beforeWhip),"The preceding shot must still be blue before the whip");
+  assert(transitionPixels.afterWhip.left[0]>200&&transitionPixels.afterWhip.right[0]>200&&!isWhip(transitionPixels.afterWhip),"The closing shot must be fully red after the whip");
   receipt.checks.push("Decoded exported frames prove actual dissolve blending and horizontal whip movement");
   receipt.checks.push(`Actual exported MP4 is H264/AAC, 2x speed gives ${Number(probe.format.duration).toFixed(2)}s edit, and decoded narration has 660Hz tone (RMS ${rms.toFixed(3)})`);
   await second.evaluate(() => window.cloudFixture.loseComplete());
@@ -196,9 +303,11 @@ try {
   receipt.checks.push("Real MP4 export saves to workspace and a lost completion/repeated Save reconciles without duplicate ticket or bytes");
   const beforeImport = await second.evaluate(() => window.cloudFixture.snapshot());
   await second.getByLabel("Property reel",{exact:true}).selectOption("20000000-0000-4000-8000-000000000002");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByLabel("Title overlay",{exact:true})).toHaveValue("Office to phone edit");
   await second.getByLabel("Property reel",{exact:true}).selectOption("20000000-0000-4000-8000-000000000003");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByRole("button",{name:/Select clip /})).toHaveCount(3);
   assert.equal((await second.evaluate(() => window.cloudFixture.snapshot())).tickets,beforeImport.tickets);
@@ -233,6 +342,12 @@ try {
   assert.equal((await second.evaluate(() => window.cloudFixture.snapshot())).tickets,applied.tickets);
   receipt.checks.push("Saved native phone recipe restores every linked photo, aspect, title, caption style and transitions with explicit review and no generation");
   await second.getByLabel("Add photos or videos",{exact:true}).setInputFiles(agentVideo);
+  // inspectFile completes native metadata (15s) and, if needed, first data
+  // (another15s) before appending a clip. Only then test the separate CAS save.
+  const agentClip=second.getByRole("button",{name:/^Select clip 3: agent-green\.mp4,/});
+  await expect(agentClip).toBeVisible({timeout:2*15_000});
+  await expect(agentClip).not.toHaveAccessibleName(/original file missing/);
+  await expect(second.getByText("Checking media…",{exact:true})).toHaveCount(0);
   await expect.poll(async () => (await second.evaluate(() => window.cloudFixture.snapshot())).documents["edit:20000000-0000-4000-8000-000000000003"]?.payload.sources?.length).toBe(3);
   await second.evaluate(() => window.cloudFixture.requestAgentPlan());
   await second.getByRole("button",{name:"Replace edit with agent plan",exact:true}).click();
@@ -247,8 +362,64 @@ try {
   await expect(fourth.getByRole("button",{name:"Export MP4",exact:true})).toBeEnabled();
   assert.equal((await fourth.evaluate(() => window.cloudFixture.snapshot())).tickets,agentSaved.tickets);
   await closeDevice(fourth);await second.bringToFront();
-  await second.getByRole("button",{name:"Export MP4",exact:true}).click();
-  await expect(second.getByRole("link",{name:/Download MP4/})).toBeVisible({timeout:20000});
+  // Passive evidence around guarded exports hosted CI refused (runs
+  // 39055656587 and 40606827060). The native webaudio trace shows whether
+  // the audio render thread stopped; the Node probe shows whether the host
+  // stopped scheduling this process. A single retry is allowed only after the
+  // real RecordingClock refuses and the editor offers no download. Both
+  // attempts retain their traces, and the accepted file keeps every decoded
+  // duration, picture and PCM assertion below.
+  // The page spin probe is deliberately NOT used here: it costs ~1/5 of a core
+  // on a 3-vCPU runner that is already oversubscribed. Nothing here owns a
+  // clock, threshold, timeout or oracle, or can turn a refusal into a download.
+  // RENDPROP_TRACE_AUDIO_SERVICE=1 (set only by the stall experiment workflow)
+  // traces through the browser target and adds the "audio" category, so the
+  // audio service's own device callbacks sit beside the renderer's. Off by
+  // default; the gate and its thresholds are identical either way.
+  const traceAudioService = process.env.RENDPROP_TRACE_AUDIO_SERVICE === "1";
+  receipt.nativeTraceDeviceId = timingDevices.find(entry => entry.tab === second)?.id ?? null;
+  const clockRefusalText="Audio and picture timing drifted during export. No download was created. Close other busy tabs and retry.";
+  const exportButton=second.getByRole("button",{name:"Export MP4",exact:true});
+  const downloadLink=second.getByRole("link",{name:/Download MP4/});
+  const anyEditorDownload=second.locator("a.rp-editor-download[download]");
+  receipt.agentExportAttempts=[];
+  let agentExportReady=false;
+  for(let attempt=1;attempt<=2;attempt++) {
+    const priorRefusals=await second.evaluate(()=>window.exportClockRefusals?.length??0);
+    const evidence={attempt,status:"running"};receipt.agentExportAttempts.push(evidence);
+    receipt.loadBeforeExport.push({export:"agent-continuous",attempt,...quickLoad()});
+    const agentTrace=await startNativeTraceObserver({context:second.context(),page:second,artifacts,
+      syncId:`cloud-editor-agent-export-${attempt}-before-click`,
+      rawFileName:`native-trace-cloud-editor-agent-export-${attempt}.raw.private.json`,
+      sourceHashes:receipt.sourceHashes,limits:NATIVE_TRACE_EXPORT_LIMITS,
+      ...(traceAudioService?{browser,extraCategories:["audio"]}:{}),
+      onFacts:facts=>{evidence.nativeTrace=facts;receipt.nativeTrace=facts;}});
+    const agentNodeProbe=startNodeSchedulingProbe();
+    receipt.schedulingProbe={node:agentNodeProbe.facts,page:"not-used: spin probe would add load on an oversubscribed runner"};
+    let failure;
+    try {
+      await exportButton.click();
+      await expect(downloadLink).toBeVisible({timeout:20000});
+      evidence.status="download-ready";agentExportReady=true;
+    } catch(error) {
+      failure=error;evidence.status="failed";
+    } finally {
+      receipt.loadAfterExport={export:"agent-continuous",attempt,...quickLoad()};
+      evidence.loadAfterExport=receipt.loadAfterExport;
+      await agentTrace.finish();
+      evidence.schedulingProbe=await agentNodeProbe.stop();
+      receipt.schedulingProbe.node=evidence.schedulingProbe;
+    }
+    if(agentExportReady)break;
+    const refusals=await second.evaluate(start=>(window.exportClockRefusals??[]).slice(start),priorRefusals);
+    evidence.clockRefusals=refusals;
+    if(attempt===2)throw failure;
+    if(!refusals.length||refusals.some(refusal=>refusal.message!==clockRefusalText)||await anyEditorDownload.count())throw failure;
+    await expect(second.getByText(clockRefusalText,{exact:true})).toBeVisible();
+    await expect(exportButton).toBeEnabled();
+    evidence.status="clock-refused";
+  }
+  assert(agentExportReady,"Agent export did not produce a verified download after at most two guarded attempts");
   const agentDownload=second.waitForEvent("download");await second.getByRole("link",{name:/Download MP4/}).click();const agentExport=join(artifacts,"agent-continuous.mp4");await (await agentDownload).saveAs(agentExport);
   const agentProbe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",agentExport],{encoding:"utf8"}));await saveExportDiagnostics("agent-continuous",agentExport,agentProbe);assert(Math.abs(Number(agentProbe.format.duration)-4)<.4);
   const agentPixel=time=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",agentExport,"-frames:v","1","-vf","format=rgb24,crop=1:1:100:300","-f","rawvideo","pipe:1"])];
@@ -296,6 +467,13 @@ try {
   await pro(second);await expect(second.getByLabel("Title overlay", { exact: true })).toHaveValue("My local conflict title");
   receipt.checks.push("A newer cloud revision surfaces a CAS conflict without overwriting either the open draft or its conversation with remote content");
   await second.screenshot({ path: join(artifacts, "cloud-editor.png"), fullPage: true });
+  for(const {tab} of timingDevices)if(!tab.isClosed())await captureAudioOutputDevice(tab);
+  receipt.audioOutputDevices=timingDevices.map(({id,audioOutput})=>({id,audioOutput}));
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); receipt.visibleText = await page?.locator("body").innerText().catch(()=>""); process.exitCode = 1; if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {}); }
-finally { await captureMediaTiming(); await browser?.close(); if (server) await new Promise(done => server.close(done)); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
+finally { await captureMediaTiming();
+  // Render silence inside each recording window of the traced device, edges
+  // included. Evidence only; computed after the verdict above is final.
+  if (receipt.nativeTrace?.renderGapSummary) try { receipt.renderSilenceInRecordings = summarizeRecordingSilence(receipt.nativeTrace, receipt.mediaTiming.find(entry => entry.id === receipt.nativeTraceDeviceId)); } catch (error) { receipt.renderSilenceInRecordings = {issue: error?.name ?? "Error"}; }
+  await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, mediaTrace:{enabled:mediaTraceEnabled,scope:receipt.mediaTrace.scope,...(receipt.mediaTrace.summary?{summary:receipt.mediaTrace.summary}:{})}, artifacts }, null, 2));
+  emitFailureAnnotation("cloud-editor", receipt); }

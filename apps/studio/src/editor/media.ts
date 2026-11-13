@@ -28,7 +28,7 @@ export function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted)
     throw signal.reason instanceof Error
       ? signal.reason
-      : new DOMException("Operation cancelled.", "AbortError");
+      : new DOMException("Cancelled.", "AbortError");
 }
 
 /** Native media promises can remain pending when playback or audio is blocked. */
@@ -49,7 +49,7 @@ export function awaitMediaOperation<T>(
       reject(
         signal.reason instanceof Error
           ? signal.reason
-          : new DOMException("Operation cancelled.", "AbortError"),
+          : new DOMException("Cancelled.", "AbortError"),
       );
     };
     const timeout = setTimeout(() => {
@@ -105,7 +105,7 @@ export function waitForEvent(
       reject(
         signal.reason instanceof Error
           ? signal.reason
-          : new DOMException("Operation cancelled.", "AbortError"),
+          : new DOMException("Cancelled.", "AbortError"),
       );
     };
     const timeout = setTimeout(() => {
@@ -205,7 +205,7 @@ export async function inspectFile(
   validateFileBatch([file]);
   if (!crypto.subtle)
     throw new Error(
-      "Media identity checks require HTTPS or localhost in a modern browser.",
+      "This browser cannot check your files here. Open Studio at its secure (https) address in an up-to-date browser.",
     );
   throwIfAborted(signal);
   // Digest is not streaming. The 128 MiB per-file cap and sequential imports bound this allocation.
@@ -404,7 +404,7 @@ export function nextFrame(signal: AbortSignal): Promise<number> {
       reject(
         signal.reason instanceof Error
           ? signal.reason
-          : new DOMException("Operation cancelled.", "AbortError"),
+          : new DOMException("Cancelled.", "AbortError"),
       );
     };
     const frame = requestAnimationFrame((time) => {

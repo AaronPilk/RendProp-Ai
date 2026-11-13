@@ -111,6 +111,19 @@ final class MotionRecorder {
         try check(!TakeRecoveryStore.load().otherRecordings.contains { $0.url.resolvingSymlinksInPath() == output.resolvingSymlinksInPath() },
                   "An indexed joined output is not listed as an ungrouped legacy file")
 
+        // Reopening a completed take must not consume another full video's
+        // storage when its already-verified joined file is still usable.
+        let outputBytes = try Data(contentsOf: output)
+        let filesBeforeReopen = Set(try fm.contentsOfDirectory(atPath: FileStore.recordingsDir.path))
+        let reopened = JoinController()
+        reopened.retry(saved)
+        try await wait(reopened)
+        try check(reopened.presented == output, "Reopening a completed take must reuse its valid joined movie")
+        try check(Set(try fm.contentsOfDirectory(atPath: FileStore.recordingsDir.path)) == filesBeforeReopen,
+                  "Reopening a completed take must not allocate another recording")
+        try check(try Data(contentsOf: output) == outputBytes && Data(contentsOf:a) == original && Data(contentsOf:b) == original,
+                  "Reopening preserves joined output and original bytes")
+
         let damaged = try copy("damaged.mov")
         let damage = Data("synthetic corrupt MOV retained".utf8)
         try damage.write(to: damaged)
@@ -119,11 +132,33 @@ final class MotionRecorder {
         try check(try Data(contentsOf:damaged) == damage && Data(contentsOf:a) == original && Data(contentsOf:b) == original,
                   "Failure must not delete damaged bytes or good originals")
         try check(await TakeJoiner.join([a,a]) == nil, "Duplicate source paths must be rejected")
+        try check(await TakeJoiner.join([a,damaged], previouslyJoined: output) == nil,
+                  "A cached output must not bypass original-part validation")
+        try check(try Data(contentsOf:output) == outputBytes,
+                  "Original validation failure must preserve the cached output")
 
         let different = FileStore.recordingsDir.appendingPathComponent("different.mov")
         try fm.copyItem(at:root.appendingPathComponent("different-size.mov"),to:different)
         try check(await TakeJoiner.join([a,different]) == nil, "Unsupported format changes must preserve separate parts")
         try check(fm.fileExists(atPath:different.path), "Format rejection preserves original")
+
+        // A saved path alone is not evidence of a complete join. Test damaged,
+        // partial, missing, wrong-format and input-alias candidates independently.
+        let partial = try copy("partial-join.mov")
+        let missing = FileStore.recordingsDir.appendingPathComponent("missing-join.mov")
+        let differentSecond = FileStore.recordingsDir.appendingPathComponent("different-second.mov")
+        try fm.copyItem(at:different,to:differentSecond)
+        let wrongFormat = await TakeJoiner.join([different,differentSecond])
+        try check(wrongFormat != nil, "Wrong-format cache control must be a complete, playable two-part movie")
+        for candidate in [damaged, partial, missing, wrongFormat!, a] {
+            let before = try? Data(contentsOf: candidate)
+            let rebuilt = await TakeJoiner.join([a,b], previouslyJoined: candidate)
+            try check(rebuilt != nil && rebuilt != candidate && rebuilt != a && rebuilt != b,
+                      "Invalid cached join must rebuild to an independent new file: \(candidate.lastPathComponent)")
+            try check((try? Data(contentsOf: candidate)) == before &&
+                      (try? Data(contentsOf:a)) == original && (try? Data(contentsOf:b)) == original,
+                      "Cached-join repair must preserve every existing input byte: \(candidate.lastPathComponent)")
+        }
 
         let long = root.appendingPathComponent("long.mov"), extra = root.appendingPathComponent("one-second.mov")
         try check(await TakeJoiner.join([long,extra]) == nil, "An over-cap aggregate is refused without trimming")

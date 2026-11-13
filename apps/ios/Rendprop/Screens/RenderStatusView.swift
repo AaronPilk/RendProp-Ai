@@ -11,9 +11,9 @@ import AuthenticationServices
 /// Live backend: a successful on-device render is PUBLISHED to the cloud
 /// (upload role=render → /renders/publish-app) so it gets a real shareable
 /// slug; the in-app tour works either way (local-first, contract §4). The AI
-/// tiers add the server Topaz pass first (skippable). Publishing establishes an
-/// anonymous session when needed. A connection outage preserves the local tour
-/// and the pending publish, then resumes automatically — never an Apple gate.
+/// tiers add the server Topaz pass first (skippable). Publishing refreshes the
+/// existing account session. A connection outage preserves the local tour and
+/// its pending publish; signing out regates the app without deleting that work.
 struct RenderStatusView: View {
     @EnvironmentObject var model: AppModel
 
@@ -29,6 +29,8 @@ private struct RenderStatusContent: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var uploads: UploadManager
     @ObservedObject var coordinator: RenderCoordinator
+    @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var workspace = WorkspaceStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
 
@@ -36,6 +38,12 @@ private struct RenderStatusContent: View {
     let render: Render
 
     @State private var showCancelConfirm = false
+    @State private var linkShareTarget: PublicLinkShareTarget?
+    @State private var shareScope = NativePresentationScope(
+        actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)
+    @State private var resolvedShareLink: (key: String, url: URL)?
+    @State private var resolvingShareLinkKey: String?
+    @State private var withdrawnShareLinkKey: String?
     /// The encode is CPU-bound for minutes; on a hot phone iOS throttles it and
     /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
     /// `onAppear` — a `@State` default can't read a type member here.)
@@ -55,7 +63,24 @@ private struct RenderStatusContent: View {
     }
     private var job: RenderJobState? { coordinator.jobs[listing.id] }
     private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
-    private var shareURL: URL? { currentListing.serverShareURL }
+    private var shareURL: URL? {
+        guard let canonical = currentListing.serverShareURL else { return nil }
+        return DeepLink.buyerWebsiteURL(from: canonical, address: currentListing.spaceType == .realEstate ? currentListing.address : nil) ?? canonical
+    }
+    private var shareLinkKey: String? {
+        guard let published = currentListing.serverShareURL, let fallback = shareURL else { return nil }
+        return "\(listing.id):\(published.absoluteString):\(fallback.absoluteString):\(currentListing.address):\(currentListing.allowSearchIndexing == true)"
+    }
+    private var shareWithdrawn: Bool {
+        shareLinkKey != nil && withdrawnShareLinkKey == shareLinkKey
+    }
+    private var canShareCurrentListing: Bool {
+        shareScope.matches(actorID: auth.userID, orgID: WorkspaceContext.selectedOrgID) &&
+            model.listings.contains {
+                $0.id == listing.id && $0.cloudUnavailable != true &&
+                    $0.serverShareURL != nil && model.isInSelectedWorkspace($0)
+            }
+    }
     /// THIS listing's type — a type switch while a render is on screen must not
     /// re-label a house as a venue (industry review P2-5). Samples never render.
     private var noun: String { currentListing.spaceType.spaceNoun }
@@ -164,6 +189,40 @@ private struct RenderStatusContent: View {
             Text(tour == nil
                  ? "Your video stays on the \(noun) — you can render it again any time."
                  : "The tour stays on your phone. Publish it later from the \(noun) to get a share link.")
+        }
+        .sheet(item: $linkShareTarget) { target in
+            ShareSheet(items: target.activityItems)
+        }
+        .task(id: shareLinkKey) {
+            guard let key = shareLinkKey, let published = currentListing.serverShareURL,
+                  let fallback = shareURL, canShareCurrentListing else { return }
+            resolvingShareLinkKey = key
+            let resolution = await PublicShareLinkResolver.resolve(
+                publishedURL: published, fallbackURL: fallback)
+            guard !Task.isCancelled, canShareCurrentListing, shareLinkKey == key else {
+                if resolvingShareLinkKey == key { resolvingShareLinkKey = nil }
+                return
+            }
+            switch resolution {
+            case .available(let resolved):
+                resolvedShareLink = (key, resolved)
+                withdrawnShareLinkKey = nil
+            case .withdrawn:
+                resolvedShareLink = nil
+                withdrawnShareLinkKey = key
+                linkShareTarget = nil
+            }
+            resolvingShareLinkKey = nil
+        }
+        .onChange(of: auth.userID) { _ in
+            if !canShareCurrentListing {
+                linkShareTarget = nil; resolvedShareLink = nil; withdrawnShareLinkKey = nil
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            if !canShareCurrentListing {
+                linkShareTarget = nil; resolvedShareLink = nil; withdrawnShareLinkKey = nil
+            }
         }
     }
 
@@ -285,7 +344,7 @@ private struct RenderStatusContent: View {
                         .multilineTextAlignment(.center)
                 }
             case .awaitingConnection:
-                Text("Saved on your phone. Publishing will continue automatically when the connection returns — no sign-in or re-render needed.")
+                Text("Saved on your phone. Publishing will continue automatically when the connection returns — no re-render needed.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
@@ -310,8 +369,10 @@ private struct RenderStatusContent: View {
                         // (Purchases/PaywallView.swift). No web pricing link
                         // sits beside it — an external purchase CTA next to an
                         // IAP is what 3.1.1 / 3.1.3 read as steering.
-                        Button("Upgrade plan") {
-                            PaywallRouter.shared.present(reason: .quota(feature: "renders"))
+                        // The server sentence above says why (free tier used,
+                        // plan needed). The paywall must not invent a second one.
+                        Button("View plans") {
+                            PaywallRouter.shared.present(reason: .upgrade)
                         }
                         .font(.rpCaption.weight(.semibold))
                         .foregroundStyle(Theme.accent)
@@ -389,7 +450,9 @@ private struct RenderStatusContent: View {
         if let mls = currentListing.serverUnbrandedURL {
             VStack(alignment: .leading, spacing: 6) {
                 Button {
-                    UIPasteboard.general.url = mls
+                    guard canShareCurrentListing, !shareWithdrawn,
+                          currentListing.serverUnbrandedURL == mls else { return }
+                    UIPasteboard.general.url = DeepLink.unbrandedWebsiteURL(from: mls, address: currentListing.address) ?? mls
                     Haptics.success()
                 } label: {
                     HStack {
@@ -402,6 +465,7 @@ private struct RenderStatusContent: View {
                     .foregroundStyle(Theme.ink)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+                .disabled(!canShareCurrentListing || shareWithdrawn)
                 Label("Never put your branded link in an MLS unbranded field — most MLSs fine for that.",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.rpCaption.weight(.semibold))
@@ -451,18 +515,36 @@ private struct RenderStatusContent: View {
             case .ready, .awaitingConnection:
                 viewTourButton
                 if let shareURL {
-                    ShareLink(item: shareURL,
-                              subject: Text(listing.address),
-                              message: Text("Fly through \(listing.address) — scroll to walk the \(noun).")) {
+                    Button {
+                        guard shareURL == self.shareURL, let key = shareLinkKey,
+                              let target = PublicShareLinkResolver.linkForAction(
+                                fallbackURL: shareURL, linkKey: key,
+                                currentContext: canShareCurrentListing,
+                                cached: resolvedShareLink,
+                                withdrawnKey: withdrawnShareLinkKey) else { return }
+                        linkShareTarget = PublicLinkShareTarget(
+                            url: target, subject: currentListing.address,
+                            message: "Fly through \(currentListing.address) — scroll to walk the \(noun).")
+                    } label: {
                         HStack {
                             Image(systemName: "square.and.arrow.up")
                             Text("Share your link").fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
-                        .background(Theme.accentSoft)
-                        .foregroundStyle(Theme.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .modifier(RendpropActionLabelSurface(primary: false))
+                    }
+                    .disabled(!canShareCurrentListing || shareWithdrawn)
+                    if shareWithdrawn {
+                        Label("This website is no longer published. Publish it again before sharing.",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.warn)
+                    }
+                    if resolvingShareLinkKey == shareLinkKey {
+                        ProgressView("Checking address link")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
                     }
                     mlsLinkRow
                 } else if mode == .awaitingConnection {
@@ -505,9 +587,7 @@ private struct RenderStatusContent: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 15)
-            .background(Theme.accent)
-            .foregroundStyle(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .modifier(RendpropActionLabelSurface(primary: true))
         }
     }
 
@@ -531,34 +611,41 @@ private struct RenderStatusContent: View {
     }
 }
 
-// MARK: - Optional Sign in with Apple (Settings)
+// MARK: - Sign in with Apple (required launch and Settings)
 // Lives here (not a standalone file) so it's always in the Xcode target without
 // re-running xcodegen — see the repo's new-file-not-in-target rule.
 
-/// Explicit account upgrade. Feature actions use ensureSession(), not this
-/// sheet; capture and on-device render remain usable offline.
+/// Account admission comes before onboarding and feature screens. Returning
+/// identified accounts can use saved work and on-device capture offline.
 ///
 /// Uses the native `SignInWithAppleButton`: generate a fresh nonce, send its
 /// SHA256 as the request `nonce`, then exchange the returned identity token with
 /// Supabase using the RAW nonce (`AuthStore.exchangeAppleIdentityToken`).
+/// Concrete launch screen; Apple's credential exchange remains in SignInView.
+struct RequiredAccountGate: View {
+    var body: some View { SignInView.requiredAccount() }
+}
+
 struct SignInView: View {
-    /// Called once the optional account upgrade succeeds.
+    /// Called once this explicit account sign-in succeeds.
     var onSignedIn: () -> Void = {}
     var title: String = "Use Rendprop on your other devices"
-    var subtitle: String = "Everything works without signing in. Choose Sign in with Apple to connect your work to an account."
+    var subtitle: String = "Sign in to connect your listings and saved work to your Rendprop account."
 
-    var dismissNote: String = "Not now changes nothing. Your work stays on this phone and every feature keeps working."
+    var dismissNote: String = "Your saved work stays on this phone."
+    var requiresAccount = false
+
+    static func requiredAccount() -> SignInView {
+        SignInView(title: "Welcome to Rendprop",
+                   subtitle: "Sign in with Apple to continue. Have a Rendprop account? You can also sign in with email.",
+                   dismissNote: "Existing work on this phone stays saved while you sign in.",
+                   requiresAccount: true)
+    }
 
     /// Ready-made copy for the AI tools (photo edits, aerials, reels).
     ///
-    /// THIS IS NO LONGER A WALL, and the words had to change with the mechanism.
-    /// App Review rejected 1.0 under Guideline 5.1.1(v) — an app may not require
-    /// registration before someone can use features or buy an IAP that is not
-    /// account-based — and this sheet was the wall. Every launch now carries an
-    /// anonymous session, so the AI tools run without it; this can only appear
-    /// when there is NO session at all, which means the network was down when
-    /// the app started. So it says that, instead of asking somebody to register
-    /// to use a feature they may already have paid for.
+    /// Existing feature callers can explain a connection/session failure.
+    /// Fresh launches reach the required account gate before any feature UI.
     static func forAI(_ what: String, onSignedIn: @escaping () -> Void = {}) -> SignInView {
         SignInView(onSignedIn: onSignedIn,
                    title: "Couldn't reach your account",
@@ -566,96 +653,154 @@ struct SignInView: View {
                    dismissNote: "Not now closes this — everything you set up stays here, and nothing is generated.")
     }
 
-    /// The OPTIONAL upgrade, offered rather than demanded.
-    ///
-    /// Apple's own words in the rejection: "You may explain to the user that
-    /// registering will enable them to access the purchased content from any of
-    /// their supported devices and provide them a way to register at any time."
-    /// That is what this is for, and it is why nothing in the app presents it as
-    /// a requirement.
+    /// Reauthentication/account connection sheet for existing callers. The
+    /// launch gate uses requiredAccount(), which has no dismissal path.
     static func optionalUpgrade(onSignedIn: @escaping () -> Void = {}) -> SignInView {
         SignInView(onSignedIn: onSignedIn,
                    title: "Use Rendprop on your other devices",
-                   subtitle: "Everything works without signing in. Sign in with Apple and your plan, your homes and your tours follow you to a new phone or an iPad — and you can do it any time.",
-                   dismissNote: "Not now changes nothing. Your work stays on this phone and every feature keeps working.")
+                   subtitle: "Sign in with Apple to connect your plan, listings and saved media across your devices.",
+                   dismissNote: "Your saved work stays on this phone.")
     }
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var rawNonce = ""
     @State private var isExchanging = false
     @State private var errorMessage: String?
+    @State private var showQuickStart = false
+    @State private var showEmailSignIn = false
 
     var body: some View {
-        VStack(spacing: 22) {
-            Spacer()
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 22) {
+                    Spacer(minLength: 0)
 
-            Image(systemName: "person.crop.circle.badge.checkmark")
-                .font(.system(size: 52, weight: .light))
-                .foregroundStyle(Theme.accent)
+                    Image(systemName: requiresAccount ? "house.lodge.fill" : "person.crop.circle.badge.checkmark")
+                        .font(.system(size: 52, weight: .light))
+                        .foregroundStyle(Theme.accent)
 
-            VStack(spacing: 8) {
-                Text(title)
-                    .font(.rpTitle)
-                    .foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center)
-                Text(subtitle)
-                    .font(.rpBody)
-                    .foregroundStyle(Theme.inkDim)
-                    .multilineTextAlignment(.center)
+                    VStack(spacing: 8) {
+                        Text(title)
+                            .font(.rpTitle)
+                            .foregroundStyle(Theme.ink)
+                            .multilineTextAlignment(.center)
+                        Text(subtitle)
+                            .font(.rpBody)
+                            .foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+
+                    if requiresAccount {
+                        Button { showQuickStart = true } label: {
+                            Label("See how Rendprop works", systemImage: "play.circle.fill")
+                                .font(.rpBody).foregroundStyle(Theme.accent)
+                                .padding(.vertical, 8)
+                        }
+                        .disabled(isExchanging)
+                        .accessibilityHint("Plays a short video. No account is needed to watch.")
+                        .accessibilityIdentifier("account.quickStartVideo")
+                    }
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.warn)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+
+                    SignInWithAppleButton(.signIn) { request in
+                        let raw = AuthStore.randomNonceString()
+                        rawNonce = raw
+                        request.requestedScopes = [.fullName, .email]
+                        request.nonce = AuthStore.sha256(raw)
+                    } onCompletion: { result in
+                        handle(result)
+                    }
+                    // Black button on light bg, white on dark — a .black button would
+                    // disappear into the near-black dark-mode background.
+                    .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                    .frame(height: 50)
                     .padding(.horizontal)
-            }
+                    .disabled(isExchanging)
+                    .accessibilityIdentifier("account.signInApple")
 
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.warn)
-                    .multilineTextAlignment(.center)
+                    Button { showEmailSignIn = true } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "envelope.fill")
+                                .accessibilityHidden(true)
+                            Text("Sign in with email")
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .font(.rpBody.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .modifier(RendpropActionAppearance(primary: false))
                     .padding(.horizontal)
-            }
+                    .disabled(isExchanging)
+                    .accessibilityHint("Use an existing Rendprop account.")
+                    .accessibilityIdentifier("account.emailSignInOption")
 
-            SignInWithAppleButton(.signIn) { request in
-                let raw = AuthStore.randomNonceString()
-                rawNonce = raw
-                request.requestedScopes = [.fullName, .email]
-                request.nonce = AuthStore.sha256(raw)
-            } onCompletion: { result in
-                handle(result)
-            }
-            // Black button on light bg, white on dark — a .black button would
-            // disappear into the near-black dark-mode background.
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 50)
-            .padding(.horizontal)
-            .disabled(isExchanging)
+                    if isExchanging {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Signing in…").foregroundStyle(Theme.inkDim)
+                        }
+                        .font(.rpCaption)
+                    }
 
-            if isExchanging {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Signing in…").foregroundStyle(Theme.inkDim)
+                    if !requiresAccount {
+                        Button("Not now") { dismiss() }
+                            .font(.rpBody)
+                            .foregroundStyle(Theme.inkDim)
+                            .padding(.top, 4)
+                            .disabled(isExchanging)
+                    }
+
+                    Text(dismissNote)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28)
+
+                    if requiresAccount {
+                        (dynamicTypeSize.isAccessibilitySize
+                            ? AnyLayout(VStackLayout(spacing: 12))
+                            : AnyLayout(HStackLayout(spacing: 18))) {
+                            Link("Terms", destination: URL(string: "https://rendprop.com/terms")!)
+                                .accessibilityIdentifier("account.terms")
+                            Link("Privacy", destination: URL(string: "https://rendprop.com/privacy")!)
+                                .accessibilityIdentifier("account.privacy")
+                            Link("Get help", destination: SettingsView.supportMailURL(subject: "Rendprop account help"))
+                                .accessibilityIdentifier("account.help")
+                        }
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.accent)
+                    }
+
+                    Spacer(minLength: 0)
                 }
-                .font(.rpCaption)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: geometry.size.height)
             }
-
-            Button("Not now") { dismiss() }
-                .font(.rpBody)
-                .foregroundStyle(Theme.inkDim)
-                .padding(.top, 4)
-                .disabled(isExchanging)
-
-            Text(dismissNote)
-                .font(.rpCaption)
-                .foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 28)
-
-            Spacer()
+            .scrollIndicators(.hidden)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
-        .interactiveDismissDisabled(isExchanging)
+        .interactiveDismissDisabled(requiresAccount || isExchanging)
+        .sheet(isPresented: $showQuickStart) { QuickStartVideoView() }
+        .sheet(isPresented: $showEmailSignIn) {
+            EmailAccountSignInSheet {
+                showEmailSignIn = false
+                onSignedIn()
+                if !requiresAccount { dismiss() }
+            }
+        }
     }
 
     private func handle(_ result: Result<ASAuthorization, Error>) {
@@ -689,26 +834,135 @@ struct SignInView: View {
             errorMessage = nil
             Task {
                 do {
-                    try await AuthStore.shared.exchangeAppleIdentityToken(idToken: idToken, nonce: nonce)
+                    let identity = try await AuthStore.shared.exchangeAppleIdentityToken(idToken: idToken, nonce: nonce)
                     // Best-effort, after the session exists (the POST needs the
                     // fresh JWT). Never blocks or fails sign-in.
                     if let authCode {
-                        await AuthStore.submitAppleAuthorizationCode(authCode)
+                        await AuthStore.submitAppleAuthorizationCode(authCode, for: identity)
                     }
                     await MainActor.run {
+                        guard identity.isCurrent else { isExchanging = false; return }
                         if let displayName {
                             AuthStore.shared.userName = displayName
                             UserDefaults.standard.set(displayName, forKey: "auth.userName")
                         }
                         isExchanging = false
                         onSignedIn()
-                        dismiss()
+                        if !requiresAccount { dismiss() }
                     }
                 } catch {
                     await MainActor.run {
                         isExchanging = false
                         errorMessage = "Couldn't sign in: \(error.localizedDescription)"
                     }
+                }
+            }
+        }
+    }
+}
+
+/// App-specific credentials are entered by the person and exchanged with
+/// Supabase Auth. This sheet contains no account creation or embedded secret.
+private struct EmailAccountSignInSheet: View {
+    let onSignedIn: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var email = ""
+    @State private var password = ""
+    @State private var isSigningIn = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    Image(systemName: "envelope.fill")
+                        .font(.system(size: 44, weight: .light))
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityHidden(true)
+                    Text("Sign in with email")
+                        .font(.rpTitle)
+                        .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
+                    Text("Enter the email and password for your Rendprop account.")
+                        .font(.rpBody)
+                        .foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+
+                    VStack(spacing: 0) {
+                        TextField("Email address", text: $email)
+                            .textContentType(.username)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .submitLabel(.next)
+                            .accessibilityIdentifier("account.emailAddress")
+                        Divider().padding(.vertical, 14)
+                        SecureField("Password", text: $password)
+                            .textContentType(.password)
+                            .submitLabel(.go)
+                            .accessibilityIdentifier("account.emailPassword")
+                    }
+                    .font(.rpBody)
+                    .padding(18)
+                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 22))
+                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(Theme.border, lineWidth: 1))
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.warn)
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("account.emailError")
+                    }
+
+                    Button(action: signIn) {
+                        Group {
+                            if isSigningIn { ProgressView() }
+                            else { Text("Sign in") }
+                        }
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .modifier(RendpropActionAppearance(primary: true))
+                    .disabled(isSigningIn || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
+                    .accessibilityIdentifier("account.emailSubmit")
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background(Theme.bg)
+            .navigationTitle("Email sign-in")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }.disabled(isSigningIn)
+                }
+            }
+        }
+        .interactiveDismissDisabled(isSigningIn)
+    }
+
+    private func signIn() {
+        guard !isSigningIn else { return }
+        isSigningIn = true
+        errorMessage = nil
+        Task {
+            do {
+                let identity = try await AuthStore.shared.signInWithPassword(email: email, password: password)
+                guard identity.isCurrent else { isSigningIn = false; return }
+                password = ""
+                isSigningIn = false
+                onSignedIn()
+            } catch is CancellationError {
+                isSigningIn = false
+            } catch {
+                isSigningIn = false
+                if let status = (error as? APIError)?.status, [400, 401, 422].contains(status) {
+                    errorMessage = "Email or password wasn't accepted. Check the details and try again."
+                } else {
+                    errorMessage = error.localizedDescription
                 }
             }
         }

@@ -26,6 +26,9 @@ export interface EmailMessage {
   to: string;
   subject: string;
   text: string;
+  /** Frozen sender and key for transactional client forwarding only. */
+  from?: string;
+  idempotencyKey?: string;
 }
 
 export interface EmailResult {
@@ -51,8 +54,11 @@ export interface EmailProvider {
 // to the project takes effect on the next drain, not the next cold start.
 const env = (name: string): string | undefined => {
   const v = Deno.env.get(name);
-  return v && v.trim() ? v : undefined;
+  return v && v.trim() ? v.trim() : undefined;
 };
+
+export const BUSINESS_EMAIL_FOOTER = "RendProp LLC\n855 Central Avenue\nSaint Petersburg, FL 33701\nQuestions or email preferences: aaron@pilk.ai";
+export const EMAIL_REPLY_TO = "aaron@pilk.ai";
 
 const RESEND_VARS = ["RESEND_API_KEY", "NOTIFY_FROM_EMAIL"] as const;
 
@@ -64,15 +70,19 @@ async function sendViaResend(
   try {
     res = await fetchImpl("https://api.resend.com/emails", {
       method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      redirect: "error",
       headers: {
         Authorization: `Bearer ${env("RESEND_API_KEY")}`,
         "Content-Type": "application/json",
+        ...(message.idempotencyKey ? { "Idempotency-Key": message.idempotencyKey } : {}),
       },
       body: JSON.stringify({
-        from: env("NOTIFY_FROM_EMAIL"),
+        from: message.from ?? env("NOTIFY_FROM_EMAIL"),
         to: [message.to],
         subject: message.subject,
-        text: message.text,
+        text: `${message.text}\n\n${BUSINESS_EMAIL_FOOTER}`,
+        reply_to: EMAIL_REPLY_TO,
       }),
     });
   } catch (e) {
@@ -99,7 +109,8 @@ async function sendViaResend(
   const detail = typeof body.message === "string" ? body.message : `resend ${res.status}`;
   // 422 is Resend's "this address/payload is not acceptable" — retrying it
   // forever is how a queue silts up. 4xx other than 429 is the same judgement.
-  const dead = res.status === 422 || (res.status >= 400 && res.status < 500 && res.status !== 429);
+  const concurrent = res.status === 409 && body.name === "concurrent_idempotent_requests";
+  const dead = res.status === 422 || (res.status >= 400 && res.status < 500 && res.status !== 429 && !concurrent);
   return { ok: false, id: null, reason: detail.slice(0, 300), dead };
 }
 

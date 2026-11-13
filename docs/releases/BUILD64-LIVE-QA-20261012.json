@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-12T21:17:31.318881+00:00",
+  "status": "BUILD64_INTERNAL_TESTFLIGHT_AVAILABLE_PHONE_ACCEPTANCE_PENDING",
+  "allAppFeaturesCertified": false,
+  "source": {
+    "archiveCommit": "7c553dc36885f381e5676f9c6f245371d3757bd6",
+    "nativeTrees": {
+      "apps/ios/Rendprop": "25d35b15673d50b446473ef91f6d058cf1212b74",
+      "apps/ios/project.yml": "537493da515688b67f56914ca00e4c6bff5ff1bd",
+      "apps/ios/Rendprop.xcodeproj": "fbfd0add702cef6c3ea52d53b312202908a5e5c8"
+    },
+    "nativeSourceBindingVerified": true
+  },
+  "archive": {
+    "version": "1.0.4",
+    "build": "64",
+    "signatureVerified": true,
+    "machOUUID": "57D18980-91DD-3ED9-99CD-AFD12D54D0CA",
+    "ipaBytes": 24301230,
+    "ipaSHA256": "5bd135994209ec8225c2757b62fc12a565453d6883058f1cda9690ef70ce41b7",
+    "exportedAppStoreProfile": true,
+    "exportedDebugEntitlement": false,
+    "exportedUUIDMatchesArchiveAndDSYM": true
+  },
+  "testflight": {
+    "checkedUTC": "2026-10-12T20:29:55.728260+00:00",
+    "buildID": "5514a72c-1ddb-4a94-89a4-70bb37f65b0f",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "groupName": "Rendprop team",
+    "membershipVerified": true,
+    "testingNotesVerified": true
+  },
+  "changes": {
+    "recovery": "Saved QC holds offer explicit safer retry or selected-original motion. New batches preserve exact JPEGs, order and shot plan; Continue resumes remaining shots. Legacy unknown batch plans remain partial.",
+    "coordinatorPackage": "Separate folders for available retained photo versions, videos, listing details and disclosures. Unreviewed custom versions stay withheld. Originals retain byte identity; arbitrary missing cloud originals are not promised."
+  },
+  "automated": {
+    "recovery": {
+      "actualAssertions": 264,
+      "labDispatchAssertions": 14,
+      "compiledControls": 48,
+      "runtimeEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-original-motion-recovery/full/receipt.json",
+        "sha256": "71c30ba82a557cab271d3bcd3e10916ffb2cfcae5fe624f7bc26d01ffe9f00e7"
+      },
+      "zipIntegrationRebind": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-original-motion-recovery/zip-integration-binding/receipt.json",
+        "sha256": "f1c6e426457a399628880ba37f84ff104620da5bc04f6aa577ab6f1d71fe4335"
+      },
+      "independentConsumedSourceReextraction": true,
+      "runtimeRerunAfterZIPIntegration": false
+    },
+    "coordinatorAndOrdinaryExports": {
+      "actualUIKitAssertions": 623,
+      "coordinatorAssertions": 379,
+      "ordinaryAssertions": 244,
+      "compiledControls": 30,
+      "sourceBindingMatches": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-coordinator-export/full-final/receipt.json",
+        "sha256": "acb1afa20eb6bd6138e4ad5b7fa48d20641cbf4b18ceee0ab703c62c28fdfec6"
+      }
+    },
+    "photoDelivery": {
+      "assertionsPassed": 596,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-coordinator-export/photo-delivery.log",
+        "sha256": "8d6f21cad5e563d04febb11e87599fc680480cc59afeddabe243add1f71e868c"
+      }
+    },
+    "actualQCWire": {
+      "assertions": 107,
+      "compiledControls": 4,
+      "consumedFilesUnchangedFrom63": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-drift-wire/receipt.json",
+        "sha256": "eb679aef4ee1cae7389caa34ee6194cf3fdad0b33c8d28b234f8a58259e58649"
+      }
+    },
+    "ownerOnly2K": {
+      "actualSourceTests": 9,
+      "compiledControls": 11,
+      "boundary": "Closed DB/HTTP/model-response actual-source tests; no live visual quality or invoice certification. Ordinary1K default unchanged.",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-photo2k-owner-qa/source-tests-controls-final/receipt.json",
+        "sha256": "cc3c3dbf789113b7c01a86cce4d875fd76b37aa791a8e3357c0caea7c1bcc0de"
+      }
+    }
+  },
+  "realPhone": {
+    "build64Installed": "ACTUAL_PHONE64_QA_REPORTED_BY_ROOT",
+    "wholeReelQCStitchPlayExportReopen": "UNVERIFIED",
+    "newOrganizedFolders": {
+      "status": "PASS_ACTUAL_PHONE_EXPORT_AND_MAC_INSPECTION",
+      "zipBytes": 406383527,
+      "entries": 399,
+      "imageFiles": 203,
+      "masterImageCounts": {
+        "Originals": 13,
+        "Decluttered": 13,
+        "Staged": 12
+      },
+      "videoCount": 4,
+      "duplicateEntries": 0,
+      "unsafePaths": 0,
+      "ratioFailures": 0,
+      "crcVerified": true,
+      "firstOriginalByteExactToPriorExport": true,
+      "legacyLowResolutionFlaggedWithoutUpscale": "896x1195 master retained; smaller platform crops are explicitly flagged, not certified1080p",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build64-coordinator-export/actual-phone/receipt.json",
+        "sha256": "e2f64270221c82f9b9e707b1c20f60b80808f8b49aebd879064d10271bc02ee2"
+      },
+      "independentCRC": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-phone-acceptance/coordinator-zip-crc.json",
+        "sha256": "8330d20d10a7205218936c5ad2cc7c80982d68251cbe09917d2186c202a43eea"
+      },
+      "boundary": "Available eligible saved versions only. Unreviewed custom edit withheld; four videos includes recovered single-shotreel, not proof of full eight-shot generation."
+    },
+    "build63OriginalsWholeZIP": {
+      "status": "PASS",
+      "photoCount": 13,
+      "storedPhotoDimensions": [
+        4032,
+        3024
+      ],
+      "videoCount": 3,
+      "noteCount": 2,
+      "zipBytes": 170379140,
+      "crcValid": true,
+      "firstOriginalByteExactToPriorExport": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-phone-acceptance/originals-listing-zip.json",
+        "sha256": "a1f9afa9c84463e857615d9b601c4ff1941549a0ecce07ff80187af69cb4c96c"
+      },
+      "boundary": "Legacy flat originals-only ZIP; initial all-versions attempt correctly blocked an unreviewed custom edit."
+    },
+    "build63EightPhotoReel": {
+      "status": "FAIL_FIRST_PHOTO",
+      "submissionToQCSeconds": 668,
+      "qualityVerdict": "fail",
+      "qualityAction": "retry",
+      "qualityAttempt": 0,
+      "subsequentSelectedPhotosSubmitted": 0,
+      "savedReceiptRetained": true
+    },
+    "ownerOnlyKIEComparison": {
+      "status": "ONE_CLIP_SERVER_QC_ACCEPTED_FULL_REEL_PENDING",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-kie-owner-qa/phone64-kie-comparison-receipt.json",
+        "sha256": "320369a00bdffe520a29c0393f9aa725f0ac876540cdf66d8450ec6eb31cc763"
+      },
+      "sameSourceHash": true,
+      "sameMotion": false,
+      "FALMotion": "fly_through",
+      "KIEMotion": "push_in",
+      "KIESubmitToQCSeconds": 47.453464,
+      "generationCents": 18,
+      "QCCents": 1.3,
+      "sourceRequestProvenanceQCMatches": true,
+      "recordedQCAttempt": 0,
+      "explicitRetryAttemptCounter": {
+        "recorded_pass_attempt": 0,
+        "native_explicit_retry_attempt": 1,
+        "cause": "Server initializes attempt0 and only reads body.attempt on a failed available known judgment; passing verdict is recorded0. A failed second judgment reads1 and refuses.",
+        "source_anchor": "services/supabase/functions/ai-video/index.ts:1699",
+        "verified_by": "native agent read-only current source and actual serializer/pending receipt path",
+        "runtime_change_required_for_safety": false
+      },
+      "visualAcceptance": "UNVERIFIED",
+      "publicKIERouteEnabled": false,
+      "boundary": "One owner-scoped clip; different motion and phone polling/download/QC included in elapsed time. No general speed or quality certification.",
+      "afterFinishServerReadback": {
+        "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build64-kie-owner-qa/after-finish-observed.json",
+        "observed_at_utc": "2026-10-12T20:58:32.214285+00:00",
+        "generation_count": 2,
+        "qc_count": 2,
+        "new_generation_rows_since_qc": 0,
+        "new_qc_rows_since_qc": 0,
+        "generation_rows_unchanged": true,
+        "qc_rows_unchanged": true
+      },
+      "encodedMediaInspection": {
+        "sourceBuild": "64",
+        "width": 1080,
+        "height": 1920,
+        "fps": "30/1",
+        "bitRate": "15115171",
+        "persistentEncodedSidebars": "ABSENT_IN_FIVE_SAMPLED_FRAMES",
+        "visualSharpness": "SOFT_DETAIL_REPORTED; source/downsampling/provider contributions not separated",
+        "evidence": {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-reel-quality/actual-phone64/quality-review.json",
+          "sha256": "1285392e9cc1c199a281b928b0b737bd711a89bd7a0cb3c37208903d9c007405"
+        }
+      }
+    },
+    "ownerOnly2KPhotoComparison": {
+      "status": "SERVER_COMPLETED_ACTUAL_ENCODED_MASTER_INSPECTION_PENDING",
+      "elapsedSecondsReported": 15.47,
+      "generationLedgerCentsReported": 11.7184,
+      "sponsoredHoldCentsReported": 11.7185,
+      "privateOutputBytesReported": 3042952,
+      "physicalBeforeAfterFinalAcceptance": "PENDING",
+      "public2KRouteEnabled": false,
+      "boundary": "Backend agent reports actual completion. Exact exported master pixels/bytes and final visual acceptance await root inspection."
+    },
+    "singleRecoveredKIEReelSavedPhotos": {
+      "status": "PASS_REPORTED_BY_ROOT",
+      "wholeEightPhotoBatchCertified": false,
+      "encodedFileInspection": "PENDING_ICLOUD_SYNC"
+    },
+    "ownerCeilingConfirmation": "The property owner confirmed that the ceiling is correct in the edited image. The provisional structural-change concern was a false alarm and is withdrawn. No new paid fidelity judge was committed or deployed."
+  },
+  "ci": {
+    "prior38287758937": "11passed/1failed Studio audio-loss negative-control baseline; failure preserved.",
+    "current38297646472": "SUPERSEDED:10passed/1failed backend ErrorCode typecheck/1remaining native cancelled. The ErrorCode label was corrected by38cb0f2; original failed job remains preserved.",
+    "build64CheckpointRun": {
+      "runID": 38306651220,
+      "headSha": "33b45eeaa0a1d7897601945e4e33447522dc351c",
+      "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38306651220",
+      "status": "CANCELLED_BY_NEW_SOURCE_CONCURRENCY",
+      "dispatchedOnce": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-ci/dispatch-once.json",
+        "sha256": "5a01f53dd251f3c60484d8e87d9130ff21c7b2791ca5c2aaccd59e0675eec74f"
+      },
+      "latestSnapshot": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-ci/prior-after-supersession.json",
+        "sha256": "b67c5614f6d133b6e7cff7f8c9c12ab78963cfd9f14206f4687cf8f79f7c9d4e"
+      },
+      "counts": {
+        "passed": 11,
+        "failed": 0,
+        "cancelled": 1,
+        "running": 0
+      },
+      "backendTests": {
+        "passed": 2065,
+        "failed": 0,
+        "ignored": 1,
+        "ignoredCase": "Optional real local SQL controller lifecycle",
+        "auxiliaryPassCounts": [
+          62,
+          10,
+          4
+        ],
+        "ownerPhoto2KActualTestsRan": 9,
+        "log": {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-ci/supabase-edge-success.log",
+          "sha256": "91b3100ec74516b7bfadb39699b49a94054c9981134740fd2c9464b12de0bf97"
+        }
+      },
+      "supersessionReason": "Build65 native quality source changed; one separately authorized current-source run38309615943 superseded the remaining native job. No failed Build64 job was rerun."
+    }
+  },
+  "apple": {
+    "appStoreBuild": "57",
+    "state": "WAITING_FOR_REVIEW",
+    "releaseType": "MANUAL",
+    "appStoreSubmissionOrReleaseModified": false,
+    "johnAppleModified": false,
+    "singleUploadEvidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-apple/upload-once.json",
+      "sha256": "54122ce71d50ddbf0c78c251b99a1d241616669552b995b0a7316ba1c6e06857"
+    },
+    "testflightEvidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-apple/testflight-availability.json",
+      "sha256": "a6b3311bc5f9d6da5dcb590fa2d83d42f0ab88e086d1c16635fb2ed5c4dc0980"
+    },
+    "archiveEvidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-apple/archive-verified.json",
+      "sha256": "60e4534af4e8b1be7a64e97fc8d5b1c3633d4cec6a859aca6538dc62a67c30d6"
+    }
+  },
+  "limitations": [
+    "Full real eight-photo reel completion remains unverified. Build64 organized package passed real-phone export and Mac CRC/folder/ratio/first-original-byte inspection.",
+    "Normal unsponsored purchases, trial, restores, account switches, buyer enquiry delivery and aerial generation are not certified by owner QA.",
+    "Historical UI evidence remains11ReleaseDetail passes plus2DebugSession passes and2unresolved failures; earlier setup/obsolete-anonymous-fixture failures are preserved.",
+    "Runtime proof preceded unrelated ZIP integration; consumed recovery bodies were independently rebound, not rerun.",
+    "Execution after OS suspension/termination and guaranteed push delivery are not claimed."
+  ]
+}

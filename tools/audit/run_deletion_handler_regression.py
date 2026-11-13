@@ -20,10 +20,10 @@ import tempfile
 
 BASE = 'baf77f93082e608b1321fdb0927bdabba08bb3fa'
 # Exact counts, so a partial or skipped run cannot look green. deletion.test.ts
-# registers 39 tests and logic.test.ts 14; the baseline control filters
+# registers 40 tests and logic.test.ts 14; the baseline control filters
 # everything but "adoption winner" out of deletion.test.ts.
-FULL_SUITE = 53
-BASELINE_FILTERED_OUT = 38
+FULL_SUITE = 54
+BASELINE_FILTERED_OUT = 39
 # Homebrew locations this gate was first written against; PATH wins when it
 # has the tool (CI installs deno with setup-deno and git is /usr/bin/git).
 HOMEBREW_DENO = '/opt/homebrew/bin/deno'

@@ -307,12 +307,14 @@ Deno.test({
  *  moves that may never sit next to `m` are exactly its family. */
 function familyMates(m: string): string[] {
   const NEIGHBOURS: Record<string, string[]> = {
-    push_in: ["push_in", "pull_back"],
-    pull_back: ["push_in", "pull_back"],
+    fly_through: ["fly_through", "push_in", "pull_back"],
+    push_in: ["fly_through", "push_in", "pull_back"],
+    pull_back: ["fly_through", "push_in", "pull_back"],
     tilt_up: ["tilt_up", "tilt_down"],
     tilt_down: ["tilt_up", "tilt_down"],
-    orbit_left: ["orbit_left", "orbit_right"],
-    orbit_right: ["orbit_left", "orbit_right"],
+    side_glide: ["side_glide", "orbit_left", "orbit_right"],
+    orbit_left: ["side_glide", "orbit_left", "orbit_right"],
+    orbit_right: ["side_glide", "orbit_left", "orbit_right"],
     rack_focus: ["rack_focus", "static_parallax"],
     static_parallax: ["rack_focus", "static_parallax"],
   };

@@ -1,11 +1,30 @@
+import {isPrivateMediaURL,privateMediaCapability} from "./private-media";
 import { StudioError } from "./config";
+import { decodePhotoPackage, type PhotoPackage } from "./photo-package";
+import { decodeServingActivation, decodeTrialOffer, decodeTrialUsage, type ServingActivation, type TrialOffer, type TrialUsage } from "./trial";
 
-export type Role = "owner" | "admin" | "agent" | "marketing";
+export type Role = "owner" | "admin" | "agent" | "marketing" | "team_owner";
+export type RealEstateRole = "agent" | "photographer_videographer";
+export function decodeRealEstateRole(value: unknown): RealEstateRole | null {
+  if (value === undefined || value === null) return null;
+  if (value !== "agent" && value !== "photographer_videographer") throw new Error("Your real estate work preference could not be read. Refresh your account.");
+  return value;
+}
 export type Membership = {
   orgId: string;
   role: Role;
   orgName: string;
   spaceType: string;
+  accessMode?: "own" | "team_owner";
+  libraryOwnerUserId?: string;
+  billingOrgId?: string;
+  canRead?: boolean;
+  canWrite?: boolean;
+  canManageSubscription?: boolean;
+};
+export type WorkspaceDirectory = {
+  actorId: string; ownOrgId: string; billingOrgId: string; activeOrgId: string;
+  canSwitchAgentLibraries: boolean; workspaces: Membership[];
 };
 export type Workspace = {
   user: {
@@ -13,6 +32,7 @@ export type Workspace = {
     email: string | null;
     name: string | null;
     avatarUrl: string | null;
+    realEstateRole?: RealEstateRole | null;
   };
   org: { id: string; name: string; handle: string | null; spaceType: string };
   plan: string;
@@ -20,13 +40,25 @@ export type Workspace = {
   /** The server could not verify the effective entitlement; do not display its fallback as a downgrade. */
   planDegraded: boolean;
   trialEndsAt: string | null;
+  trialUsage?: TrialUsage | null;
+  trialOffer?: TrialOffer | null;
+  servingActivation?: ServingActivation | null;
+  servingPhotoPackage?: PhotoPackage | null;
   planExpiresAt: string | null;
   memberships: Membership[];
+  ownOrgId?: string;
+  billingOrgId?: string;
+  canSwitchAgentLibraries?: boolean;
+  servingOrgId?: string;
+  /** Selected logical library, retained only for listing-specific real-org requests. */
+  libraryOrgId?: string;
   usage: { listings: number; leads: number; leadsNew: number; renders: number };
 };
 export type Listing = {
   id: string;
+  agentId?: string;
   orgId: string;
+  libraryOrgId?: string;
   spaceType: string;
   address: string | null;
   tagline: string | null;
@@ -49,6 +81,8 @@ export type StudioPhoto = {
   isStaged: boolean;
   isAltered?: boolean;
   originalUrl?: string | null;
+  editKind?: "declutter" | "stage" | "sky" | "twilight" | "lawn" | "custom" | null;
+  originalVerified?: boolean;
   sort: number;
 };
 export type StudioVideo = {
@@ -67,6 +101,8 @@ export type ListingMedia = {
   videos: readonly StudioVideo[];
   nextOffset: number | null;
   unavailableCount: number;
+  /** Only on a short preview page: whether the listing holds more than it lists. */
+  hasMore?: boolean;
 };
 
 // Literal wire DTOs mirror existing routes. Normalization happens only after validation.
@@ -82,11 +118,16 @@ export type MeDTO = {
     email?: string | null;
     name?: string | null;
     avatar_url?: string | null;
+    real_estate_role?: RealEstateRole | null;
   };
   org: { id: string; name: string; handle: string | null; space_type: string };
   plan: string;
   plan_raw: string | null;
   trial_ends_at: string | null;
+  trial_usage?: unknown;
+  trial_offer?: unknown;
+  serving_activation?: unknown;
+  serving_photo_package?: unknown;
   plan_expires_at?: string | null;
   entitlement?: { degraded?: boolean };
   usage: {
@@ -119,6 +160,10 @@ export type StudioPhotoDTO = {
   expires_at: string;
   caption: string | null;
   is_staged: boolean;
+  is_altered?: boolean;
+  original_url?: string | null;
+  edit_kind?: StudioPhoto["editKind"];
+  original_verified?: boolean;
   sort: number;
 };
 export type StudioVideoDTO = {
@@ -142,7 +187,7 @@ export type ListingMediaDTO = {
 function invalid(field: string): never {
   throw new StudioError(
     "invalid-response",
-    `The server returned an invalid ${field}. Please retry.`,
+    `We got an answer Studio could not read (${field}). Refresh and try again.`,
   );
 }
 function record(value: unknown, field: string): Record<string, unknown> {
@@ -209,7 +254,7 @@ function equal(actual: string, expected: string, field: string): void {
   if (actual !== expected) {
     throw new StudioError(
       "identity-mismatch",
-      `The server returned data outside the current ${field}. Reload the workspace.`,
+      `That answer was for a different ${field}. Reload Studio.`,
     );
   }
 }
@@ -253,6 +298,7 @@ export function decodeWorkspace(
   userId: string,
   memberships: Membership[],
   requestedOrg?: string,
+  directory?: WorkspaceDirectory,
 ): Workspace {
   const row = record(value, "workspace");
   const user = record(row.user, "workspace user");
@@ -262,7 +308,7 @@ export function decodeWorkspace(
   if (!memberships.some((m) => m.orgId === orgId)) {
     throw new StudioError(
       "identity-mismatch",
-      "This workspace is not in your current memberships. Reload the workspace.",
+      "This workspace is not one you belong to any more. Reload Studio.",
     );
   }
   if (requestedOrg) equal(orgId, requestedOrg, "workspace");
@@ -270,12 +316,24 @@ export function decodeWorkspace(
   const entitlement = row.entitlement === undefined ? undefined : record(row.entitlement, "entitlement");
   if (entitlement?.degraded !== undefined && typeof entitlement.degraded !== "boolean")
     invalid("entitlement degraded state");
+  const billingOrg = directory?.billingOrgId ?? orgId;
+  const servingOrg = directory?.workspaces.find(m => m.orgId === orgId)?.billingOrgId ?? orgId;
+  if (directory) {
+    equal(directory.actorId, userId, "account");
+    const billing = record(row.billing, "billing");
+    equal(uuid(billing.content_org_id, "billing content org"), orgId, "listing library");
+    equal(uuid(billing.org_id, "billing org"), billingOrg, "billing account");
+    equal(uuid(billing.serving_org_id, "serving org"), servingOrg, "serving account");
+    if (typeof billing.can_manage_subscription !== "boolean") invalid("billing authority");
+  }
+  const servingActivation = decodeServingActivation(row.serving_activation, servingOrg);
   return {
     user: {
       id: userId,
       email: nullableString(user.email, "user email", true),
       name: nullableString(user.name, "user name", true),
       avatarUrl: nullableString(user.avatar_url, "user avatar_url", true),
+      realEstateRole: decodeRealEstateRole(user.real_estate_role),
     },
     org: {
       id: orgId,
@@ -285,10 +343,15 @@ export function decodeWorkspace(
     },
     plan: str(row.plan, "plan"),
     planRaw: nullableString(row.plan_raw, "plan_raw"),
-    planDegraded: entitlement?.degraded === true,
+    planDegraded: entitlement?.degraded === true || servingActivation?.available === false,
     trialEndsAt: nullableDate(row.trial_ends_at, "trial_ends_at"),
+    trialUsage: decodeTrialUsage(row.trial_usage, servingOrg),
+    trialOffer: decodeTrialOffer(row.trial_offer),
+    servingActivation,
+    servingPhotoPackage: decodePhotoPackage(row.serving_photo_package, servingOrg),
     planExpiresAt: nullableDate(row.plan_expires_at, "plan_expires_at", true),
     memberships,
+    ...(directory ? { ownOrgId: directory.ownOrgId, billingOrgId: billingOrg, servingOrgId: servingOrg, canSwitchAgentLibraries: directory.canSwitchAgentLibraries } : {}),
     usage: {
       listings: integer(usage.listings, "listing usage"),
       leads: integer(usage.leads, "leads usage"),
@@ -313,6 +376,7 @@ export function decodeListings(
   value: unknown,
   orgId: string,
   memberships: Membership[],
+  authoritativeLibrary = false,
 ): Listing[] {
   const allowed = new Set(memberships.map((m) => m.orgId));
   if (!allowed.has(orgId)) {
@@ -326,10 +390,11 @@ export function decodeListings(
     const rowOrg = uuid(row.org_id, "listing org_id");
     // Existing GET /listings returns all caller-visible orgs, ignoring X-Org-Id.
     // Validate the whole response before selecting; an unknown tenant fails closed.
-    if (!allowed.has(rowOrg)) {
+    const libraryOrg = authoritativeLibrary ? uuid(row.library_org_id, "listing library_org_id") : rowOrg;
+    if (!allowed.has(libraryOrg) || (authoritativeLibrary && libraryOrg !== orgId)) {
       throw new StudioError(
         "identity-mismatch",
-        "The server returned a listing outside your current memberships. Reload the workspace.",
+        "We got a listing that is not in your account. Reload Studio.",
       );
     }
     if (row.deleted_at !== null) invalid("listing deleted_at");
@@ -353,7 +418,9 @@ export function decodeListings(
     }
     return {
       id: uuid(row.id, "listing id"),
+      ...(row.agent_id == null ? {} : { agentId: uuid(row.agent_id, "listing agent_id") }),
       orgId: rowOrg,
+      ...(authoritativeLibrary ? { libraryOrgId: libraryOrg } : {}),
       spaceType: str(row.space_type, "listing space_type"),
       address: nullableString(row.address, "listing address"),
       tagline: nullableString(row.tagline, "listing tagline"),
@@ -372,7 +439,48 @@ export function decodeListings(
     };
   });
   unique(rows, "duplicate listing");
-  return rows.filter((row) => row.orgId === orgId);
+  return rows.filter((row) => (row.libraryOrgId ?? row.orgId) === orgId);
+}
+
+/** No plan, ordinary owner role, or saved browser preference grants delegation. */
+export function decodeWorkspaceDirectory(value: unknown, actor: string): WorkspaceDirectory {
+  const row = record(value, "listing directory");
+  equal(uuid(row.actor_id, "directory actor"), actor, "account");
+  const ownOrgId = uuid(row.own_org_id, "own library"), billingOrgId = uuid(row.billing_org_id, "billing account");
+  const activeOrgId = uuid(row.active_org_id, "active library");
+  if (typeof row.can_switch_agent_libraries !== "boolean") invalid("agent switching setting");
+  const canSwitchAgentLibraries = row.can_switch_agent_libraries;
+  const workspaces = list(row.workspaces, "listing libraries").map(raw => {
+    const entry = record(raw, "listing library"), orgId = uuid(entry.id, "library id");
+    const owner = uuid(entry.library_owner_user_id, "library owner"), role = str(entry.role, "library role");
+    const mode = entry.access_mode;
+    if (entry.can_read !== true || typeof entry.can_write !== "boolean" || typeof entry.can_manage_subscription !== "boolean") invalid("library access");
+    if (mode === "own") { if (role !== "owner" || owner !== actor) invalid("own listings access"); }
+    else if (mode !== "team_owner" || !canSwitchAgentLibraries || role !== "team_owner" || owner === actor || entry.can_manage_subscription !== false) invalid("team listings access");
+    return { orgId, orgName: entry.name == null ? "My listings" : str(entry.name, "library name"), role: role as Role,
+      spaceType: typeof entry.space_type === "string" ? str(entry.space_type, "library business") : "",
+      accessMode: mode as "own" | "team_owner", libraryOwnerUserId: owner,
+      billingOrgId: uuid(entry.billing_org_id, "listings billing account"), canRead: true,
+      canWrite: entry.can_write, canManageSubscription: entry.can_manage_subscription };
+  });
+  unique(workspaces.map(m => ({id:m.orgId})), "duplicate library");
+  if (!workspaces.length || workspaces.length > 10_000 || !workspaces.some(m => m.orgId === ownOrgId && m.accessMode === "own") ||
+      !workspaces.some(m => m.orgId === activeOrgId && (canSwitchAgentLibraries || m.orgId === ownOrgId))) invalid("active library");
+  return { actorId: actor, ownOrgId, billingOrgId, activeOrgId, canSwitchAgentLibraries, workspaces };
+}
+
+export function belongsToLibrary(listing: Listing, workspace: Workspace): boolean {
+  return (listing.libraryOrgId ?? listing.orgId) === (workspace.libraryOrgId ?? workspace.org.id);
+}
+export function canEditListing(workspace: Workspace, listing: Listing): boolean {
+  if (!belongsToLibrary(listing, workspace)) return false;
+  const member = workspace.memberships.find(m => m.orgId === (workspace.libraryOrgId ?? workspace.org.id));
+  return member?.canWrite ?? ["owner", "admin", "agent"].includes(member?.role ?? "");
+}
+/** A listing feature sends real-org headers without changing the selected library. */
+export function scopedListingWorkspace(workspace: Workspace, listing: Listing): Workspace {
+  if (!belongsToLibrary(listing, workspace)) invalid("selected listings");
+  return { ...workspace, libraryOrgId: workspace.libraryOrgId ?? workspace.org.id, org: { ...workspace.org, id: listing.orgId } };
 }
 
 export function mediaURL(
@@ -381,8 +489,10 @@ export function mediaURL(
   listingId: string,
   expiresAt: string,
   now: number,
+  actor?: string,
 ): string {
   const s = str(value, "media URL");
+  if(isPrivateMediaURL(s)){const c=privateMediaCapability(s,{actor:actor??"",org:orgId,listing:listingId},now);if(!Number.isFinite(Date.parse(expiresAt))||Date.parse(expiresAt)>c.exp*1000+1000)invalid("media expiry mismatch");return s;}
   let url: URL;
   try {
     url = new URL(s);
@@ -414,7 +524,7 @@ export function mediaURL(
   // This validates the literal route contract, not the cryptographic signature.
   if (
     segments.length < 5 || !["uploads", "renders"].includes(segments[1]!) ||
-    segments[2] !== orgId || segments[3] !== listingId ||
+    !(segments[2] === orgId && segments[3] === listingId || segments[1] === "renders" && segments[2] === listingId) ||
     segments.some((segment) =>
       !segment || segment === "." || segment === ".." ||
       /[\\/%?#\u0000-\u001f]/.test(segment)
@@ -453,7 +563,7 @@ export function mediaURL(
   if (signedExpiry <= now) {
     throw new StudioError(
       "media-expired",
-      "The private media link has expired. Refresh the library.",
+      "The link to this photo or video has expired. Refresh to get a new one.",
     );
   }
   // SigV4 timestamps have second precision, while the route's timestamp has milliseconds.
@@ -472,6 +582,7 @@ export function decodeMedia(
   orgId: string,
   listingId: string,
   offset = 0,
+  actor?: string,
 ): ListingMedia {
   const row = record(value, "listing media");
   const now = Date.now();
@@ -485,14 +596,14 @@ export function decodeMedia(
     if (Date.parse(expiresAt) <= now) {
       throw new StudioError(
         "media-expired",
-        "The private media link has expired. Refresh the library.",
+        "The link to this photo or video has expired. Refresh to get a new one.",
       );
     }
     return {
       item,
       id: uuid(item.id, "media id"),
       listingId,
-      url: mediaURL(item.url, orgId, listingId, expiresAt, now),
+      url: mediaURL(item.url, orgId, listingId, expiresAt, now, actor),
       expiresAt,
     };
   }
@@ -514,12 +625,16 @@ export function decodeMedia(
   const photos = photoRows.map((raw) => {
     const { item, ...base } = common(raw);
     if (typeof item.is_staged !== "boolean") invalid("photo is_staged");
+    if (item.edit_kind !== undefined && item.edit_kind !== null && !["declutter", "stage", "sky", "twilight", "lawn", "custom"].includes(String(item.edit_kind))) invalid("photo edit_kind");
+    if (item.original_verified !== undefined && typeof item.original_verified !== "boolean") invalid("photo original_verified");
     return {
       ...base,
       caption: nullableString(item.caption, "photo caption"),
       isStaged: item.is_staged,
       ...(item.is_altered === undefined ? {} : { isAltered: item.is_altered === true }),
-      ...(item.original_url === undefined ? {} : { originalUrl: item.original_url === null ? null : mediaURL(item.original_url, orgId, listingId, base.expiresAt, now) }),
+      ...(item.original_url === undefined ? {} : { originalUrl: item.original_url === null ? null : mediaURL(item.original_url, orgId, listingId, base.expiresAt, now, actor) }),
+      ...(item.edit_kind === undefined ? {} : { editKind: item.edit_kind as StudioPhoto["editKind"] }),
+      ...(item.original_verified === undefined ? {} : { originalVerified: item.original_verified }),
       sort: integer(item.sort, "photo sort"),
     };
   });
@@ -535,5 +650,9 @@ export function decodeMedia(
   });
   unique(photos, "duplicate photo");
   unique(videos, "duplicate video");
-  return { orgId, listingId, photos, videos, nextOffset, unavailableCount };
+  const propertyPhotos = photos.filter(photo => {
+    try { return !decodeURIComponent(new URL(photo.url).pathname).split("/").at(-1)?.startsWith("contact-"); } catch { return false; }
+  });
+  if (row.has_more !== undefined && typeof row.has_more !== "boolean") invalid("media has_more");
+  return { orgId, listingId, photos: propertyPhotos, videos, nextOffset, unavailableCount, ...(row.has_more === undefined ? {} : { hasMore: row.has_more }) };
 }

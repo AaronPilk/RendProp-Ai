@@ -89,6 +89,8 @@ export type VideoEditorProps = {
   onChooseLibrary?:()=>void;
   importRequest?: { id: string; files: File[]; listingId?: string; sourceMedia?: {id: string; kind: "photo" | "video"}[] };
   relinkRequest?: { id: string; files: File[] };
+  /** Complete original-file persistence before accepting imported edit metadata. */
+  prepareSources?: (sources: { file: File; sha256: string }[], signal: AbortSignal) => Promise<void>;
   onSourcesChange?: (sources: { file: File; sha256: string }[]) => void;
   onSaveOutput?: (output: LocalExport) => Promise<void>;
   resolveMusic?: (source: AudioSourceRef, signal: AbortSignal) => Promise<Blob>;
@@ -115,7 +117,7 @@ export type VideoEditorProps = {
 function errorText(error: unknown): string {
   return error instanceof Error
     ? error.message
-    : "The browser could not complete that operation.";
+    : "The browser could not finish that. Try again.";
 }
 function inactiveExportError() {
   return new DOMException(
@@ -149,6 +151,7 @@ export function VideoEditor({
   onChooseLibrary,
   importRequest,
   relinkRequest,
+  prepareSources,
   onSourcesChange,
   onSaveOutput,
   narrationChoices,
@@ -354,7 +357,7 @@ export function VideoEditor({
       const next = direction === "undo" ? undoHistory(current) : redoHistory(current);
       if (!replaceHistory(next)) return;
       const missingCount = draftMedia(next.present).filter((clip) => !media.current.has(clip.id)).length;
-      notice(`${direction === "undo" ? "Undid" : "Redid"} ${label}. ${missingCount ? "Reselect missing original media; its full SHA-256 hash must match." : "Your edit is ready."}`);
+      notice(`${direction === "undo" ? "Undid" : "Redid"} ${label}. ${missingCount ? "Choose the missing original file again. It must be the exact same file." : "Your edit is ready."}`);
     } catch (error) {
       notice(errorText(error));
     }
@@ -519,6 +522,7 @@ export function VideoEditor({
           },
         });
       }
+      await prepareSources?.(staged.map(({local}) => ({file:local.file,sha256:local.source.sha256})), controller.signal);
       assertCurrentRevision(snapshot, draftRef.current, controller.signal);
       const next = editHistory(historyRef.current, {
         clips: [...snapshot.clips, ...staged.map((item) => item.clip)],
@@ -578,6 +582,7 @@ export function VideoEditor({
         if (local.source.kind !== "image") { URL.revokeObjectURL(local.url); throw new Error("A shot plan must use the original property photos."); }
         staged.push({local, clip: {id: crypto.randomUUID(), source: local.source, start: 0, end: item.seconds, caption: item.caption, focusX: 0.5, focusY: 0.5, captionStyle: planRequest.settings?.captionStyle ?? "clean", transition: index === 0 ? "cut" : planRequest.settings?.transition ?? "cut", motion: item.motion}});
       }
+      await prepareSources?.(staged.map(({local}) => ({file:local.file,sha256:local.source.sha256})), controller.signal);
       assertCurrentRevision(snapshot, draftRef.current, controller.signal);
       const next = editHistory(historyRef.current, {clips: staged.map(item => item.clip), overlays: [], narration: planRequest.narration, ...(planRequest.settings ? {ratio: planRequest.settings.ratio, title: planRequest.settings.title} : {})}, "apply saved shot plan");
       for (const item of staged) media.current.set(item.clip.id, item.local);
@@ -605,6 +610,7 @@ export function VideoEditor({
         if (local.source.kind !== "image") throw new Error("Choose still photos for the agent’s cutaways.");
         overlays.push({id:crypto.randomUUID(),source:local.source,...agentRequest.overlays[index],focusX:.5,focusY:.5});
       }
+      await prepareSources?.(staged.map(local => ({file:local.file,sha256:local.source.sha256})), controller.signal);
       assertCurrentRevision(snapshot, draftRef.current, controller.signal);
       const next = editHistory(historyRef.current, {clips:[clip],overlays,narration:undefined,audio:"original"}, "apply agent cutaways");
       media.current.set(clip.id,base); overlays.forEach((overlay,index)=>media.current.set(overlay.id,staged[index+1]));
@@ -651,11 +657,12 @@ export function VideoEditor({
     let local: LocalMusic | undefined;
     try {
       local = await inspectMusic(file, controller.signal);
+      await prepareSources?.([{file:local.file,sha256:local.source.sha256}], controller.signal);
       assertCurrentRevision(snapshot, draftRef.current, controller.signal);
       if (!activeRef.current || !mounted.current) return;
       const same = snapshot.music?.source.sha256 === local.source.sha256;
       if (same && snapshot.music) {
-        if (snapshot.music.source.size !== local.source.size || Math.abs(snapshot.music.source.duration - local.source.duration) > .05) throw new Error("The original music metadata does not match the saved edit.");
+        if (snapshot.music.source.size !== local.source.size || Math.abs(snapshot.music.source.duration - local.source.duration) > .05) throw new Error("This is not the music file that was saved with this edit. Choose the original music file.");
         local.source = snapshot.music.source;
       }
       if (!same && !update({music: {source: local.source, start: 0, end: local.source.duration, offset: 0, volume: .3, fadeIn: Math.min(.5, local.source.duration), fadeOut: Math.min(1, local.source.duration), ducking: "original", licensed: true}}, "add licensed music")) return;
@@ -876,7 +883,7 @@ export function VideoEditor({
       setMediaVersion((version) => version + 1);
       scrubTo(0);
       notice(
-        "Edit plan opened. Undo history was reset. Reselect any missing original media; every file is verified by its full SHA-256 hash.",
+        "Edit plan opened. Undo history was reset. Choose any missing original files again; each one must be the exact same file.",
       );
     } catch (error) {
       if (!controller.signal.aborted) notice(errorText(error));
@@ -901,6 +908,8 @@ export function VideoEditor({
     try {
       local = await inspectFile(file, controller.signal);
       assertSourceMatch(clip.source, local.source);
+      await prepareSources?.([{file:local.file,sha256:local.source.sha256}], controller.signal);
+      controller.signal.throwIfAborted();
       if (
         !draftMedia(draftRef.current).some(
           (item) =>

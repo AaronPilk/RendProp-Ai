@@ -172,7 +172,7 @@ test("strict IDs preserve legacy test-post and UUID but reject calendar UID inje
   ])
     assert.throws(
       () => validatePlanItem({ ...legacy, id }),
-      /identity|Invalid content/,
+      /could not be read|Invalid content/,
     );
   assert.equal(
     validatePlanItem({ ...legacy, id: "db7288aa-3d17-43e5-aefe-471346e42fd6" })
@@ -194,7 +194,7 @@ test("new item is appended immutably and duplicates are never created", () => {
   assert.equal(next.length, 2);
   assert.equal(items.length, 1);
   assert.deepEqual(next[0], bound);
-  assert.throws(() => savePlan(items, bound), /duplicate/);
+  assert.throws(() => savePlan(items, bound), /duplicate|share the same ID/);
 });
 test("editing preserves identity, creation date and all other plans", () => {
   const other = fixture("second", "2026-09-16T12:30");
@@ -252,10 +252,10 @@ test("duplicate saved IDs fail both read and write, without partial storage", ()
       writes++;
     },
   };
-  assert.throws(() => readPlans(storage, "local"), /duplicate/);
+  assert.throws(() => readPlans(storage, "local"), /duplicate|share the same ID/);
   assert.throws(
     () => writePlans(storage, "local", [bound, bound]),
-    /duplicate/,
+    /duplicate|share the same ID/,
   );
   assert.equal(writes, 0);
 });

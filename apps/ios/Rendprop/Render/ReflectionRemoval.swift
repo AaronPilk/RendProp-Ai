@@ -69,6 +69,7 @@ final class ReflectionRemoval: ObservableObject {
     private var task: Task<Void, Never>?
     private var operationID = UUID()
     private var quoteID = UUID()
+    private var processingConsentRevision: UInt64?
     private let ownerID: String?
     private var accountObserver: AnyCancellable?
     let listingID: UUID
@@ -111,13 +112,16 @@ final class ReflectionRemoval: ObservableObject {
         guard Config.useLiveBackend, isCurrentOwner else { return }
         let request = UUID(); quoteID = request
         do {
+            guard await AIConsent.shared.ensureGranted() else { return }
+            let consentRevision = AIConsent.shared.revocationRevision
             guard await AuthStore.shared.ensureSession() else { return }
             try checkSession()
             let serverID = try await model.ensureServerListing(listing)
             try checkSession()
             let value = try await model.api.reflectionQuote(listingID: serverID)
             try checkSession()
-            guard quoteID == request else { return }
+            guard quoteID == request, AIConsent.shared.isGranted,
+                  AIConsent.shared.revocationRevision == consentRevision else { return }
             quote = value
         } catch is CancellationError { }
         catch { if isCurrentOwner && quoteID == request { self.error = error.localizedDescription } }
@@ -126,14 +130,18 @@ final class ReflectionRemoval: ObservableObject {
     func start(clips: [ReflectionClip], model: AppModel, listing: Listing) {
         guard !isBusy else { return }
         launch {
-            guard await AIConsent.shared.ensureGranted(), await AuthStore.shared.ensureSession(),
+            guard await AIConsent.shared.ensureGranted() else { return }
+            self.processingConsentRevision = AIConsent.shared.revocationRevision
+            guard await AuthStore.shared.ensureSession(),
                   let owner = AuthStore.shared.userID else { return }
+            try self.checkProcessingConsent()
             try self.checkSession()
             let serverID = try await model.ensureServerListing(listing)
             try self.checkSession()
             if self.work == nil || self.work?.cancellationConfirmed == true {
                 let quote = try await model.api.reflectionQuote(listingID: serverID)
                 try self.checkSession()
+                try self.checkProcessingConsent()
                 self.quote = quote
                 guard quote.available, !clips.isEmpty, clips.count <= quote.remainingClips,
                       Self.valid(clips: clips, duration: self.source.durationS, maximum: min(4.8, quote.maxClipSeconds)),
@@ -249,6 +257,7 @@ final class ReflectionRemoval: ObservableObject {
         guard let saved = work else { return }
         for i in saved.pieces.indices {
             try checkOwner()
+            try checkProcessingConsent()
             try Task.checkCancellation()
             if work?.cancellationRequested == true { throw CancellationError() }
             message = "Editing interval \(i + 1) of \(saved.pieces.count)…"
@@ -261,6 +270,7 @@ final class ReflectionRemoval: ObservableObject {
                 try checkpoint()
             }
             if work?.pieces[i].assetID == nil, let path = work?.pieces[i].inputPath {
+                try checkProcessingConsent()
                 let id = try await upload(FileStore.url(fromRelativePath: path), serverID: saved.serverListingID)
                 try checkOwner()
                 work?.pieces[i].assetID = id
@@ -270,6 +280,7 @@ final class ReflectionRemoval: ObservableObject {
             try Task.checkCancellation()
             guard work?.cancellationRequested != true, let assetID = work?.pieces[i].assetID else { throw CancellationError() }
             if work?.pieces[i].job == nil {
+                try checkProcessingConsent()
                 // clip.id was saved BEFORE uploading/submitting and survives
                 // retry, a lost response, process death and phone restart.
                 let job = try await model.api.removeReflections(assetID: assetID, listingID: saved.serverListingID,
@@ -337,6 +348,7 @@ final class ReflectionRemoval: ObservableObject {
         while Date() < deadline {
             try Task.checkCancellation()
             try checkOwner()
+            try checkProcessingConsent()
             let status = try await api.aiVideoStatus(job)
             try checkOwner()
             switch status {
@@ -461,6 +473,13 @@ final class ReflectionRemoval: ObservableObject {
         try Task.checkCancellation()
         guard isCurrentOwner else { throw CancellationError() }
         if let current = ReflectionOperation.id, current != operationID { throw CancellationError() }
+    }
+    private func checkProcessingConsent() throws {
+        guard AIConsent.shared.isGranted,
+              processingConsentRevision == AIConsent.shared.revocationRevision else {
+            throw APIError.server(status: 403, code: "consent_required",
+                message: "AI processing was turned off. Your original and completed edits are saved. Give permission again before continuing.")
+        }
     }
     private func checkOwner() throws {
         try checkSession()

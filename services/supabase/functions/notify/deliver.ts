@@ -29,6 +29,8 @@ export interface OutboxRow {
   user_id: string | null;
   /** Set only on rows addressed to someone with no profile to look up. */
   to_email?: string | null;
+  client_delivery_id?: string | null;
+  client_verification_id?: string | null;
   category: string;
   channel: "push" | "email";
   dedupe_key: string;
@@ -52,6 +54,9 @@ export interface Outcome {
   deadTokens: string[];
 }
 
+/** The paired admin email is the only actionable destination for an ops alert. */
+export type OperationalEmailState = "sent" | "queued" | "sending" | "failed" | "skipped" | "expired" | "missing" | "lookup_unavailable";
+
 /**
  * Push one row to every live device the person has.
  *
@@ -65,19 +70,38 @@ export async function deliverPush(
   devices: DeviceRow[],
   base: string,
   fetchImpl: typeof fetch = fetch,
+  authorizeDevice?: (device:DeviceRow)=>Promise<boolean>,
+  operationalEmailState: OperationalEmailState = "lookup_unavailable",
 ): Promise<Outcome> {
+  // Operational findings live in server configuration and provider accounts.
+  // The native app has no review destination for them; the paired admin email
+  // carries the actionable details. Do not send a generic "review it" push
+  // that opens Home with no context.
+  if (row.category === "ops_alert") {
+    return {
+      state: operationalEmailState === "sent" ? "skipped" : "failed",
+      reason: operationalEmailState === "sent"
+        ? "Operational alert has no mobile review destination; paired admin email was sent."
+        : `Operational alert has no mobile review destination; paired admin email is ${operationalEmailState}.`,
+      providerId: null,
+      deadTokens: [],
+    };
+  }
   // THE INERT PATH. Not an error and not a retry: this row has nowhere to go
   // until somebody sets three secrets, and naming them in last_error is how
   // they find out. E-mail rows in the same batch are unaffected.
   if (!apns.configured()) {
     return { state: "skipped", reason: apns.missingReason(), providerId: null, deadTokens: [] };
   }
-  if (devices.length === 0) {
+  // The drain groups devices by the row's own user_id; a caller that hands this
+  // row somebody else's devices gets them dropped here rather than pushed to.
+  const ownDevices = row.user_id ? devices.filter((device) => device.user_id === row.user_id) : [];
+  if (ownDevices.length === 0 || !row.user_id) {
     // The device was disabled or removed between enqueue and drain. A push with
     // no device is not a failure worth retrying five times.
     return {
       state: "skipped",
-      reason: "no live device for this user",
+      reason: NO_LIVE_DEVICE,
       providerId: null,
       deadTokens: [],
     };
@@ -93,7 +117,11 @@ export async function deliverPush(
   const deadTokens: string[] = [];
   let lastReason: string | null = null;
 
-  for (const device of devices) {
+  let authorizedDevices=0;
+  let authorizationDenied = false;
+  for (const device of ownDevices) {
+    if(authorizeDevice&&!await authorizeDevice(device)){authorizationDenied = true;continue;}
+    authorizedDevices++;
     const result = await apns.send({
       deviceToken: device.device_token,
       environment: device.environment === "sandbox" ? "sandbox" : "production",
@@ -101,7 +129,8 @@ export async function deliverPush(
       body: message.body,
       deepLink: link,
       category: row.category,
-      data,
+      recipientUserId: row.user_id,
+      data: apns.pushRouteData(data),
       collapseId: row.dedupe_key,
     }, fetchImpl);
 
@@ -117,10 +146,11 @@ export async function deliverPush(
   // EVERY token this person has is gone. Retrying cannot help, so the row is
   // closed as skipped rather than left to burn its five attempts against
   // phones that no longer exist.
-  if (deadTokens.length > 0 && deadTokens.length === devices.length) {
+  if(authorizationDenied||authorizedDevices===0)return {state:"skipped",reason:"the current account or device enrollment changed",providerId:null,deadTokens};
+  if (deadTokens.length > 0 && deadTokens.length === authorizedDevices) {
     return {
       state: "skipped",
-      reason: `every device token for this user was rejected by APNs (${lastReason ?? "unregistered"})`,
+      reason: `${ALL_TOKENS_REJECTED} (${lastReason ?? "unregistered"})`,
       providerId: null,
       deadTokens,
     };
@@ -133,12 +163,48 @@ export async function deliverPush(
   };
 }
 
+/** The two closed-push reasons that mean "this person's phone can no longer be
+ * reached", as opposed to "this message must not be sent". */
+const NO_LIVE_DEVICE = "no live device for this user";
+const ALL_TOKENS_REJECTED = "every device token for this user was rejected by APNs";
+
+/**
+ * notification_enqueue() picks ONE channel when the row is written: push when
+ * the person has any enabled device, e-mail otherwise. A device that died after
+ * that choice (app deleted, token rotated) closes the push as `skipped`, and
+ * until now nothing else was ever sent: the first inquiry after an agent
+ * reinstalled the app reached nobody.
+ *
+ * True only for those undeliverable-phone outcomes, and only for the messages a
+ * person acts on. An access or enrollment refusal ("account access changed",
+ * "device enrollment changed") is a privacy decision and never falls back.
+ */
+export function pushNeedsEmailFallback(row: OutboxRow, outcome: Outcome): boolean {
+  if (row.channel !== "push" || outcome.state !== "skipped" || !row.user_id || !outcome.reason) return false;
+  if (!["lead_received", "render_ready", "upload_stuck"].includes(row.category)) return false;
+  return outcome.reason === NO_LIVE_DEVICE || outcome.reason.startsWith(ALL_TOKENS_REJECTED);
+}
+
+/** The e-mail twin of an undeliverable push. Its key is derived from the push
+ * row's, so a replayed drain cannot queue the same fallback twice. */
+export function emailFallbackRow(row: OutboxRow): Record<string, unknown> {
+  return {
+    org_id: row.org_id,
+    user_id: row.user_id,
+    category: row.category,
+    channel: "email",
+    dedupe_key: `${row.dedupe_key}:email-fallback`,
+    payload: row.payload,
+  };
+}
+
 /** E-mail one row. Same three outcomes, same never-throws contract. */
 export async function deliverEmail(
   row: OutboxRow,
   address: string | null,
   base: string,
   fetchImpl: typeof fetch = fetch,
+  clientMessage?: email.EmailMessage,
 ): Promise<Outcome> {
   if (!email.configured()) {
     return { state: "skipped", reason: email.missingReason(), providerId: null, deadTokens: [] };
@@ -152,9 +218,13 @@ export async function deliverEmail(
     };
   }
 
+  if(["client_lead_received", "client_recipient_verification"].includes(row.category) && (!clientMessage || clientMessage.to !== address)) {
+    return {state:"skipped",reason:"Client forwarding was not authorized.",providerId:null,deadTokens:[]};
+  }
+
   const message = render(row.category, row.payload);
   const link = absoluteLink(row.payload, base);
-  const result = await email.sendEmail({
+  const result = await email.sendEmail(clientMessage ?? {
     to: address,
     subject: message.title,
     text: emailText(message, link, row.category),

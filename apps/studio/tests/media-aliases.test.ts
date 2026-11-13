@@ -16,6 +16,6 @@ test("an original with no signed original URL stays unavailable rather than sile
 });
 test("aliases reject another property's scoped state and perform no lookup for already available IDs",async()=>{
  const available=new Map<string,ReadableMedia>([[photo,{url:"https://fixture.invalid/edited"}]]);
- await assert.rejects(resolvePhotoAliases(services("other"),org,listing,available,[original],new AbortController().signal),/identities/);
+ await assert.rejects(resolvePhotoAliases(services("other"),org,listing,available,[original],new AbortController().signal),/this property's photos/);
  await resolvePhotoAliases({api:()=>{throw new Error("Unnecessary fetch");}} as unknown as StudioServices,org,listing,available,[photo],new AbortController().signal);
 });

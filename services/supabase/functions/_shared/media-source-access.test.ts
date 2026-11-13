@@ -46,3 +46,31 @@ Deno.test("a denied source is never signed; revocation while signing discards th
   await assertRejects(() => withVisibleMedia(db, listing, { assets: [asset] }, () => { signed++; return Promise.resolve("private-url"); }), HttpError);
   assertEquals(checks, 2); assertEquals(signed, 1);
 });
+Deno.test("request-local intermediate proof avoids duplicate HEADs, while the final fence always rechecks", async () => {
+  const org="30000000-0000-4000-8000-000000000003",publication="40000000-0000-4000-8000-000000000004";
+  const source="50000000-0000-4000-8000-000000000005",output="60000000-0000-4000-8000-000000000006";
+  const keyPrefix=`renders/${org}/${listing}/`;
+  const original=`${keyPrefix}original-${source}.jpg`, altered=`${keyPrefix}gallery-${output}.jpg`;
+  const privatePrefix=`ai-router/${org}/photo-evidence/${source}/${output}/`;
+  const objects=[original,altered,privatePrefix+"input.jpg",privatePrefix+"candidate.jpg"]
+    .map(key=>({key,bucket:"renders" as const,bytes:100,mime:"image/jpeg",etag:"exact-etag"}));
+  let etag="exact-etag",available=true,heads=0,admissions=0;
+  const db:MediaAccessClient={rpc(_name,args){const group=(kind:"assets"|"renders"|"keys")=>
+    Object.fromEntries((args[`p_${kind}`] as string[]).map(value=>[value,true]));
+    return Promise.resolve({error:null,data:{assets:group("assets"),renders:group("renders"),keys:group("keys"),
+      photo_publications:[{publication_id:publication,org_id:org,listing_id:listing,assets:[output,source],keys:[original,altered],objects:objects.map(o=>({...o,etag}))}]}});
+  }};
+  const headIO={head:async(o:{key:string;bytes:number;mime:string;etag:string})=>{heads++;return{exists:available,bytes:o.bytes,contentType:o.mime,etag:o.etag};},admit:async()=>{admissions++;}};
+  const refs={assets:[output],keys:[altered]};
+  const proofs=new Map<string,string>();
+  await assertMediaVisible(db,listing,refs,{intermediateProofs:proofs,headIO});
+  assertEquals(heads,4);assertEquals(admissions,4);assertEquals(proofs.size,1);
+  await assertMediaVisible(db,listing,refs,{intermediateProofs:proofs,headIO});
+  assertEquals(heads,4);assertEquals(admissions,4);
+  etag="changed-receipt";
+  await assertMediaVisible(db,listing,refs,{intermediateProofs:proofs,headIO});
+  assertEquals(heads,8);assertEquals(admissions,8);
+  available=false;
+  await assertRejects(()=>assertMediaVisible(db,listing,refs,{headIO}),HttpError,"no longer available");
+  assertEquals(heads,12);assertEquals(admissions,12);
+});
