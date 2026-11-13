@@ -17,7 +17,7 @@ assert(args.length <= 1, "Unknown startup test option");
 const mode = args[0] ?? "actual";
 assert(["actual", "--before", "--fault=omit-readiness"].includes(mode));
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-startup-"));
-const paths = ["src/editor/export.ts", "src/editor/recording-clock.ts", "src/editor/media.ts", "src/editor/model.ts",
+const paths = ["src/editor/export.ts","src/editor/export-canvas-ready.ts", "src/editor/recording-clock.ts", "src/editor/media.ts", "src/editor/model.ts",
   "tests/export-startup-fixture.ts", "tests/export-startup-fixture.html", "tests/export-startup-browser.mjs", "tests/native-trace-observer.mjs", "tests/runner-facts.mjs",
   "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs"];
 const hashes = async () => Object.fromEntries(await Promise.all(paths.map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));

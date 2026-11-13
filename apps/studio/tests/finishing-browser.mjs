@@ -18,7 +18,7 @@ const {args, audioOutput} = testAudioOutputOption(process.argv.slice(2));
 assert.equal(args.length, 0, "Unknown finishing test option");
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
 const sourceHashes = Object.fromEntries(await Promise.all(["tests/finishing-browser.mjs", "tests/native-trace-observer.mjs", "tests/scheduling-probe.mjs", "tests/runner-facts.mjs",
-  ...["export", "recording-clock", "media", "finishing", "music"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+  ...["export", "export-canvas-ready", "recording-clock", "media", "finishing", "music"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
 const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", sourceHashes, audioOutput, runnerFacts: collectRunnerFacts(), checks: [], errors: [], externalRequests: [], status: "running"};
 let browser, server, page;
 // Retain the actual clock guard's cause without changing its readings,

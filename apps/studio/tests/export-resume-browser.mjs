@@ -38,7 +38,7 @@ const variants=omitOldAwait?["baseline"]:onlyFixed?["fixed"]:["fixed", "baseline
 const resumeNotificationDelayMs = 1000;
 const MAX_RECORDER_REQUESTS = 1024;
 const MAX_REJECTED_BLOB_BYTES = 4 * 1024 * 1024;
-const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/native-media-trace-observer.mjs", "tests/ci-failure-annotation.mjs", ...["export", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", "tests/export-diagnostics.mjs", "tests/scheduling-probe.mjs", "tests/native-trace-observer.mjs", "tests/native-media-trace-observer.mjs", "tests/ci-failure-annotation.mjs", ...["export", "export-canvas-ready", "recording-clock", "mp4-cadence", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
 const receipt = { sourceHashes, audioOutput, diagnostics, mediaTrace:{enabled:mediaTraceEnabled,optInFlag:"--media-trace",scope:"first-fixed-original-only",testOnly:true}, runnerFacts: collectRunnerFacts(), variants, fault:omitOldAwait?"omit-old-await":null, historicalRecordingGuardIsolation:["baseline","clock-baseline"], browserIsolation:{strategy:"fresh-Chromium-process-per-MP4-attempt",opened:[],closed:[]}, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Each MP4 attempt runs in a fresh Chromium process, which closes before FFmpeg inspection; the interruption and cleanup controls run in their own process. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Only the historical resume-await and photo-clock controls isolate the later per-segment RecordingClock; both retain startup readiness and original-audio loss admission. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], captureGapFailures: [], sparseCaptureFailures: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
@@ -817,6 +817,28 @@ finally {
           typeof value === "string" ? value.slice(0, 16) : "unknown") : [] };
     } catch { return {status: "summary-unavailable"}; }
   })();
+  // Report the already-recorded sparse control after cleanup. Keep its exact
+  // assertions unchanged so a different refusal cannot satisfy this control.
+  const lastSparseCaptureRefusal = (() => {
+    try {
+      const control = receipt.sparseCaptureFailures.at(-1);
+      if (!control) return null;
+      const numeric = (value, keys) => Object.fromEntries(keys.flatMap(key =>
+        Number.isFinite(value?.[key]) ? [[key, value[key]]] : []));
+      return {
+        cause: numeric(control.cause, ["gapMilliseconds", "maxGapMilliseconds",
+          "maxTransitionGapMilliseconds", "transitionMilliseconds", "framesCaptured", "minFrames",
+          "windowMilliseconds", "frameIndex", "frameCount", "observed", "limit"]),
+        noResult: control.result === null,
+        downloadHidden: control.downloadHidden === true,
+        tracks: Array.isArray(control.tracks) ? control.tracks.slice(0, 4).map(value =>
+          typeof value === "string" ? value.slice(0, 16) : "unknown") : [],
+        injections: (Array.isArray(control.trace) ? control.trace : [])
+          .filter(value => value?.event === "capture.sparse.injected").slice(-12)
+          .map(value => ({event: value.event, ...numeric(value, ["at", "index", "milliseconds"])})),
+      };
+    } catch { return {status: "summary-unavailable"}; }
+  })();
   // Persist every decoded frame, pixel and trace in the receipt; keep CI output
   // compact enough that an intended-control failure remains visible.
   console.log(JSON.stringify({ artifacts, receipt: join(artifacts, "receipt.json"), status: receipt.status,
@@ -825,7 +847,7 @@ finally {
       heldFrames: trace.filter(value => value.event === "export.frame.held").length,
       cancelledFrames: trace.filter(value => value.event === "export.frame.cancelled").length,
       deliveredFrames: trace.filter(value => value.event === "export.frame.delivered").length})),
-    failure: receipt.failure?.split("\n")[0], firstRecordedRefusal,
+    failure: receipt.failure?.split("\n")[0], firstRecordedRefusal, lastSparseCaptureRefusal,
     firstFixedNativeMediaTrace: receipt.attempts.find(value => value.variant === "fixed" && !value.narrated)?.nativeMediaTraceSummary ?? null,
     errors: receipt.errors, externalRequests: receipt.externalRequests }, null, 2));
   emitFailureAnnotation("export-resume", receipt);

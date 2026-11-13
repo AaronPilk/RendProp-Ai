@@ -3,6 +3,7 @@ import {musicGainAt} from "./finishing";
 import {OverlayPainter} from "./overlay-renderer";
 import {AudioStartupClock, CaptureCadenceClock, RecordingClock} from "./recording-clock";
 import {verifyMp4FrameCadence, type EncodedTransition} from "./mp4-cadence";
+import {awaitCanvasFrameReady} from "./export-canvas-ready";
 import {
   EDIT_LIMITS,
   draftMedia,
@@ -394,12 +395,25 @@ export async function exportLocalVideo(options: {
         // interval, producing a frozen opening even though later frames flow.
         await nextExportFrame(renderSignal, 1000 / 30);
         assertCurrentRevision(draft, currentDraft(), renderSignal);
-        // A canvas track can retain timestamps from its creation. Open it only
-        // after readiness, so pre-content preparation cannot become a video prefix.
-        // Drive capture from completed paints. Chromium's periodic canvas
-        // sampler can record a stale transition frame for several intervals
-        // even while the media clock and paint loop keep advancing.
+        // Open the source after audio readiness and observe one delivered
+        // timeline-zero frame through a temporary sink. Reuse that same live
+        // track for recording, repainting and requesting timeline zero after
+        // start. Existing clock and encoded checks remain; actual A/V and
+        // prefix behavior still need the decoded-media proof.
+        // Drive capture from completed paints; Chromium's periodic sampler
+        // can otherwise retain a stale transition frame.
         stream = canvas.captureStream(0);
+        const canvasTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
+        if (!canvasTrack)
+          throw new Error("Video capture stopped before recording. No download was created. Please try again.");
+        await awaitCanvasFrameReady(canvasTrack, canvas.width, canvas.height, renderSignal,
+          () => assertCurrentRevision(draft, currentDraft(), renderSignal), async () => {
+            drawFrame(canvas, decoded!, clip, draft, {time: elapsedBefore, localTime: 0});
+            await overlays.paint(canvas, elapsedBefore);
+          });
+        assertCurrentRevision(draft, currentDraft(), renderSignal);
+        if (audio && audio.state !== "running")
+          throw new Error("Audio stopped before recording could start. No download was created.");
         if (destination)
           for (const track of destination.stream.getAudioTracks())
             stream.addTrack(track);

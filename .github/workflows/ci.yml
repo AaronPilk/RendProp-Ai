@@ -1490,7 +1490,7 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          node tests/cloud-editor-browser.mjs --media-trace
+          node tests/cloud-editor-browser.mjs
           node tests/conversation-browser.mjs
           node tests/finishing-audio-probe-controls.mjs
           node tests/finishing-browser.mjs
@@ -1583,7 +1583,7 @@ jobs:
           assert abs(float(case['probe']['format']['duration']) - 2) < .18
           assert sum(x['codec_type'] == 'audio' and x['codec_name'] == 'aac' for x in case['probe']['streams']) == 1
           expected = {'tests/export-audio-fixture.ts', 'tests/export-audio-browser.mjs'}
-          expected.update(f'src/editor/{name}.ts' for name in ('export', 'recording-clock', 'media', 'model', 'music', 'finishing'))
+          expected.update(f'src/editor/{name}.ts' for name in ('export', 'export-canvas-ready', 'recording-clock', 'media', 'model', 'music', 'finishing'))
           assert set(receipt['sourceHashes']) == expected
           for path, digest in receipt['sourceHashes'].items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
@@ -1752,7 +1752,7 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          node tests/export-resume-browser.mjs --media-trace
+          node tests/export-resume-browser.mjs
           control_root=$(mktemp -d "$RUNNER_TEMP/rendprop-export-resume-control.XXXXXX")
           set +e
           TMPDIR="$control_root" node tests/export-resume-browser.mjs --fault=omit-old-await > "$control_root/run.log" 2>&1
@@ -1789,7 +1789,7 @@ jobs:
                               'tests/export-diagnostics.mjs', 'tests/scheduling-probe.mjs', 'tests/native-trace-observer.mjs',
                               'tests/ci-failure-annotation.mjs', 'tests/native-media-trace-observer.mjs'}
           expected_sources.update(f'src/editor/{name}.ts' for name in
-                                  ('export', 'recording-clock', 'mp4-cadence', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
+                                  ('export', 'export-canvas-ready', 'recording-clock', 'mp4-cadence', 'media', 'model', 'music', 'finishing', 'overlay-renderer'))
           assert set(receipt['sourceHashes']) == expected_sources
           for path, digest in receipt['sourceHashes'].items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path

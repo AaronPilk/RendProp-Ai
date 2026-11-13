@@ -11,7 +11,7 @@ import {testAudioOutputOption, installTestAudioOutput, verifyTestAudioOutput} fr
 const {audioOutput} = testAudioOutputOption(process.argv.slice(2));
 const alignmentOnly=process.argv.includes("--alignment-only"),originalOnly=process.argv.includes("--original-only");assert(!(alignmentOnly&&originalOnly));const fault=process.argv.find(x=>x.startsWith("--fault="))??null;assert(fault===null||["--fault=live-original-audio","--fault=late-buffered-wall-origin","--fault=omit-bucket-pacing","--fault=late-optional-track-schedule"].includes(fault));
 const root=resolve(import.meta.dirname,".."), artifacts=await mkdtemp(join(tmpdir(),"rendprop-export-original-audio-")),dist=join(artifacts,"dist");
-const paths=["src/editor/export.ts","src/editor/recording-clock.ts","src/editor/media.ts","src/editor/model.ts","src/editor/music.ts","src/editor/finishing.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
+const paths=["src/editor/export.ts","src/editor/export-canvas-ready.ts","src/editor/recording-clock.ts","src/editor/media.ts","src/editor/model.ts","src/editor/music.ts","src/editor/finishing.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
 const hashes=async()=>Object.fromEntries(await Promise.all(paths.map(async path=>[path,createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
 const receipt={status:"running",fault,audioOutput,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source, real100ms video pause and a transient waiting notification without loss. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
 let browser,server,page,mutated=false;
