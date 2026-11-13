@@ -18,7 +18,7 @@ async function sourceManifest() {
   return Object.fromEntries(await Promise.all([...new Set(files)].sort().map(async path => [path, createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
 }
 receipt.sourceHashes = await sourceManifest();
-let browser, server;
+let browser, server, page;
 try {
   await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/business-fixture.html") } } });
   server = createServer(async (request, response) => { const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`); if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end(); try { response.setHeader("Content-Type", ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css" })[extname(path)] ?? "application/octet-stream"); response.end(await readFile(path)); } catch { response.writeHead(404).end(); } });
@@ -27,7 +27,7 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
   await context.route("**/*", (route) => { if (new URL(route.request().url()).origin === origin && route.request().method() === "GET") return route.continue(); receipt.externalRequests.push(route.request().url()); return route.abort(); });
-  const page = await context.newPage(); page.on("pageerror", (e) => receipt.errors.push(e.message)); page.setDefaultTimeout(6000);
+  page = await context.newPage(); page.on("pageerror", (e) => receipt.errors.push(e.message)); page.setDefaultTimeout(6000);
   const nav = (name) => page.getByRole("navigation", { name: "Business tools" }).getByRole("button", { name, exact: true });
   await page.goto(`${origin}/tests/business-fixture.html`);
   await page.getByRole("button", { name: "Alex Buyer", exact: true }).click();
@@ -181,4 +181,12 @@ try {
   }
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []);
   assert.deepEqual(await sourceManifest(),receipt.sourceHashes,"Source changed during browser verification");receipt.status = "passed"; await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));
+} catch (error) {
+  receipt.status = "failed"; receipt.failure = error instanceof Error ? error.stack : String(error);
+  // Failure-only synthetic evidence; never replace the original assertion error.
+  const bounded = async (promise) => { let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error("Failure evidence deadline")), 2000); })]); } finally { clearTimeout(timer); } };
+  try { receipt.failureSnapshot = await bounded(page.evaluate(() => ({ text: document.body.innerText.slice(0, 32768), calls: window.businessFixture?.calls().slice(0, 100) ?? [], buttons: [...document.querySelectorAll("button")].slice(0, 100).map(button => ({ text: button.textContent?.slice(0, 200), disabled: button.disabled })) }))); } catch (evidenceError) { receipt.failureSnapshotError = String(evidenceError); }
+  try { await page?.screenshot({ path: join(artifacts, "failure.png"), fullPage: true, timeout: 2000 }); } catch (evidenceError) { receipt.failureScreenshotError = String(evidenceError); }
+  try { receipt.sourceHashesAfter = await sourceManifest(); await writeFile(join(artifacts, "receipt.json"), JSON.stringify({ ...receipt, artifacts }, null, 2)); console.error(JSON.stringify({ status: receipt.status, artifacts, failure: receipt.failure })); } catch (evidenceError) { console.error("Failure evidence retention:", String(evidenceError)); }
+  throw error;
 } finally { await browser?.close(); if (server) await new Promise((done) => server.close(done)); }
