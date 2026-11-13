@@ -1,3 +1,4 @@
+import {sha256Bytes as digest} from "../listings/uploads";
 import { createStoredZip, filenamePart, type ZipEntry } from "../listings/kit-archive";
 import { kitText } from "../listings/delivery-kit";
 import type { PhotoDelivery } from "./photo-lineage";
@@ -55,10 +56,7 @@ export async function renderPhoto(photo: PhotoDelivery, options: PhotoExportOpti
     return { blob, ...frame };
   } finally { image.close(); }
 }
-async function digest(bytes: Uint8Array) {
-  const hash = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
-  return [...new Uint8Array(hash)].map(n => n.toString(16).padStart(2, "0")).join("");
-}
+
 function originalExtension(bytes: Uint8Array) {
   if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "jpg";
   if ([137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte)) return "png";
@@ -83,11 +81,11 @@ export async function buildPhotoDownload(photos: readonly PhotoDelivery[], optio
       const originalBytes = new Uint8Array(await photo.original.arrayBuffer()); check();
       // Source preparation decoded this file; the ZIP retains its exact bytes.
       const path = `photos/${stem}-01-original.${originalExtension(originalBytes)}`;
-      original = { path, sha256: await digest(originalBytes) }; check();
+      original = { path, sha256: await digest(originalBytes as Uint8Array<ArrayBuffer>) }; check();
       entries.push({ path, bytes: originalBytes });
     }
     captions.push(`${editedPath}\n${photoCaption(photo)}\n`);
-    records.push({ editedPath, editedSHA256: await digest(bytes), original,
+    records.push({ editedPath, editedSHA256: await digest(bytes as Uint8Array<ArrayBuffer>), original,
       originalStatus: original ? "provided-or-user-reviewed-original" : "history-unverified",
       disclosure: photoCaption(photo), visibleLabel: options.destination === "mls" ? null : photoLabel(photo),
       provenanceId: photo.provenanceId, width: rendered.width, height: rendered.height,

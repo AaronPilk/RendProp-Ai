@@ -2,7 +2,7 @@ import type { StudioServices } from "../../data/services";
 import { isPrivateMediaURL, privateMediaCapability } from "../../data/private-media";
 import { mediaURL } from "../../data/contracts";
 import type { GalleryScope } from "./gallery-selection";
-import { fingerprintFile, uploadListingAsset, type UploadJournal } from "./uploads";
+import { sha256Bytes, fingerprintFile, uploadListingAsset, type UploadJournal } from "./uploads";
 
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const SHA=/^[a-f0-9]{64}$/;const MAX=10*1024**2;
@@ -43,7 +43,7 @@ async function readExactPhoto(copy:GalleryCopy,signal:AbortSignal,assertCurrent:
  try{for(;;){const next=await reader.read();assertCurrent();if(next.done)break;size+=next.value.length;if(size>source.bytes||size>MAX)throw problem();chunks.push(next.value);}}
  finally{void reader.cancel().catch(()=>{});reader.releaseLock();}
  if(size!==source.bytes)throw problem();const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
- const sha=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),n=>n.toString(16).padStart(2,"0")).join("");assertCurrent();if(sha!==source.sha256)throw new Error("The saved photo changed. No replacement or compressed copy was used.");
+ const sha=await sha256Bytes(bytes);assertCurrent();if(sha!==source.sha256)throw new Error("The saved photo changed. No replacement or compressed copy was used.");
  const extension=source.mime==="image/jpeg"?"jpg":source.mime==="image/png"?"png":"webp";
  return new File([bytes],`saved-${source.asset_id}.${extension}`,{type:source.mime});
 }

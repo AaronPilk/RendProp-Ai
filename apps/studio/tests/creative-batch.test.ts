@@ -18,19 +18,20 @@ const photos = (count = 3): StudioPhoto[] => Array.from({ length: count }, (_, i
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function fixture() {
   let current = true;
+  const saveKeys:string[]=[];
   const events: string[] = [], keys: string[] = [], resumeValues: (UploadJournal | undefined)[] = [];
   const deps = {
     assertScope: () => { if (!current) throw new Error("Account changed"); },
     prepare: async (photo: StudioPhoto) => { events.push(`prepare:${photo.id}`); return importedPhoto({ file: new File([photo.id], `${photo.id}.jpg`, { type: "image/jpeg" }), base64: "c291cmNl", mime: "image/jpeg" as const, preview: "data:image/jpeg;base64,c291cmNl" }); },
-    upload: async (file: File, role: "original" | "gallery", _signal: AbortSignal, resume?: UploadJournal, onJournal?: (journal: UploadJournal) => void) => {
-      events.push(`upload:${role}:${file.name}`); resumeValues.push(resume);
+    upload: async (file: File, role: "original" | "gallery", _signal: AbortSignal, resume?: UploadJournal, onJournal?: (journal: UploadJournal) => void, requestKey?:string) => {
+      events.push(`upload:${role}:${file.name}`); resumeValues.push(resume);if(role==="gallery")saveKeys.push(requestKey!);
       if (onJournal) onJournal({ version: 1, operationId: "same-operation" } as UploadJournal);
       return { assetId: role === "original" ? originalId : outputId, storageKey: `renders/${role}.png`, contentType: "image/png", kind: "photo" as const, durationSeconds: null };
     },
     generate: async (_source: unknown, original: string, _choice: unknown, key: string, caption: string) => { assert.equal(original, originalId); events.push(`generate:${caption}`); keys.push(key); return { image_b64: png, mime: "image/png", disclosure: "AI altered. Original retained.", provenance: { recorded: true, id: proofId } }; },
     attach: async (entry: BatchPhotoEntry) => { events.push(`attach:${entry.photo.id}`); assert.equal(entry.output?.assetId, outputId); assert.equal(entry.result?.originalAssetId, originalId); assert.equal(entry.result?.provenanceId, proofId); },
   };
-  return { deps, events, keys, resumeValues, changeIdentity: () => { current = false; } };
+  return { deps, events, keys, saveKeys, resumeValues, changeIdentity: () => { current = false; } };
 }
 
 test("batch keeps originals and disclosure through explicit review/save; duplicate start never re-dispatches", async () => {
@@ -209,6 +210,7 @@ test("failed gallery attachment retries with the same uploaded output and no new
   assert.equal(batch.entries[0]?.state, "saved"); assert.equal(f.keys.length, 1);
   assert.equal(f.events.filter(e => e.startsWith("upload:gallery")).length, 1);
   assert.equal(attempts, 2);
+  assert.deepEqual(f.saveKeys,[batch.entries[0]!.requestKey]);
 });
 
 test("interrupted gallery upload retains its journal so save recovery renews the original ticket", async () => {

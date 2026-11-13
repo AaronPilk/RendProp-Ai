@@ -43,7 +43,7 @@ import PhotoFeedbackControl from "./PhotoFeedbackControl";
 import { createPhotoFeedbackQueue } from "./photo-feedback-queue";
 import CoordinatorPhotoExportPanel from "./CoordinatorPhotoExportPanel";
 import {retainedPhotoRequest,resumePhotoRequest} from "./creative-request";
-import {savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
+import {uploadSavedPhotoResult,savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
 import { creativeCoachContext } from "./coach-context";
 import { importedPhoto, inputForEdit, isServerDerivedPhoto, photoDelivery, propertyPhoto, propertyOriginalPhoto, photosInTab, type PhotoLibraryTab, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
@@ -691,13 +691,7 @@ function ListingCreative(
     }
     const caption = [room, ...photoResult.disclosures.slice(0, -1)].filter(Boolean).join(" · ");
     if (caption.length > 400) throw new Error("This edit history is too long for a gallery caption. Download its complete photo package instead.");
-    const result = await uploadListingAsset(services, {
-      orgId,
-      listingId,
-      file: photoResult.file,
-      role: "gallery",
-      signal,
-    });
+    const result = await uploadSavedPhotoResult(services,{actor:workspace.user.id,library:workspace.libraryOrgId??orgId,listing:listingId},orgId,photoRequestRow.current?.requestKey??"",photoResult.file,signal,assertPhotoScope);
     assertPhotoScope();
     await services.api(
       `/functions/v1/me/compliance/${photoResult.provenanceId}`,

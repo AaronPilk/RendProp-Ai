@@ -23,6 +23,26 @@ function fixture(handler: (path: string, options: Record<string, unknown>) => un
   return { service, calls, transfers, switchAccount: () => version++ };
 }
 const completed = { id: asset, uploaded: true, listing_id: listing, storage_key: key };
+test("retained photo operation persists before PUT, then renews its completed asset after reload",async()=>{
+  const id="50000000-0000-4000-8000-000000000005",file=new File(["photo"],"edited.jpg",{type:"image/jpeg"}),photoKey=`renders/${org}/${listing}/gallery-${asset}.jpg`;
+  let journal:UploadJournal|undefined,persisted=false;
+  const f=fixture(path=>path.endsWith("/complete")?{...completed,storage_key:photoKey}:{asset_id:asset,storage_key:photoKey,mode:"single",uploaded:false,put_url:"https://uploads.rendprop.com/v2/test"},()=>assert.equal(persisted,true));
+  await uploadListingAsset(f.service,{...options(file),role:"gallery",operationId:id,onJournal:j=>{journal=j;},onReserved:async()=>{await Promise.resolve();assert.equal(journal?.assetId,asset);persisted=true;}});
+  assert.equal(f.calls[0].options.idempotencyKey,`studio-upload:${id}`);
+  const next=fixture(path=>{assert.equal(path,`/functions/v1/uploads/${asset}/renew`);return{asset_id:asset,storage_key:photoKey,mode:"single",uploaded:true};});
+  assert.equal((await uploadListingAsset(next.service,{...options(file),role:"gallery",operationId:id,resume:structuredClone(journal)})).assetId,asset);
+  assert.equal(next.calls.length,1);assert.equal(next.transfers.length,0);
+  const no=fixture(()=>{throw Error("must not request");});
+  await assert.rejects(uploadListingAsset(no.service,{...options(file),role:"gallery",operationId:"invalid"}));
+  await assert.rejects(uploadListingAsset(no.service,{...options(file),role:"gallery",operationId:asset,resume:journal}),/does not match/);assert.equal(no.calls.length,0);
+});
+test("a lost create uses the stable operation and failed durable binding prevents PUT",async()=>{
+  const id="50000000-0000-4000-8000-000000000005",file=new File(["photo"],"edited.jpg",{type:"image/jpeg"}),photoKey=`renders/${org}/${listing}/gallery-${asset}.jpg`;
+  let first=true;const f=fixture((_path,args)=>{assert.equal(args.idempotencyKey,`studio-upload:${id}`);if(first){first=false;throw Error("Create reply lost");}return{asset_id:asset,storage_key:photoKey,mode:"single",uploaded:false,put_url:"https://uploads.rendprop.com/v2/test"};});
+  await assert.rejects(uploadListingAsset(f.service,{...options(file),role:"gallery",operationId:id}),/Create reply lost/);
+  await assert.rejects(uploadListingAsset(f.service,{...options(file),role:"gallery",operationId:id,onReserved:async()=>{throw Error("Storage unavailable");}}),/Storage unavailable/);
+  assert.equal(f.calls.length,2);assert.equal(f.transfers.length,0);
+});
 test("import validates exact content type, purpose and memory-safe 2GB ceiling before reserving", () => {
   assert.deepEqual(validateUpload({ name: "walk.mov", type: "video/quicktime", size: 2 * 1024 ** 3 }), { kind: "video", contentType: "video/quicktime" });
   assert.throws(() => validateUpload({ name: "walk.mp4", type: "video/mp4", size: 2 * 1024 ** 3 + 1 }), /2 GB/);

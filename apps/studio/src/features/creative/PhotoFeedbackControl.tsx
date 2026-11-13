@@ -1,3 +1,4 @@
+import {sha256Bytes} from "../listings/uploads";
 import { useEffect, useRef, useState } from "react";
 import { FEEDBACK_REASONS, REASON_LABELS } from "./photo-feedback-reasons";
 import { same, type Content, type PhotoFeedbackQueue, type Verdict } from "./photo-feedback-queue";
@@ -17,7 +18,7 @@ export default function PhotoFeedbackControl({ queue, provenanceId, file }: { qu
   async function send(next: Content) {
     setVerdict(next.verdict); setFailed(false);
     try {
-      digest.current ??= file.arrayBuffer().then(bytes => crypto.subtle.digest("SHA-256", bytes)).then(hash => [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join(""));
+      digest.current ??= file.arrayBuffer().then(sha256Bytes);
       queue.submit({ ...next, provenance_id: provenanceId, output_sha256: await digest.current });
     } catch { setFailed(true); }
   }

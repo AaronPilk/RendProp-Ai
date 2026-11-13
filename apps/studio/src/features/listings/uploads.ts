@@ -16,6 +16,8 @@ export type UploadOptions = {
   onProgress?: (loaded: number, total: number) => void;
   metadata?: { duration_s?: number; width?: number; height?: number };
   resume?: UploadJournal; onJournal?: (journal: UploadJournal) => void;
+  /** Stable operation for a retained photo result; completed uploads still resume by asset id. */
+  operationId?: string;
   /** Bind a prepared-copy receipt before any PUT. Replays reuse the same asset. */
   onReserved?: (assetId: string) => Promise<void>;
 };
@@ -48,17 +50,20 @@ export async function fingerprintFile(file: Blob, signal?: AbortSignal): Promise
     hashes.push(...new Uint8Array(await crypto.subtle.digest("SHA-256", chunk)));
   }
   stopped(signal);
-  const final = await crypto.subtle.digest("SHA-256", new Uint8Array(hashes));
-  return [...new Uint8Array(final)].map((v) => v.toString(16).padStart(2, "0")).join("");
+  return await sha256Bytes(new Uint8Array(hashes));
+}
+/** Shared exact byte digest for photo custody and download manifests. */
+export async function sha256Bytes(bytes:BufferSource):Promise<string>{
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(v=>v.toString(16).padStart(2,"0")).join("");
 }
 /** Photo uploads are bounded to 50 MiB; provenance needs the SHA-256 of the actual file bytes. */
 async function photoSha256(file: File, signal?: AbortSignal): Promise<string> {
   stopped(signal);
   const bytes = await file.arrayBuffer();
   stopped(signal);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const digest = await sha256Bytes(bytes);
   stopped(signal);
-  return [...new Uint8Array(digest)].map((v) => v.toString(16).padStart(2, "0")).join("");
+  return digest;
 }
 function receiptParts(value: unknown, count: number) {
   if (value === undefined) return [];
@@ -93,11 +98,12 @@ export async function uploadListingAsset(services: StudioServices, options: Uplo
   const assertActor = () => { stopped(signal); if (services.getSnapshot().identityVersion !== actor.identityVersion) throw new Error("Your account changed. Reopen this property before uploading."); };
   const role = options.role ?? "capture";
   const { kind, contentType } = validateUpload(file, role);
+  if (options.operationId !== undefined) uuid(options.operationId);
   const fingerprint = await fingerprintFile(file, signal);
   const sha256 = kind === "photo" ? await photoSha256(file, signal) : undefined;
   assertActor();
-  let journal: UploadJournal = options.resume ?? { version: 1, userId, orgId, listingId, filename: file.name, bytes: file.size, contentType, role, fingerprint, operationId: crypto.randomUUID(), parts: [], updatedAt: new Date().toISOString() };
-  if (journal.version !== 1 || journal.userId !== userId || journal.orgId !== orgId || journal.listingId !== listingId || journal.bytes !== file.size || journal.contentType !== contentType || journal.role !== role || journal.fingerprint !== fingerprint) throw new Error("This file does not match the paused upload. Select the original file to resume.");
+  let journal: UploadJournal = options.resume ?? { version: 1, userId, orgId, listingId, filename: file.name, bytes: file.size, contentType, role, fingerprint, operationId: options.operationId ?? crypto.randomUUID(), parts: [], updatedAt: new Date().toISOString() };
+  if (journal.version !== 1 || journal.userId !== userId || journal.orgId !== orgId || journal.listingId !== listingId || journal.bytes !== file.size || journal.contentType !== contentType || journal.role !== role || journal.fingerprint !== fingerprint || options.operationId !== undefined && journal.operationId !== options.operationId) throw new Error("This file does not match the paused upload. Select the original file to resume.");
   const persist = () => { assertActor(); journal = { ...journal, updatedAt: new Date().toISOString(), parts: [...journal.parts] }; options.onJournal?.(journal); };
   persist();
   const api = (path: string, body: unknown, idempotencyKey?: string) => services.api(`/functions/v1/uploads${path}`, { method: "POST", orgId, body, signal, idempotencyKey, timeoutMs: 120_000 });

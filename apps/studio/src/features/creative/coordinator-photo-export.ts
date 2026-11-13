@@ -1,3 +1,4 @@
+import {sha256Bytes as digest} from "../listings/uploads";
 import type { StudioPhoto } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { createStoredZip, filenamePart, KIT_MAX_BYTES, KIT_MAX_ENTRIES, type ZipEntry } from "../listings/kit-archive";
@@ -44,9 +45,7 @@ function imageExtension(bytes: Uint8Array): string {
   }
   throw new Error("We could not tell what kind of file one saved photo is, so the download stopped. No other image was used in its place. Try again; if it keeps happening, contact support.");
 }
-async function digest(bytes: Uint8Array) {
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>))].map(n => n.toString(16).padStart(2,"0")).join("");
-}
+
 async function readImage(url: string, expiresAt: string, signal: AbortSignal, assertScope: () => void): Promise<File> {
   signal.throwIfAborted(); assertScope();
   if (Date.parse(expiresAt) <= Date.now()) throw new Error("A photo link expired. Refresh this property and prepare the package again.");
@@ -125,16 +124,16 @@ export async function* coordinatorPhotoParts(input: readonly StudioPhoto[], sign
     const caption = kitText(loaded.delivery.disclosures.join("\n") || (category === "Originals" ? "Saved source photo. Imported files may already contain edits made elsewhere." : "Saved altered photo; verify edit history before advertising."));
     const extension = imageExtension(master), masterPath = `${category}/${stem}.${extension}`;
     photoEntries.push({path:masterPath,bytes:master},{path:`${category}/${stem}-disclosure.txt`,bytes:encoder.encode(caption)});
-    Object.assign(proof,{masterPath,masterSHA256:await digest(master),disclosure:caption}); check();
+    Object.assign(proof,{masterPath,masterSHA256:await digest(master as Uint8Array<ArrayBuffer>),disclosure:caption}); check();
     if (category !== "Originals" && loaded.delivery.originalVerified && loaded.delivery.original) {
       const original = new Uint8Array(await loaded.delivery.original.arrayBuffer()); check();
       const path = `Originals/${stem}-paired-original.${imageExtension(original)}`;
-      photoEntries.push({path,bytes:original}); Object.assign(proof,{originalPath:path,originalSHA256:await digest(original)}); check();
+      photoEntries.push({path,bytes:original}); Object.assign(proof,{originalPath:path,originalSHA256:await digest(original as Uint8Array<ArrayBuffer>)}); check();
     }
     if (loaded.earlierSource) {
       const earlier = new Uint8Array(await loaded.earlierSource.arrayBuffer()); check();
       const path = `EarlierSources/${stem}-unverified-source.${imageExtension(earlier)}`;
-      photoEntries.push({path,bytes:earlier}); Object.assign(proof,{earlierSourcePath:path,earlierSourceSHA256:await digest(earlier)}); check();
+      photoEntries.push({path,bytes:earlier}); Object.assign(proof,{earlierSourcePath:path,earlierSourceSHA256:await digest(earlier as Uint8Array<ArrayBuffer>)}); check();
     }
     const copyStart = photoEntries.length;
     for (const [folder,ratio] of targets) {
@@ -151,7 +150,7 @@ export async function* coordinatorPhotoParts(input: readonly StudioPhoto[], sign
       const copy = new Uint8Array(await rendered.blob.arrayBuffer()); check();
       const path = `${folder}/${category}/${stem}.jpg`;
       photoEntries.push({path,bytes:copy},{path:`${folder}/${category}/${stem}-disclosure.txt`,bytes:encoder.encode(caption)});
-      (proof.copies as unknown[]).push({path,sha256:await digest(copy),width:rendered.width,height:rendered.height,crop:{x:rendered.x,y:rendered.y,width:rendered.cropWidth,height:rendered.cropHeight},limitedResolution:Math.min(rendered.width,rendered.height)<1080}); check();
+      (proof.copies as unknown[]).push({path,sha256:await digest(copy as Uint8Array<ArrayBuffer>),width:rendered.width,height:rendered.height,crop:{x:rendered.x,y:rendered.y,width:rendered.cropWidth,height:rendered.cropHeight},limitedResolution:Math.min(rendered.width,rendered.height)<1080}); check();
     }
     const photoBytes = photoEntries.reduce((n,row) => n+row.bytes.byteLength,0);
     if (photoBytes > maxBytes-META_RESERVE || photoEntries.length > maxEntries-2) throw new Error("One full-resolution photo family exceeds the browser package limit. Download its master separately; no smaller substitute was created.");

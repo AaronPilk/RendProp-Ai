@@ -14,7 +14,7 @@ import CustomPhotoPromptHelp, { analyzeCustomPhotoPrompt } from "./CustomPhotoPr
 import { PRESETS, record, requiredText, text } from "./model";
 import type { Edit } from "./model";
 import {retainedPhotoRequest,resumePhotoRequest} from "./creative-request";
-import {savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
+import {uploadSavedPhotoResult,savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
 
 export const MAX_BATCH_PHOTOS = 6;
 export type BatchEdit = { edit: Edit; style: string; prompt: string };
@@ -31,7 +31,7 @@ type RecoveredPhoto={retained:true;raw:unknown;source:PhotoSource;originalId:str
 type BatchDependencies = {
   assertScope: () => void;
   prepare: (photo: StudioPhoto, signal: AbortSignal) => Promise<PhotoSource>;
-  upload: (file: File, role: "original" | "gallery", signal: AbortSignal, resume?: UploadJournal, onJournal?: (journal: UploadJournal) => void) => Promise<UploadedAsset>;
+  upload: (file: File, role: "original" | "gallery", signal: AbortSignal, resume?: UploadJournal, onJournal?: (journal: UploadJournal) => void, requestKey?: string) => Promise<UploadedAsset>;
   generate: (source: PhotoSource, originalId: string, choice: BatchEdit, key: string, caption: string, signal: AbortSignal, photoId:string) => Promise<unknown>;
   recover?: (photo:StudioPhoto,signal:AbortSignal)=>Promise<RecoveredPhoto|null>;
   recoverSource?: (source:PhotoSource,signal:AbortSignal)=>Promise<RecoveredPhoto|null>;
@@ -133,7 +133,7 @@ export class PhotoBatch {
     // advice shown beside the preview, never a tick that blocks saving it.
     this.check(); this.saving = true; entry.state = "saving"; entry.error = null; this.emit();
     try {
-      if (!entry.output) entry.output = await this.deps.upload(entry.result.file, "gallery", this.abort.signal, entry.journal, journal => { this.check(); entry.journal = journal; });
+      if (!entry.output) entry.output = await this.deps.upload(entry.result.file, "gallery", this.abort.signal, entry.journal, journal => { this.check(); entry.journal = journal; },entry.requestKey);
       this.check();
       await this.deps.attach(entry, this.abort.signal);
       this.check();await this.deps.finished?.(entry);this.check(); entry.state = "saved";
@@ -217,7 +217,9 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
           const source = await propertyOriginalPhoto(photo, signal);
           return { ...source, originalVerified: source.originalVerified || confirmedOriginals.includes(photo.id) };
         },
-        upload: (file, role, signal, resume, onJournal) => uploadListingAsset(services, { orgId: workspace.org.id, listingId: listing.id, file, role, signal, resume, onJournal }),
+        upload: (file, role, signal, resume, onJournal, requestKey) => role==="gallery"
+          ? uploadSavedPhotoResult(services,identity,workspace.org.id,requestKey??"",file,signal,assertScope)
+          : uploadListingAsset(services, { orgId: workspace.org.id, listingId: listing.id, file, role, signal, resume, onJournal }),
         recover:async(photo,signal)=>{const rows=await savedPhotoRequests(identity);assertScope();const row=rows.find(r=>r.context.channel==="batch"&&r.context.photoId===photo.id);return row?await resume(row,signal):null;},
         recoverSource:async(source,signal)=>{const row=await matchingPhotoRequest(identity,source);assertScope();return row?await resume(row,signal):null;},
         generate:async(source,originalId,choice,_key,caption,signal,photoId)=>recovered(await retainedPhotoRequest(services,identity,{listing_id:listing.id,original_asset_id:originalId,image_b64:source.base64,mime:source.mime,edit:choice.edit,space_type:listing.spaceType,label:caption.slice(0,80),...(choice.edit==="stage"?{style:choice.style}:{}),...(choice.edit==="custom"?{prompt:choice.prompt}:{})},{channel:"batch",source,edit:choice.edit,style:choice.style,prompt:choice.prompt,originalAssetId:originalId,photoId,batchId},assertDispatch,signal)),
