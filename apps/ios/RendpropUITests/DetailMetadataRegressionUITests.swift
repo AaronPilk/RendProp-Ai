@@ -151,15 +151,20 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         back(from: "Review & Submit") // Never submit or change render source.
 
         openVideo(purpose: "social_media")
-        // The presenting detail remains in the accessibility tree behind the
-        // cover. Match the clip's subtitle, which distinguishes it from the
-        // toolbox tile without relying on the step's navigation title.
+        // Release 148 keeps the saved clip in Aerial intro and explains the
+        // accepted Photo motion route instead of offering direct clip import.
         let aerialClips = app.buttons.matching(NSPredicate(format:
             "label CONTAINS %@ AND label CONTAINS %@", "Aerial intro", "Opens the video"))
-        XCTAssertEqual(aerialClips.count, 1, "Reel must receive exactly one local aerial clip")
-        let reelAerial = aerialClips.firstMatch
-        scrollTo(reelAerial)
-        XCTAssertTrue(reelAerial.exists, "Reel must receive the detail listing's aerial clip")
+        XCTAssertEqual(aerialClips.count, 0, "The saved aerial clip must not be offered for direct import")
+        let savedAerial = app.staticTexts.matching(NSPredicate(format: "label == %@", "Saved aerial clip"))
+        XCTAssertEqual(savedAerial.count, 1, app.debugDescription)
+        scrollTo(savedAerial.firstMatch)
+        XCTAssertTrue(savedAerial.firstMatch.isHittable)
+        let guidance = "Older clips on this phone cannot be added to a new video right now. To start with an accepted aerial opening, choose Opening clip · first above and use Photo motion. Your saved clip remains available in Aerial intro."
+        let advisory = app.staticTexts.matching(NSPredicate(format: "label == %@", guidance))
+        XCTAssertEqual(advisory.count, 1, app.debugDescription)
+        scrollTo(advisory.firstMatch)
+        XCTAssertTrue(advisory.firstMatch.isHittable)
         attach("detail-rich-reel")
         closeVideo()
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10))
@@ -208,7 +213,9 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(unavailable.exists)
         XCTAssertFalse(app.buttons["detail.rerenderUnavailable"].exists, "Unavailable card must not become a navigation action")
         XCTAssertFalse(element("detail.rerenderTour").exists)
-        XCTAssertTrue(app.buttons["detail.photos"].label.contains("1 photo"))
+        let photos = app.buttons["detail.photos"]
+        scrollTo(photos)
+        XCTAssertTrue(photos.label.contains("1 photo"))
     }
 
     func testPublishedLinkWithoutCaptureKeepsShareAndDisabledRoomTagging() {
@@ -245,16 +252,35 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let automatic = app.buttons["video.motion.direction.automatic"]
         scrollTo(automatic)
         XCTAssertTrue(automatic.isSelected, "New Photo motion should vary directions by default")
-        for title in ["Push in", "Pull back", "Glide left", "Glide right"] {
-            let buttons = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title))
-            let button = buttons.firstMatch
+        for (title, rawValue) in [("Push in", "push_in"), ("Pull back", "pull_back"),
+                                  ("Glide left", "slide_left"), ("Glide right", "slide_right")] {
+            let id = "video.motion.direction.\(rawValue)"
+            let choices = app.buttons.matching(identifier: id)
+            let button = choices.firstMatch
             scrollTo(button)
-            XCTAssertEqual(buttons.count, 1, app.debugDescription)
+            XCTAssertEqual(choices.count, 1, app.debugDescription)
+            XCTAssertEqual(button.label, title)
             XCTAssertTrue(button.exists && button.isEnabled, app.debugDescription)
-            button.tap(); XCTAssertTrue(button.isSelected)
+            let next = app.buttons["video.setup.next"]
+            guard next.exists, button.frame.maxY <= next.frame.minY - 8 else {
+                XCTFail("Direction must be fully above the setup footer before tapping: \(app.debugDescription)")
+                return
+            }
+            button.tap()
+            let selected = app.buttons.matching(identifier: id)
+            XCTAssertEqual(selected.count, 1, "Selection must remain an accessible Button")
+            XCTAssertEqual(selected.firstMatch.label, title)
+            XCTAssertTrue(selected.firstMatch.isEnabled && selected.firstMatch.isSelected,
+                app.debugDescription)
+            XCTAssertTrue(next.exists, "Selecting a direction must stay on the format step")
         }
-        scrollTo(automatic); automatic.tap()
-        XCTAssertTrue(automatic.isSelected, "Automatic can be selected after a manual direction")
+        let automaticAgain = app.buttons.matching(identifier: "video.motion.direction.automatic")
+        XCTAssertEqual(automaticAgain.count, 1)
+        scrollTo(automaticAgain.firstMatch); automaticAgain.firstMatch.tap()
+        let automaticSelected = app.buttons.matching(identifier: "video.motion.direction.automatic")
+        XCTAssertEqual(automaticSelected.count, 1, "Automatic must remain an accessible Button")
+        XCTAssertTrue(automaticSelected.firstMatch.isEnabled && automaticSelected.firstMatch.isSelected,
+            "Automatic can be selected after a manual direction")
         XCTAssertFalse(app.textFields["e.g. 'slow push-in, golden-hour feel'"].exists)
         attach("photo-motion-four-directions")
         closeVideo()
@@ -327,7 +353,8 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let masters = app.staticTexts.matching(NSPredicate(format:
             "label CONTAINS %@", "Full saved masters and retained sources keep their stored bytes.")).firstMatch
         XCTAssertTrue(masters.waitForExistence(timeout: 5), app.debugDescription)
-        let pending = app.staticTexts["A staged or custom edit that is not selected for the listing is included as a full saved copy only, with no listing or social copies."]
+        let pendingSentence = "A staged or custom edit that is not selected for the listing is included as a full saved copy only, with no listing or social copies."
+        let pending = app.staticTexts.matching(NSPredicate(format: "label == %@", pendingSentence)).firstMatch
         XCTAssertTrue(pending.waitForExistence(timeout: 5), app.debugDescription)
         revealCoordinatorContent(pending)
         attach("listing-package-disclosures")
@@ -369,7 +396,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let warning = app.staticTexts["build59.fixture.warning"]
         let link = app.staticTexts["build59.fixture.link"]
         XCTAssertEqual(warning.label, "Warning: stale")
-        let originalLink = "https://example.invalid/f/metadata-fixture"
+        let originalLink = "https://example.invalid/f/a9b41209"
         XCTAssertEqual(link.label, originalLink)
         let publish = app.buttons["detail.republish"]; scrollTo(publish)
         XCTAssertTrue(publish.isEnabled); publish.tap()
@@ -546,7 +573,9 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let upper = outer.coordinate(withNormalizedOffset: CGVector(dx: 0.015, dy: 0.24))
         let lower = outer.coordinate(withNormalizedOffset: CGVector(dx: 0.015, dy: 0.78))
         let visibleTop = max(outer.frame.minY, app.navigationBars.firstMatch.frame.maxY) + 8
-        let visibleBottom = min(outer.frame.maxY, app.frame.maxY) - 60
+        let footer = app.buttons["video.setup.next"]
+        let visibleBottom = min(min(outer.frame.maxY, app.frame.maxY) - 60,
+                                footer.exists ? footer.frame.minY - 8 : .greatestFiniteMagnitude)
         var missingRewinds = 0
         // isHittable alone accepts partially clipped cards. Require the entire
         // target below the navigation bar and above the bottom safe area, so a

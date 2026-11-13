@@ -537,6 +537,8 @@ struct DetailMetadataRegressionHost: View {
                             sqft: 1800, price: Money(cents: 45_000_000))
         value.spaceTypeRaw = name == "venue" ? SpaceType.venue.rawValue : SpaceType.realEstate.rawValue
         value.isSample = name == "sample"
+        guard model.api is MockAPIClient else { throw FixtureError.image }
+        try WorkspaceStore.shared.prepareBuild58FixtureLibrary()
         // Infinity keeps synthesized Hashable reflexive; mapCoordinate rejects
         // it as nonfinite. hasCoordinate + region still prevents geocoding, so
         // this offline fixture needs no MapKit tile/geocoder request.
@@ -554,8 +556,11 @@ struct DetailMetadataRegressionHost: View {
         let photoFeedbackFixture = name == "republish" && Config.isOfflineAccountFixture
             && (model.api is MockAPIClient)
             && ProcessInfo.processInfo.arguments.contains("-ui.photoFeedbackFixture")
+        let republishFixture = ["republish", "republish-stale"].contains(name)
+        let republishServerID = UUID(uuidString: "b5800000-0000-4000-8000-000000000001")!
         let hasCapture = ["capture", "rich", "missing-source", "venue"].contains(name)
         let hasTour = ["rich", "missing-source", "venue"].contains(name)
+            || (republishFixture && !photoFeedbackFixture)
         let hasAerial = ["rich", "missing-source"].contains(name)
         let photoCount = name == "rich" || photoFeedbackFixture ? 3 : (["missing-source", "published-no-source", "venue"].contains(name) ? 1 : 0)
         var video: URL?
@@ -575,13 +580,23 @@ struct DetailMetadataRegressionHost: View {
         }
         if hasTour, let video {
             model.tours[value.id] = AppModel.RenderedTour(url: video, durationS: 2, speedFactor: 1.25)
+            if republishFixture && !photoFeedbackFixture {
+                // A completed synthetic upload matches this exact tour file.
+                // Republish still follows the real cached-asset and MockAPI path.
+                model.uploadedRenderAssets[value.id] = AppModel.UploadedRenderAsset(
+                    relPath: FileStore.relativePath(for: video),
+                    assetID: "b5800000-0000-4000-8000-000000000002")
+            }
             value.status = .ready
         }
         if ["published-no-source", "republish", "republish-stale"].contains(name) {
             // A syntactically valid fake share link selects the share branch.
             // The suite never opens a browser, QR, share sheet or publish action.
-            value.shareSlug = "metadata-fixture"
-            value.shareURL = "https://example.invalid/f/metadata-fixture"
+            let slug = republishFixture && !photoFeedbackFixture
+                ? String(DirectUploader.sha256Hex("publish:\(republishServerID.uuidString)").prefix(8))
+                : "metadata-fixture"
+            value.shareSlug = slug
+            value.shareURL = "https://example.invalid/f/\(slug)"
             value.status = .ready
         }
         if hasAerial, let video {
@@ -620,12 +635,10 @@ struct DetailMetadataRegressionHost: View {
                 }
             }
         }
-        if ["republish", "republish-stale"].contains(name) {
-            guard model.api is MockAPIClient else { throw FixtureError.image }
-            try WorkspaceStore.shared.prepareBuild58FixtureLibrary()
+        if republishFixture {
             // Feedback UI uses local synthetic media, not a fabricated cloud
             // selection. Existing republish cases retain their remote identity.
-            value.serverID = photoFeedbackFixture ? nil : UUID(uuidString: "b5800000-0000-4000-8000-000000000001")
+            value.serverID = photoFeedbackFixture ? nil : republishServerID
             value.serverOrgID = photoFeedbackFixture ? nil : WorkspaceContext.selectedOrgID
             value.cloudSyncOwnerID = photoFeedbackFixture ? nil : AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
             if photoFeedbackFixture {
@@ -13518,6 +13531,7 @@ struct ReelStudioView: View {
                     }
                     .buttonStyle(RendpropPillButtonStyle(selected: !photoMotionAutomatic && photoMotionDirection == direction, compact: true, horizontalPadding: 14))
                     .accessibilityAddTraits(!photoMotionAutomatic && photoMotionDirection == direction ? .isSelected : [])
+                    .accessibilityIdentifier("video.motion.direction.\(direction.rawValue)")
                 }
             }
             Text(photoMotionAutomatic
