@@ -18,20 +18,20 @@ begin
  needle:='or m.altered_key is distinct from e.output->>''key''then raise exception''RP404: This saved photo is unavailable for publication'';end if;';
  replacement:=$guard$or (m.altered_key is distinct from e.output->>'key' and
   (e.listing_id is null or not exists(
-   select 1 from public.capture_assets a
-   join public.upload_reservations r on r.asset_id=a.id
-   join public.upload_operations o on o.asset_id=a.id and o.kind='copy' and o.part=0
-   where a.storage_key=m.altered_key and a.listing_id=e.listing_id
-    and a.kind='photo' and a.bucket='renders' and a.transport_version=2
-    and a.uploaded is true and a.upload_aborted is false
-    and a.sha256=e.output->>'sha256' and to_jsonb(a.bytes)=e.output->'bytes'
-    and a.content_type=e.output->>'mime'
-    and a.storage_key~('^renders/'||p_org::text||'/'||e.listing_id::text||'/[^/]+$')
-    and a.storage_key!~'[?#%\\[:cntrl:]]|(^|/)[.]{1,2}(/|$)'
+   select 1 from public.capture_assets saved_asset
+   join public.upload_reservations r on r.asset_id=saved_asset.id
+   join public.upload_operations o on o.asset_id=saved_asset.id and o.kind='copy' and o.part=0
+   where saved_asset.storage_key=m.altered_key and saved_asset.listing_id=e.listing_id
+    and saved_asset.kind='photo' and saved_asset.bucket='renders' and saved_asset.transport_version=2
+    and saved_asset.uploaded is true and saved_asset.upload_aborted is false
+    and saved_asset.sha256=e.output->>'sha256' and to_jsonb(saved_asset.bytes)=e.output->'bytes'
+    and saved_asset.content_type=e.output->>'mime'
+    and saved_asset.storage_key~('^renders/'||p_org::text||'/'||e.listing_id::text||'/[^/]+$')
+    and saved_asset.storage_key!~'[?#%\\[:cntrl:]]|(^|/)[.]{1,2}(/|$)'
     and r.actor_id=p_actor and r.org_id=p_org and r.listing_id=e.listing_id
     and r.state='completed' and r.spec->>'key_role'='gallery'
-    and o.state='retained' and o.bucket='renders' and o.object_key=a.storage_key
-    and o.expected_bytes=a.bytes and o.content_type=a.content_type
+    and o.state='retained' and o.bucket='renders' and o.object_key=saved_asset.storage_key
+    and o.expected_bytes=saved_asset.bytes and o.content_type=saved_asset.content_type
     and o.claim is not null and nullif(o.etag,'') is not null and length(o.etag)<=256
   )))then raise exception'RP404: This saved photo is unavailable for publication';end if;$guard$;
  if length(d)-length(replace(d,needle,''))<>length(needle) then

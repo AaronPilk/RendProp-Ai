@@ -63,6 +63,7 @@ REFLECTION_FIXTURES = (
     # its own rolled-back transaction.
     ("trial_per_user_allowance.sql", '"assertions": 63', 63),
     ("tour_notification_access.sql", "PASS tour notification access: 52 assertions", 52),
+    ("photo_publication_saved_output.sql", "PASS saved-output publication: 31 assertions", 31),
 )
 
 CURRENT_WORKER_NOTIFICATION_MD5 = "31df14b830c092d0b22ea1f8bf94f4c7"
@@ -178,6 +179,8 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # Exact-clause, md5-pinned removal of the advisory photo verdict from the
     # two Photo Motion source gates; a second application refuses.
     "20261112220000_photo_motion_advisory_photo_verdict.sql",
+    # Exact accepted-upload alias guard: apply once; second application must refuse.
+    "20261113213000_photo_publication_saved_output_compat.sql",
 })
 
 # These six applied files are compare-and-swap adoptions of an exact live job,
@@ -254,6 +257,7 @@ GUARDED_ONE_SHOT_MIGRATIONS = {
     "20261106231733_photo_quality_advisory_judge_20261107.sql": ("1bb3ed4fce70a51a2ba8909311994ecb8079968b806067624969eff7f766ec7f", "photo_quality_finish changed since 2026-11-06; review the advisory-judge rewrite before applying"),
     "20261112193000_photo_quality_early_release.sql": ("a1a65b9332c80611972bcf80e65ba9029b3e2dcc7b6b3e94f6896f7f59667f69", "changed since 2026-11-12; review the early-release rewrite before applying"),
     "20261112220000_photo_motion_advisory_photo_verdict.sql": ("0af04ed518e388a1db6840e62bb9ff3851445a49af4dbde63e13898c2c27d52a", "changed since 2026-11-12; review the advisory photo verdict rewrite before applying"),
+    "20261113213000_photo_publication_saved_output_compat.sql": ("8c487dce9151ddaba5d721b3514ef83c4ff9d5430f4e7420a5464c7d473736dc", "Review changed accepted-photo publication source before saved-output compatibility"),
 }
 
 

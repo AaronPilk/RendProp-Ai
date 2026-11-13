@@ -150,6 +150,8 @@ class RunnerCase(unittest.TestCase):
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 25}\n', 0))
             elif sqlfile == 'trial_per_user_allowance.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 63}\n', 0))
+            elif sqlfile == 'photo_publication_saved_output.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('PASS saved-output publication: 31 assertions\n', 0))
             elif sqlfile == 'tour_notification_access.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('PASS tour notification access: 52 assertions\n', 0))
             elif sqlfile == 'trial_hybrid_funded_serving.sql':
@@ -287,6 +289,7 @@ class InventoryTests(RunnerCase):
         publication_migrations = {
             '20261105223709_photo_publication_listing_bound_accepted_20261105.sql',
             '20261105224531_photo_publication_bound_output_ledger_20261105.sql',
+            '20261113213000_photo_publication_saved_output_compat.sql',
         }
         performance_migrations = {
             '20261106222156_listing_access_transaction_memo_20261106.sql',
@@ -297,7 +300,7 @@ class InventoryTests(RunnerCase):
         }
         release_migrations = {'20261112193000_photo_quality_early_release.sql',
                               '20261112220000_photo_motion_advisory_photo_verdict.sql'}
-        self.assertEqual(len(guarded) - 4 - len(performance_migrations) - len(release_migrations), 39)
+        self.assertEqual(len(guarded) - 2 - len(publication_migrations) - len(performance_migrations) - len(release_migrations), 39)
         self.assertLessEqual(release_migrations, set(guarded))
         self.assertIn(reviewer_migration, guarded)
         self.assertIn(declutter_migration, guarded)
@@ -337,7 +340,7 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19), ('reviewer_sandbox_shared_credit.sql', 42), ('trial_card_backed_authority.sql', 25), ('trial_per_user_allowance.sql', 63), ('tour_notification_access.sql', 52)]])
+            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19), ('reviewer_sandbox_shared_credit.sql', 42), ('trial_card_backed_authority.sql', 25), ('trial_per_user_allowance.sql', 63), ('tour_notification_access.sql', 52), ('photo_publication_saved_output.sql', 31)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):
@@ -345,7 +348,7 @@ class InventoryTests(RunnerCase):
                 self.assertIn('reflection-' + phase + '-' + stem, commands)
 
     def test_reflection_missing_completion_marker_rejects(self):
-        for filename in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql', 'trial_full_window_admission.sql', 'trial_hybrid_funded_serving.sql', 'paid_media_budget_cap.sql', 'reviewer_sandbox_shared_credit.sql', 'trial_card_backed_authority.sql', 'trial_per_user_allowance.sql', 'tour_notification_access.sql'):
+        for filename in ('credit_paid_ceiling_funding_gate.sql', 'video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql', 'property_address_lookup.sql', 'trial_full_window_admission.sql', 'trial_hybrid_funded_serving.sql', 'paid_media_budget_cap.sql', 'reviewer_sandbox_shared_credit.sql', 'trial_card_backed_authority.sql', 'trial_per_user_allowance.sql', 'tour_notification_access.sql', 'photo_publication_saved_output.sql'):
             with self.subTest(fixture=filename):
                 self.rejected(reflection={filename: ('ROLLBACK without acceptance marker\n', 0)})
 
