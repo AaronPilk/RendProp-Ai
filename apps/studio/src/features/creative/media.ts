@@ -85,6 +85,7 @@ export async function imageFromURL(
 ): Promise<SourceImage> {
   const response = await fetch(url, {
     credentials: "omit",
+    cache: "no-store",
     redirect: "error",
     signal,
   });
