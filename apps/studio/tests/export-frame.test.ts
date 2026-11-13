@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 import {getEventListeners} from "node:events";
-import {MAX_ORIGINAL_AUDIO_LOSS_SECONDS, nextExportFrame} from "../src/editor/export";
+import {MAX_ORIGINAL_AUDIO_LOSS_SECONDS, nextExportFrame, startBufferedVideo} from "../src/editor/export";
 
 async function withClock(run: (clock: {
   frames: Map<number, FrameRequestCallback>;
@@ -103,5 +103,67 @@ test("a stalled animation callback cannot exceed the existing 30 fps capture int
     assert.equal(await result, 1000 / 30);
     assert.equal(frames.size, 0); assert.equal(timers.size, 0);
     assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  });
+});
+
+function bufferedVideo(play: () => Promise<void>) {
+  return Object.assign(new EventTarget(), {paused: false, seeking: false, readyState: 4, play}) as unknown as HTMLVideoElement;
+}
+test("native playing admits buffered capture before delayed play settlement, retaining the operation", async () => {
+  await withClock(async ({timers}) => {
+    const controller = new AbortController(); let resolve!: () => void, calls = 0;
+    const video = bufferedVideo(() => {calls++; assert.equal(getEventListeners(video, "playing").length, 1); return new Promise<void>(done => {resolve = done;});});
+    const playback = startBufferedVideo(video, controller);
+    video.dispatchEvent(new Event("playing")); await playback.ready;
+    assert.equal(calls, 1); assert.equal(controller.signal.aborted, false);
+    assert.equal(getEventListeners(video, "playing").length, 0); assert.equal(timers.size, 1, "Original play operation retains its deadline");
+    resolve(); await playback.settled; assert.equal(timers.size, 0);
+  });
+});
+test("buffered playback retains immediate and late rejection identity after actual playing", async () => {
+  await withClock(async ({timers}) => {
+    for (const late of [false, true]) {
+      const controller = new AbortController(), reason = new Error("native play failed"); let reject!: (error: unknown) => void;
+      const video = bufferedVideo(() => new Promise<void>((_resolve, fail) => {reject = fail;}));
+      const playback = startBufferedVideo(video, controller);
+      if (late) {video.dispatchEvent(new Event("playing")); await playback.ready;}
+      reject(reason); await assert.rejects(playback.settled, error => error === reason);
+      if (!late) await assert.rejects(playback.ready, error => error === reason);
+      assert.equal(controller.signal.reason, reason); assert.equal(timers.size, 0);
+      assert.equal(getEventListeners(video, "playing").length, 0);
+    }
+  });
+});
+test("buffered playback cancellation and synchronous play throws clear owned listeners and deadlines", async () => {
+  await withClock(async ({timers}) => {
+    for (const syncThrow of [false, true]) {
+      const controller = new AbortController(), reason = new Error("stop buffered startup"); let calls = 0;
+      const video = bufferedVideo(() => {calls++; if (syncThrow) throw reason; return new Promise<void>(() => {});});
+      const playback = startBufferedVideo(video, controller);
+      if (!syncThrow) controller.abort(reason);
+      await assert.rejects(playback.ready, error => error === reason); await assert.rejects(playback.settled, error => error === reason);
+      assert.equal(calls, 1); assert.equal(timers.size, 0); assert.equal(getEventListeners(video, "playing").length, 0);
+    }
+    const cancelled = new AbortController(); cancelled.abort(); let played = false;
+    assert.throws(() => startBufferedVideo(bufferedVideo(() => {played = true; return Promise.resolve();}), cancelled), {name: "AbortError"});
+    assert.equal(played, false); assert.equal(timers.size, 0);
+  });
+});
+test("actual playing cannot admit a paused, seeking or unready video", async () => {
+  await withClock(async ({timers}) => {
+    for (const state of [{paused: true}, {seeking: true}, {readyState: 2}]) {
+      const controller = new AbortController(), video = bufferedVideo(() => new Promise<void>(() => {})); Object.assign(video, state);
+      const playback = startBufferedVideo(video, controller); video.dispatchEvent(new Event("playing"));
+      await assert.rejects(playback.ready, /did not begin playing/); controller.abort(); await assert.rejects(playback.settled);
+      assert.equal(timers.size, 0); assert.equal(getEventListeners(video, "playing").length, 0);
+    }
+  });
+});
+test("native playing does not remove the bounded late play-settlement timeout", async () => {
+  await withClock(async ({timers}) => {
+    const controller = new AbortController(), video = bufferedVideo(() => new Promise<void>(() => {}));
+    const playback = startBufferedVideo(video, controller); video.dispatchEvent(new Event("playing")); await playback.ready;
+    assert.equal(timers.size, 1); const timer = timers.values().next().value!; assert.equal(timer.delay, 15000); timer.callback();
+    await assert.rejects(playback.settled, /Starting video took too long/); assert.equal(controller.signal.aborted, true); assert.equal(timers.size, 0);
   });
 });

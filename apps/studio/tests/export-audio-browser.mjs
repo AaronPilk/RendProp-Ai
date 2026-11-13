@@ -22,7 +22,9 @@ try{
     const begin="      // BEGIN optional buffered tracks at the fixed segment origin\n",end="      // END optional buffered tracks\n",after="      // PLAYBACK confirmed; all buffered sources are already scheduled.\n";
     assert.equal(code.split(begin).length,2);assert.equal(code.split(end).length,2);assert.equal(code.split(after).length,2);
     const start=code.indexOf(begin),stop=code.indexOf(end,start)+end.length,block=code.slice(start,stop);mutated=true;
-    return code.slice(0,start)+code.slice(stop).replace(after,after+block);
+    // Defer only these sources until the actual held play operation settles;
+    // capture continues through native playing readiness, exposing late onset.
+    return code.slice(0,start)+code.slice(stop).replace(after,after+'      if (bufferedPlayback) void bufferedPlayback.settled.then(() => {\n'+block+'      }).catch(error => controller.abort(error));\n');
   }
   if(fault==="--fault=omit-bucket-pacing"){
     const gate='if (paintBucket !== lastPaintedBucket || elapsed >= duration) {';
@@ -32,7 +34,8 @@ try{
   if(fault==="--fault=late-buffered-wall-origin"){
     const origin='const start = originalWallStart ?? performance.now();';
     assert.equal(code.split(origin).length,2,"Buffered-clock origin mutation sentinel missing");mutated=true;
-    return code.replace(origin,'const start = performance.now();');
+    const ready='await bufferedPlayback.ready;';assert.equal(code.split(ready).length,2,"Buffered-playing readiness mutation sentinel missing");
+    return code.replace(ready,'await bufferedPlayback.settled;').replace(origin,'const start = performance.now();');
   }
   const buffer='if (originalAudio && audio && clip.source.kind === "video" && (clip.speed ?? 1) === 1 &&';
   const stall='const refuseStall = () => controller.abort(new Error("Original audio playback stalled during export. No download was created. Try a shorter clip or export with audio explicitly muted."));';

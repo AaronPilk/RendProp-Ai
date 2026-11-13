@@ -110,6 +110,24 @@ export function nextExportFrame(signal: AbortSignal, remainingMs: number): Promi
   });
 }
 
+// A buffered source is already advancing while play() may still be settling.
+// Observe native playing before calling play, without waiting on a late Promise
+// notification. Its original operation stays bounded and can still abort export.
+export function startBufferedVideo(video: HTMLVideoElement, controller: AbortController) {
+  throwIfAborted(controller.signal);
+  const ready = new AbortController(), signal = controller.signal;
+  const playing = waitForEvent(video, "playing", ready.signal);
+  let settled: Promise<void>;
+  try { settled = awaitMediaOperation(video.play(), signal, "Starting video"); }
+  catch (error) { settled = Promise.reject(error); }
+  settled.catch(error => controller.abort(error));
+  return {settled, ready: Promise.race([playing, settled]).then(() => {
+    throwIfAborted(signal);
+    if (video.paused || video.seeking || video.readyState < 3)
+      throw new Error("Video did not begin playing before export. No download was created.");
+  }).finally(() => ready.abort())};
+}
+
 // No recorder or user source is started during this phase. Feed only the
 // prepared first picture and existing zero-valued source until actual Web Audio
 // time advances consistently with the capture wall clock. Once recording starts,
@@ -509,8 +527,12 @@ export async function exportLocalVideo(options: {
       // actually running, so later readings measure sound lost since then.
       let mediaClockStart: number | undefined;
       let mediaTimeStart = 0, lossReadings = 0;
+      let bufferedPlayback: ReturnType<typeof startBufferedVideo> | undefined;
       if (video) {
-        await awaitMediaOperation(video.play(), renderSignal, "Starting video");
+        if (originalBuffer) {
+          bufferedPlayback = startBufferedVideo(video, controller);
+          await bufferedPlayback.ready;
+        } else await awaitMediaOperation(video.play(), renderSignal, "Starting video");
         if (originalGain && !originalBuffer && audio) {
           mediaClockStart = audio.currentTime;
           mediaTimeStart = video.currentTime;
@@ -596,6 +618,7 @@ export async function exportLocalVideo(options: {
       previous.getContext("2d")!.drawImage(canvas, 0, 0); hasPrevious = true;
       audioSource?.disconnect();
       audioSource = undefined;
+      await bufferedPlayback?.settled;
       decoded.dispose();
       decoded = undefined;
       elapsedBefore += duration;
