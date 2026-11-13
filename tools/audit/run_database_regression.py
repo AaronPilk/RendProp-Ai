@@ -63,7 +63,7 @@ REFLECTION_FIXTURES = (
     # its own rolled-back transaction.
     ("trial_per_user_allowance.sql", '"assertions": 63', 63),
     ("tour_notification_access.sql", "PASS tour notification access: 52 assertions", 52),
-    ("photo_publication_saved_output.sql", "PASS saved-output publication: 38 assertions", 38),
+    ("photo_publication_saved_output.sql", "PASS saved-output publication: 50 assertions", 50),
 )
 
 CURRENT_WORKER_NOTIFICATION_MD5 = "31df14b830c092d0b22ea1f8bf94f4c7"

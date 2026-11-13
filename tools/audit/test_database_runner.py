@@ -151,7 +151,7 @@ class RunnerCase(unittest.TestCase):
             elif sqlfile == 'trial_per_user_allowance.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"passed": true, "assertions": 63}\n', 0))
             elif sqlfile == 'photo_publication_saved_output.sql':
-                output, rc = scenario.get('reflection', {}).get(sqlfile, ('PASS saved-output publication: 38 assertions\n', 0))
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('PASS saved-output publication: 50 assertions\n', 0))
             elif sqlfile == 'tour_notification_access.sql':
                 output, rc = scenario.get('reflection', {}).get(sqlfile, ('PASS tour notification access: 52 assertions\n', 0))
             elif sqlfile == 'trial_hybrid_funded_serving.sql':
@@ -340,7 +340,7 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19), ('reviewer_sandbox_shared_credit.sql', 42), ('trial_card_backed_authority.sql', 25), ('trial_per_user_allowance.sql', 63), ('tour_notification_access.sql', 52), ('photo_publication_saved_output.sql', 38)]])
+            for filename, count in [('credit_paid_ceiling_funding_gate.sql', 6), ('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 52), ('property_address_lookup.sql', 25), ('trial_full_window_admission.sql', 11), ('trial_hybrid_funded_serving.sql', 43), ('paid_media_budget_cap.sql', 19), ('reviewer_sandbox_shared_credit.sql', 42), ('trial_card_backed_authority.sql', 25), ('trial_per_user_allowance.sql', 63), ('tour_notification_access.sql', 52), ('photo_publication_saved_output.sql', 50)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):

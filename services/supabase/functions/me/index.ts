@@ -1057,15 +1057,22 @@ export async function handleCompliancePatch(req: Request, userId: string, id: st
     "Send at least one of original_asset_id, altered_asset_id, label",
   );
 
-  const visible = await db.from("media_provenance").select("id,org_id,listing_id").eq("id",id).maybeSingle();
+  const visible = await db.from("media_provenance").select("id,org_id,listing_id,kind,altered_key,qc").eq("id",id).maybeSingle();
   assert(!visible.error,503,"Disclosure identity could not be verified.");
   let prior = visible.data;
-  if (!prior) {
+  const alteredOnly = alteredAsset && !originalAsset && !label && Object.keys(body).length === 1 && Object.hasOwn(body,"altered_asset_id");
+  const acceptedSource = prior && prior.listing_id !== null &&
+    ["photo_edit","virtual_stage","declutter"].includes(prior.kind) &&
+    prior.qc?.publishable === true && prior.qc.action === "accept" &&
+    typeof prior.qc.evidence_id === "string";
+  if (!prior || alteredOnly && acceptedSource) {
     // Accepted AI evidence can still point at its private ai-router candidate,
     // which the Presenter SELECT policy correctly hides. Only the exact saved
     // result attachment may use a service-side identity lookup. Pending,
     // refused, calibration, foreign-actor and unbound history stay hidden.
-    assert(alteredAsset && !originalAsset && !label && Object.keys(body).length === 1 && Object.hasOwn(body,"altered_asset_id"),404,"Disclosure record not found.");
+    // Visible listing-bound sources use the same canonical publication path:
+    // never repoint the accepted source to its saved gallery result.
+    assert(alteredOnly,404,"Disclosure record not found.");
     const admin = adminClient();
     const hidden = await admin.from("media_provenance").select("id,org_id,listing_id,kind,altered_key,qc").eq("id",id).maybeSingle();
     assert(!hidden.error,503,"Disclosure identity could not be verified.");
@@ -1093,29 +1100,26 @@ export async function handleCompliancePatch(req: Request, userId: string, id: st
     // decision 12 Nov 2026); its advisory check may still be open. The check
     // row must still be this edit's own automatic check.
     assert(check.data?.length === 1 && check.data[0].id === row.qc.check_id,404,"Disclosure record not found.");
-    if (savedPointer) {
-      // The first attachment went through set_provenance_media, whose role
-      // gate excludes marketing. Keep that gate on this read-only recovery.
-      assert(["owner","admin","agent"].includes(scope.role),403,"Your role does not permit editing AI provenance.");
-      // A prior PATCH may have attached the exact uploaded output, then a
-      // separate Studio gallery request failed before publication. A retry
-      // uploads a fresh asset. Keep the already attached source pointer and
-      // let the publication RPCs decide whether a target was already reserved.
-      const output = evidence.data[0].output;
-      assert(typeof output?.sha256 === "string" && /^[a-f0-9]{64}$/.test(output.sha256) &&
-        Number.isSafeInteger(output.bytes) && output.bytes > 0,404,"Disclosure record not found.");
-      const saved = await admin.from("capture_assets")
-        .select("id,listing_id,kind,bucket,uploaded,storage_key,sha256,bytes,content_type")
-        .eq("id",alteredAsset).maybeSingle();
-      assert(!saved.error,503,"Disclosure media identity could not be verified.");
-      assert(saved.data?.id === alteredAsset && saved.data.listing_id === row.listing_id &&
-        saved.data.kind === "photo" && saved.data.bucket === "renders" && saved.data.uploaded === true &&
-        typeof saved.data.storage_key === "string" &&
-        saved.data.storage_key.startsWith(`renders/${row.org_id}/${row.listing_id}/`) &&
-        !saved.data.storage_key.slice(`renders/${row.org_id}/${row.listing_id}/`.length).includes("/") &&
-        saved.data.sha256 === output.sha256 &&
-        saved.data.bytes === output.bytes && saved.data.content_type === output.mime,
-        404,"Disclosure record not found.");
+    // Keep set_provenance_media's editor role gate on publication as well.
+    assert(["owner","admin","agent"].includes(scope.role),403,"Your role does not permit editing AI provenance.");
+    // This also recovers historical attached pointers. Only gallery saves use
+    // publication; native render uploads retain their authenticated RPC below.
+    const output = evidence.data[0].output;
+    assert(typeof output?.sha256 === "string" && /^[a-f0-9]{64}$/.test(output.sha256) &&
+      Number.isSafeInteger(output.bytes) && output.bytes > 0,404,"Disclosure record not found.");
+    const saved = await admin.from("capture_assets")
+      .select("id,listing_id,kind,bucket,uploaded,storage_key,sha256,bytes,content_type")
+      .eq("id",alteredAsset).maybeSingle();
+    assert(!saved.error,503,"Disclosure media identity could not be verified.");
+    assert(saved.data?.id === alteredAsset && saved.data.listing_id === row.listing_id &&
+      saved.data.kind === "photo" && saved.data.bucket === "renders" && saved.data.uploaded === true &&
+      typeof saved.data.storage_key === "string" &&
+      saved.data.storage_key.startsWith(`renders/${row.org_id}/${row.listing_id}/`) &&
+      !saved.data.storage_key.slice(`renders/${row.org_id}/${row.listing_id}/`.length).includes("/") &&
+      saved.data.sha256 === output.sha256 &&
+      saved.data.bytes === output.bytes && saved.data.content_type === output.mime,
+      404,"Disclosure record not found.");
+    if (saved.data.storage_key.startsWith(`renders/${row.org_id}/${row.listing_id}/gallery-`)) {
       const publication = await ensureAcceptedPhotoPublication(publicationDeps?.client ?? admin,
         {orgId:scope.org_id,libraryOrgId:scope.library_org_id,listingId:row.listing_id},userId,alteredAsset,
         {provenanceID:id,expected:{sha256:output.sha256,bytes:output.bytes},signal:req.signal},publicationDeps?.io);
@@ -1126,7 +1130,7 @@ export async function handleCompliancePatch(req: Request, userId: string, id: st
         publication:{output_asset_id:publication.outputAssetID,source_asset_id:publication.sourceAssetID}},
         200,{"cache-control":"private, no-store"});
     }
-    prior = {id:row.id,org_id:row.org_id,listing_id:row.listing_id};
+    prior = row;
   }
   if (prior.listing_id === null) {
     // A recovered edit keeps its original NULL listing. Publish a separate,

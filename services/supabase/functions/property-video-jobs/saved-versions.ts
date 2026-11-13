@@ -25,11 +25,38 @@ function publicationMatches(v:any,asset:Row,actor:string,org:string,listing:stri
     v.output?.sha256===asset.sha256&&v.output?.bytes===asset.bytes&&v.output?.mime===asset.content_type;
 }
 
-function provenKind(asset:Row,rows:Row[],originals:Row[],actor:string,org:string,listing:string,library:string):{kind:Kind;provenance:string|null}{
+function acceptedPublicationPair(asset:Row,source:Row,publication:Row,actor:string,org:string,listing:string,library:string):boolean{
+  const v=publication.photo_publication,q=source.qc,pq=publication.qc;
+  return source.photo_publication===null&&object(v)&&v.schema===1&&publicationMatches(v,asset,actor,org,listing,library)&&
+    UUID.test(source.id)&&UUID.test(publication.id)&&source.id!==publication.id&&known(source.kind)!=='unknown'&&source.kind===publication.kind&&
+    source.org_id===org&&publication.org_id===org&&source.listing_id===listing&&publication.listing_id===listing&&
+    source.altered_key===asset.storage_key&&publication.altered_key===asset.storage_key&&
+    // The accepted source and publication retain different Originals. Their
+    // exact storage references are verified by the canonical RPCs below.
+    typeof source.original_key==='string'&&source.original_key.length>0&&source.original_key!==asset.storage_key&&
+    typeof publication.original_key==='string'&&publication.original_key.startsWith(`renders/${org}/${listing}/`)&&publication.original_key!==asset.storage_key&&
+    typeof source.disclosure==='string'&&source.disclosure.trim().length>0&&source.disclosure===publication.disclosure&&
+    v.source.provenance_id===source.id&&(v.source.listing_id===null||v.source.listing_id===listing)&&
+    UUID.test(v.source.evidence_id)&&UUID.test(v.source.automatic_check_id)&&UUID.test(v.target.source_copy_asset_id)&&v.target.source_copy_asset_id!==asset.id&&
+    object(q)&&object(pq)&&q.publishable===true&&pq.publishable===true&&q.action==='accept'&&pq.action==='accept'&&
+    q.output_sha256===asset.sha256&&pq.output_sha256===asset.sha256&&
+    q.evidence_id===v.source.evidence_id&&pq.evidence_id===v.source.evidence_id&&q.check_id===v.source.automatic_check_id&&pq.check_id===v.source.automatic_check_id;
+}
+
+function provenKind(asset:Row,rows:Row[],originals:Row[],actor:string,org:string,listing:string,library:string):{kind:Kind;provenance:string|null;pairSource?:Row}{
   // An absent/unknown edit record is never evidence that an upload is Original.
   if(rows.length===0)return originals.some(p=>p.original_key===asset.storage_key)?{kind:'original',provenance:null}:{kind:'unknown',provenance:null};
-  if(rows.length!==1)return{kind:'unknown',provenance:null};
-  const p=rows[0],kind=known(p.kind),q=p.qc;
+  let p:Row,pairSource:Row|undefined;
+  if(rows.length===1)p=rows[0];
+  else if(rows.length===2){
+    const publications=rows.filter(p=>object(p.photo_publication));
+    if(publications.length!==1)return{kind:'unknown',provenance:null};
+    p=publications[0];pairSource=rows.find(row=>row!==p)!;
+    // This is only a candidate. The canonical target and owned-reference RPCs
+    // below must still validate the saved publication and accepted source.
+    if(!acceptedPublicationPair(asset,pairSource,p,actor,org,listing,library))return{kind:'unknown',provenance:null};
+  }else return{kind:'unknown',provenance:null};
+  const kind=known(p.kind),q=p.qc;
   if(kind==='unknown'||!UUID.test(p.id)||p.org_id!==org||p.listing_id!==listing||p.altered_key!==asset.storage_key||
     // The photo verdict is advisory (owner decision 12 Nov 2026): an accepted,
     // publishable edit of these exact bytes is a known version whatever the
@@ -39,7 +66,7 @@ function provenKind(asset:Row,rows:Row[],originals:Row[],actor:string,org:string
     const v=p.photo_publication;
     if(!publicationMatches(v,asset,actor,org,listing,library))return{kind:'unknown',provenance:null};
   }
-  return{kind,provenance:p.id};
+  return{kind,provenance:p.id,...(pairSource?{pairSource}:{})};
 }
 
 /** Opt-in catalog only. Never changes the gallery, prepares an alias or resumes a job. */
@@ -53,7 +80,7 @@ export async function savedVersionSources(actor:string,listing:string,expected:s
   const count=Math.min(1000,loaded.count),assets:Row[]=loaded.data.slice(0,Math.max(0,Math.min(100,count-offset)));
   assert(assets.every(a=>UUID.test(a.id))&&new Set(assets.map(a=>a.id)).size===assets.length,503,'Saved photo identities could not be verified.');
   const keys=assets.map(a=>a.storage_key).filter((k):k is string=>typeof k==='string');
-  const provenance=keys.length?await io.db.from('media_provenance').select('id,org_id,listing_id,kind,altered_key,qc,photo_publication')
+  const provenance=keys.length?await io.db.from('media_provenance').select('id,org_id,listing_id,kind,original_key,altered_key,disclosure,qc,photo_publication')
     .eq('org_id',org).eq('listing_id',listing).in('altered_key',keys).limit(1001):{data:[],error:null};
   const originals=keys.length?await io.db.from('photos').select('id,original_key').eq('listing_id',listing).in('original_key',keys).limit(1001):{data:[],error:null};
   assert(!provenance.error&&Array.isArray(provenance.data)&&provenance.data.length<=1000&&!originals.error&&Array.isArray(originals.data)&&originals.data.length<=1000,503,'Saved photo history could not be read.');
@@ -70,6 +97,7 @@ export async function savedVersionSources(actor:string,listing:string,expected:s
         const p=provenance.data.find((p:Row)=>p.id===candidate.provenance);
         if(p.photo_publication!==null)assert(target.publication?.id===p.id&&publicationMatches(target.publication?.photo_publication,a,actor,org,listing,expected),409,'The saved edit disclosure changed.');
         else assert(target.publication===null,409,'Keep the saved edit disclosure.');
+        if(candidate.pairSource)assert(acceptedPublicationPair(a,candidate.pairSource,{...p,photo_publication:target.publication?.photo_publication},actor,org,listing,expected),409,'The saved edit source changed.');
       }else assert(target.publication===null,409,'This saved version has an edit disclosure.');
       const source=await io.rpc('property_photo_reference',{p_actor:actor,p_listing:listing,p_asset:a.id,p_provenance:candidate.provenance});
       assert(source?.actor_id===actor&&source.org_id===org&&source.listing_id===listing&&source.asset_id===a.id&&source.bucket==='renders'&&

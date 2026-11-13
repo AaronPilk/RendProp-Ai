@@ -94,8 +94,74 @@ reset role;
 select pg_temp.ok((select count(*)=1 from media_provenance where photo_publication is not null and listing_id=(select listing from f))and(select count(*)=1 from photos where id=(select output from ids)),'one publication and one attached photo after all replays');
 select pg_temp.ok((select to_jsonb(e)=b.evidence from photo_edit_evidence e cross join before_save b where e.id=(select(x#>>'{evidence,id}')::uuid from evidence))and(select to_jsonb(q)=b.check_row from photo_quality_checks q cross join before_save b where q.id=(select(x#>>'{check,id}')::uuid from evidence)),'paid evidence and pending advisory check remain byte-identical');
 select pg_temp.ok((select gallery_asset_ids='{}'::uuid[]and main_photo_key is null from listings where id=(select listing from f)),'attachment does not silently select or publish photo');
+set local role service_role;
+select pg_temp.ok((select count(*)=2 from media_provenance where listing_id=(select listing from f)and altered_key=(select storage_key from capture_assets where id=(select output from ids))),'saved compliance source and prepared publication retain exactly two historical rows');
+select pg_temp.ok((select published.photo_publication#>>'{source,provenance_id}'=(select x#>>'{evidence,provenance_id}'from evidence)
+ and photo_publication_metadata_valid(published.id) from media_provenance published where published.id=(select(x#>>'{publication,id}')::uuid from finished)),'prepared publication links the accepted source and complete retained proof');
+select pg_temp.ok((select item->>'can_use'='true'and item->>'review_required'='true'and item->>'asset_id'=(select output::text from ids)
+ from f cross join lateral jsonb_array_elements(studio_gallery_selection_snapshot(f.actor,f.org,f.listing)->'photos')item
+ where item->>'photo_id'=(select output::text from ids)),'Studio selection admits the exact canonical saved A-to-B pair');
+create temp table selection_request as select jsonb_build_object('family_asset_ids',jsonb_build_array((select output from ids)),
+ 'target',jsonb_build_object('asset_id',(select output from ids),'sha256',repeat('b',64),'bytes',80000),
+ 'expected_selection',jsonb_build_object('gallery_asset_ids','[]'::jsonb,'main_photo_key',null),
+ 'follow_family_cover',false,'reviewed',false)body;
+grant select on selection_request to service_role;
+create temp table selected as select native_gallery_selection_change(actor,org,org,listing,gen_random_uuid(),(select body from selection_request))x from f;
+select pg_temp.ok((select x->'gallery_asset_ids'=to_jsonb(array[(select output from ids)])and x->'replayed'='false'::jsonb from selected),'native selection accepts only the exact prepared saved A-to-B pair');
+create temp table studio_selected as select studio_gallery_selection_change(actor,org,listing,'use_cover',(select output from ids),
+ jsonb_build_object('gallery_asset_ids',array[(select output from ids)],'main_photo_key',null),null,null,true)x from f;
+select pg_temp.ok((select x->>'main_photo_key'=(select storage_key from capture_assets where id=(select output from ids))from studio_selected)
+ and(select main_photo_key=(select storage_key from capture_assets where id=(select output from ids))from listings where id=(select listing from f)),'Studio cover action retains the same exact selected saved photo');
+-- Roll back each malformed A-to-B pair after checking both changed consumers.
+-- A rejected UPDATE is not a successful selection refusal.
+reset role;
+create function pg_temp.bad_pair(command text,label text)returns void language plpgsql as $$
+declare studio_refused boolean:=false;native_refused boolean:=false;native_error text;
+begin
+ begin
+  execute command;
+  select (public.studio_gallery_photo_choice(f.org,f.listing,(select output from ids))->>'can_use')='false'
+   into studio_refused from f;
+  begin
+   perform public.native_gallery_selection_target(f.org,f.listing,(select output from ids),repeat('b',64),80000,false)from f;
+  exception when others then native_error:=sqlerrm;
+  end;
+  native_refused:=position('RP409: This photo has ambiguous edit evidence' in coalesce(native_error,''))>0;
+  raise exception using errcode='PZ001',message='rollback synthetic pair mutation';
+ exception when sqlstate 'PZ001' then null;
+ end;
+ perform pg_temp.ok(studio_refused and native_refused,label);
+end$$;
+select pg_temp.bad_pair('update media_provenance set qc=jsonb_set(qc,''{evidence_id}'',to_jsonb(gen_random_uuid()::text))where id=(select(x#>>''{evidence,provenance_id}'')::uuid from evidence)',
+ 'wrong retained source evidence refuses in Studio and native');
+select pg_temp.bad_pair('update media_provenance set qc=jsonb_set(qc,''{check_id}'',to_jsonb(gen_random_uuid()::text))where id=(select(x#>>''{evidence,provenance_id}'')::uuid from evidence)',
+ 'wrong retained advisory check refuses in Studio and native');
+select pg_temp.bad_pair('update media_provenance set original_key=''renders/wrong-original.jpg''where id=(select(x#>>''{evidence,provenance_id}'')::uuid from evidence)',
+ 'wrong retained original refuses in Studio and native');
+select pg_temp.bad_pair('update media_provenance set qc=jsonb_set(qc,''{output_sha256}'',to_jsonb(repeat(''f'',64)))where id=(select(x#>>''{evidence,provenance_id}'')::uuid from evidence)',
+ 'wrong retained output hash refuses in Studio and native');
+-- An unrelated third row must remain ambiguous to both actual selection APIs.
+create temp table third_row as select gen_random_uuid()id;
+insert into media_provenance(id,org_id,listing_id,kind,label,edit,original_key,altered_key,disclosure)
+ select (select id from third_row),org,listing,'photo_edit','Unrelated duplicate','synthetic',
+  (select original_key from media_provenance where id=(select(x#>>'{publication,id}')::uuid from finished)),
+  (select storage_key from capture_assets where id=(select output from ids)),'Unrelated disclosure'from f;
+grant select on third_row to service_role;
+set local role service_role;
+select pg_temp.ok((select item->>'can_use'='false'from f cross join lateral jsonb_array_elements(studio_gallery_selection_snapshot(f.actor,f.org,f.listing)->'photos')item
+ where item->>'photo_id'=(select output::text from ids)),'third unrelated provenance row remains unavailable in Studio');
+select pg_temp.no('select native_gallery_selection_change(actor,org,org,listing,gen_random_uuid(),
+ jsonb_set((select body from selection_request),''{expected_selection}'',jsonb_build_object(''gallery_asset_ids'',array[(select output from ids)],''main_photo_key'',
+ (select storage_key from capture_assets where id=(select output from ids)))))from f',
+ 'third unrelated provenance row remains unavailable to native selection','RP409: This photo has ambiguous edit evidence');
+reset role;
+delete from media_provenance where id=(select id from third_row);
+set local role service_role;
+select pg_temp.ok((select item->>'can_use'='true'from f cross join lateral jsonb_array_elements(studio_gallery_selection_snapshot(f.actor,f.org,f.listing)->'photos')item
+ where item->>'photo_id'=(select output::text from ids)),'canonical selection recovers when unrelated duplicate is removed');
+reset role;
 select pg_temp.ok(not has_function_privilege('authenticated','photo_publication_reserve(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,jsonb,jsonb,uuid)','execute')and not has_function_privilege('anon','photo_publication_finish(uuid,uuid,uuid,uuid,uuid,jsonb,jsonb)','execute'),'publication orchestration remains service-only');
-select jsonb_build_object('passed',true,'suite','photo-publication-saved-output','assertions',(select count(*)from checks),'chain','upload/early-release/compliance/source/target/resolve/reserve/finish/attach/readability/replay');
-do $$begin if(select count(*)from checks)<>38 then raise exception'Incomplete publication fixture inventory';end if;end$$;
-select 'PASS saved-output publication: 38 assertions';
+select jsonb_build_object('passed',true,'suite','photo-publication-saved-output','assertions',(select count(*)from checks),'chain','upload/early-release/compliance/source/target/resolve/reserve/finish/attach/gallery-choice/native-choice/readability/replay');
+do $$begin if(select count(*)from checks)<>50 then raise exception'Incomplete publication fixture inventory';end if;end$$;
+select 'PASS saved-output publication: 50 assertions';
 rollback;

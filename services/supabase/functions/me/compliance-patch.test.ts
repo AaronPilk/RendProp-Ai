@@ -3,8 +3,8 @@ import { publicationFixture, publicationID } from "../_shared/photo-publication.
 
 // Exercise the actual PATCH route with an accepted photo proof whose current
 // ai-router candidate key is hidden by the Presenter SELECT policy. The service
-// preflight may identify it, but only the signed-in listing editor can bind an
-// exact uploaded result through the existing authenticated database RPC.
+// preflight may identify it, but only its exact signed-in listing editor can
+// prepare the canonical publication without repointing the accepted source.
 const ACTOR = "f6201105-0000-4000-8000-000000000001";
 const ORG = "f6201105-0000-4000-8000-000000000002";
 const OTHER_ORG = "f6201105-0000-4000-8000-000000000003";
@@ -47,7 +47,7 @@ type Mode = "owned" | "foreign-listing" | "revoked-team" | "marketing" |
   "wrong-org" | "wrong-library" | "hidden-unbound" | "missing" |
   "held" | "foreign-actor" | "unrelated-hidden" | "invalid-asset" | "open-check" | "foreign-check";
 
-async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_asset_id: ASSET }): Promise<{ status: number; body: Record<string, unknown>; calls: string[] }> {
+async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_asset_id: ASSET }, visible = false): Promise<{ status: number; body: Record<string, unknown>; calls: string[] }> {
   const previous = globalThis.fetch;
   const calls: string[] = [];
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -74,8 +74,8 @@ async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_as
       // Presenter RLS hides this row from the user until its altered key is
       // attached; the service fallback reads bounded proof fields for an
       // accepted result only, never its media contents.
-      assertEquals(url.searchParams.get("select"), serviceRead ? "id,org_id,listing_id,kind,altered_key,qc" : "id,org_id,listing_id");
-      return json(serviceRead ? prior : null);
+      assertEquals(url.searchParams.get("select"), "id,org_id,listing_id,kind,altered_key,qc");
+      return json(serviceRead || visible ? prior : null);
     }
     if (url.pathname === "/rest/v1/rpc/listing_library_scope") {
       const body = await req.json();
@@ -110,8 +110,9 @@ async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_as
       assertEquals(req.headers.get("authorization"), "Bearer fixture-user");
       const body = await req.json();
       assertEquals(body.p_id, PROOF);
-      assertEquals(body.p_original_asset, null);
-      assertEquals(body.p_altered_asset, ASSET);
+      assertEquals(body.p_original_asset, patch.original_asset_id ?? null);
+      assertEquals(body.p_altered_asset, patch.altered_asset_id ?? null);
+      assertEquals(body.p_label, patch.label ?? null);
       if (mode === "invalid-asset") return json({ message: "RP409: Asset is not an uploaded photo in this listing" }, 400);
       if (mode === "marketing") return json({ message: "RP403: your role does not permit editing AI provenance" }, 400);
       return json({
@@ -141,12 +142,13 @@ async function attempt(mode: Mode, patch: Record<string, unknown> = { altered_as
   } finally { globalThis.fetch = previous; }
 }
 
-Deno.test("accepted AI-router disclosure can attach the exact result after caller listing authority", async () => {
-  const result = await attempt("owned");
+Deno.test("visible original and label attachments retain the authenticated legacy RPC", async () => {
+  const result = await attempt("owned", { original_asset_id: ASSET, altered_asset_id: ASSET, label: "Saved kitchen" }, true);
   assertEquals(result.status, 200);
   assertEquals(result.body.ok, true);
   assertEquals(result.calls.filter((x) => x.endsWith("/set_provenance_media")).length, 1);
-  assertEquals(result.calls.filter((x) => x.endsWith("/listing_library_scope")).length, 3);
+  assertEquals(result.calls.filter((x) => x.endsWith("/listing_library_scope")).length, 2);
+  assertEquals(result.calls.some((x) => x.endsWith("/photo_edit_evidence")), false);
   // The restrictive user SELECT is intentionally irrelevant to listing-bound
   // identity; media links stay withheld by their independent visibility gate.
   assertEquals(result.body.provenance && (result.body.provenance as Record<string, unknown>).altered_url, null);
@@ -162,7 +164,7 @@ Deno.test("service preflight never turns another listing, org, or library into a
 
 Deno.test("authenticated binding still refuses marketing role and non-listing assets", async () => {
   for (const [mode, status] of [["marketing", 403], ["invalid-asset", 409]] as const) {
-    const result = await attempt(mode);
+    const result = await attempt(mode, { original_asset_id: ASSET, altered_asset_id: ASSET }, true);
     assertEquals(result.status, status);
     assertEquals(result.body.ok, undefined);
     assertEquals(result.calls.filter((x) => x.endsWith("/set_provenance_media")).length, 1);
@@ -182,11 +184,7 @@ Deno.test("hidden provenance cannot be relabeled or have its original reassigned
   }
 });
 
-Deno.test("an accepted edit can attach its exact result while its advisory check is still open", async () => {
-  const result = await attempt("open-check");
-  assertEquals(result.status, 200);
-  assertEquals(result.body.ok, true);
-  assertEquals(result.calls.filter((x) => x.endsWith("/set_provenance_media")).length, 1);
+Deno.test("a hidden edit still requires its own automatic check", async () => {
   // The check must still be this edit's own automatic check.
   const foreign = await attempt("foreign-check");
   assertEquals(foreign.status, 404);
@@ -194,13 +192,17 @@ Deno.test("an accepted edit can attach its exact result while its advisory check
 });
 
 type RecoveryMode = "same" | "new" | "marketing" | "wrong-actor" | "wrong-listing" |
-  "wrong-sha" | "wrong-key" | "refused" | "canonical-conflict";
+  "wrong-sha" | "wrong-bytes" | "wrong-mime" | "wrong-key" | "refused" | "foreign-check" | "canonical-conflict";
 
-async function savedResultRetry(mode: RecoveryMode) {
+async function savedResultRetry(mode: RecoveryMode, options: { fresh?: boolean; visible?: boolean; repeat?: boolean; native?: boolean } = {}) {
   const f = await publicationFixture({ bound: true });
+  f.state.q.state = "checking";
   const priorAsset = mode === "same" ? f.asset : publicationID(31);
   const priorKey = mode === "same" ? f.targetKey : `renders/${f.org}/${f.listing}/gallery-${priorAsset}.jpg`;
-  let pointer = f.outputKey;
+  const savedKey = options.native ? `renders/${f.org}/${f.listing}/${f.asset}.jpg` : f.targetKey;
+  // Model already deployed historical data directly. The current writer must
+  // never recreate the source-pointer mutation merely to seed a retry test.
+  let pointer = options.fresh ? f.outputKey : priorKey;
   let firstPatchCount = 0;
   const calls: string[] = [];
   const previous = globalThis.fetch;
@@ -214,8 +216,8 @@ async function savedResultRetry(mode: RecoveryMode) {
     if (url.pathname === "/rest/v1/media_provenance") {
       assertEquals(url.searchParams.get("id"), `eq.${f.original}`);
       const service = req.headers.get("authorization") === "Bearer fixture-service";
-      assertEquals(url.searchParams.get("select"), service ? "id,org_id,listing_id,kind,altered_key,qc" : "id,org_id,listing_id");
-      return json(service ? {
+      assertEquals(url.searchParams.get("select"), "id,org_id,listing_id,kind,altered_key,qc");
+      return json(service || options.visible ? {
         id: f.original, org_id: f.org, listing_id: mode === "wrong-listing" ? publicationID(99) : f.listing,
         kind: "declutter", altered_key: pointer,
         qc: { publishable: true, action: "accept", evidence_id: f.evidence, check_id: f.check },
@@ -238,22 +240,26 @@ async function savedResultRetry(mode: RecoveryMode) {
         output: { key: f.outputKey, sha256: f.outputSHA, bytes: f.output.length, mime: "image/jpeg" } }]);
     }
     if (url.pathname === "/rest/v1/photo_quality_checks") return json([
-      { id: f.check, evidence_id: f.evidence, state: "checking", automatic: true },
+      { id: mode === "foreign-check" ? publicationID(98) : f.check, evidence_id: f.evidence, state: "checking", automatic: true },
     ]);
     if (url.pathname === "/rest/v1/capture_assets") {
       assertEquals(req.headers.get("authorization"), "Bearer fixture-service");
       assertEquals(url.searchParams.get("id"), `eq.${f.asset}`);
       return json({ id: f.asset, listing_id: f.listing, kind: "photo", bucket: "renders", uploaded: true,
-        storage_key: mode === "wrong-key" ? `renders/${f.org}/${publicationID(99)}/wrong.jpg` : f.targetKey,
+        storage_key: mode === "wrong-key" ? `renders/${f.org}/${publicationID(99)}/wrong.jpg` : savedKey,
         sha256: mode === "wrong-sha" ? "0".repeat(64) : f.outputSHA,
-        bytes: f.output.length, content_type: "image/jpeg" });
+        bytes: mode === "wrong-bytes" ? f.output.length + 1 : f.output.length,
+        content_type: mode === "wrong-mime" ? "image/png" : "image/jpeg" });
     }
     if (url.pathname === "/rest/v1/rpc/set_provenance_media") {
+      assertEquals(req.headers.get("authorization"), "Bearer fixture-user");
       const body = await req.json();
       assertEquals(body.p_id, f.original);
-      assertEquals(body.p_altered_asset, priorAsset);
+      assertEquals(body.p_altered_asset, f.asset);
+      assertEquals(body.p_original_asset, null);
+      assertEquals(body.p_label, null);
       firstPatchCount++;
-      pointer = priorKey;
+      pointer = savedKey;
       return json({ id: f.original, org_id: f.org, listing_id: f.listing, kind: "declutter",
         label: null, disclosure: "Digitally decluttered; compare the submitted source.",
         original_key: `renders/${f.org}/${f.listing}/original.jpg`, altered_key: pointer });
@@ -269,15 +275,19 @@ async function savedResultRetry(mode: RecoveryMode) {
     body: JSON.stringify({ altered_asset_id: asset }),
   });
   try {
-    if (mode === "same" || mode === "new") {
-      const first = await directPatch(request(priorAsset), f.actor, f.original);
-      assertEquals(first.status, 200);
-      assertEquals(firstPatchCount, 1);
-    } else pointer = priorKey;
     if (mode === "canonical-conflict") f.state.resolveError = "RP409: This saved photo already has a different canonical publication target";
     try {
+      const sourceBefore = structuredClone({ root: f.state.root, evidence: f.state.e, check: f.state.q, pointer });
       const response = await directPatch(request(f.asset), f.actor, f.original, { client: f.client, io: f.io });
-      return { status: response.status, body: await response.json(), calls, state: f.state, firstPatchCount, fixture: f };
+      const body = await response.json();
+      if (options.repeat) {
+        const again = await directPatch(request(f.asset), f.actor, f.original, { client: f.client, io: f.io });
+        assertEquals(again.status, response.status);
+        assertEquals(await again.json(), body);
+      }
+      assertEquals({ root: f.state.root, evidence: f.state.e, check: f.state.q, pointer },
+        options.native ? { ...sourceBefore, pointer: savedKey } : sourceBefore);
+      return { status: response.status, body, calls, state: f.state, firstPatchCount, fixture: f };
     } catch (error) {
       if (!error || typeof error !== "object" || !("status" in error)) throw error;
       return { status: Number(error.status), body: {}, calls, state: f.state, firstPatchCount, fixture: f };
@@ -292,11 +302,46 @@ Deno.test("a failed gallery attach can recover the same saved upload or a fresh 
     assertEquals(result.body.source_provenance_id, publicationID(9));
     assertEquals((result.body.provenance as Record<string, unknown>).id, publicationID(10));
     assertEquals(result.state.phase, "prepared");
-    assertEquals(result.firstPatchCount, 1);
-    assertEquals(result.calls.filter((call) => call.endsWith("/set_provenance_media")).length, 1);
+    assertEquals(result.firstPatchCount, 0);
+    assertEquals(result.calls.filter((call) => call.endsWith("/set_provenance_media")).length, 0);
     assertEquals(result.state.calls.map(({ name }) => name).filter((name) => name.startsWith("photo_publication_")), [
       "photo_publication_target", "photo_publication_resolve", "photo_publication_reserve", "photo_publication_finish",
     ]);
+  }
+});
+
+Deno.test("fresh visible and hidden listing-bound saves preserve source history and reuse one exact publication", async () => {
+  for (const visible of [true, false]) {
+    const result = await savedResultRetry("same", { fresh: true, visible, repeat: true });
+    assertEquals(result.status, 200);
+    assertEquals(result.body.source_provenance_id, result.fixture.original);
+    assertEquals((result.body.provenance as Record<string, unknown>).id, result.fixture.pub);
+    assertEquals(result.state.phase, "prepared");
+    assertEquals(result.state.claims, 1);
+    assertEquals(result.state.writes, 1);
+    assertEquals(result.calls.some((call) => call.endsWith("/set_provenance_media")), false);
+    assertEquals(result.state.calls.filter(({ name }) => name === "photo_publication_finish").length, 2);
+    // Both fixtures keep the advisory automatic check open throughout Save.
+    assertEquals(result.state.q.state, "checking");
+  }
+});
+
+Deno.test("native altered-only render uploads retain authenticated disclosure attachment without gallery publication", async () => {
+  for (const visible of [true, false]) {
+    const result = await savedResultRetry("same", { fresh: true, visible, native: true });
+    assertEquals(result.status, 200);
+    assertEquals((result.body.provenance as Record<string, unknown>).id, result.fixture.original);
+    assertEquals(result.body.publication, undefined);
+    assertEquals(result.firstPatchCount, 1);
+    assertEquals(result.calls.filter((call) => call.endsWith("/set_provenance_media")).length, 1);
+    assertEquals(result.state.calls, []);
+    assertEquals([result.state.claims, result.state.writes], [0, 0]);
+  }
+  for (const [mode, status] of [["marketing", 403], ["wrong-actor", 404], ["wrong-sha", 404], ["wrong-key", 404]] as const) {
+    const result = await savedResultRetry(mode, { fresh: true, visible: true, native: true });
+    assertEquals(result.status, status, mode);
+    assertEquals(result.firstPatchCount, 0, mode);
+    assertEquals(result.state.calls, [], mode);
   }
 });
 
@@ -361,12 +406,27 @@ Deno.test("a fresh exact retry proceeds from recovered disclosure to the ordinar
 Deno.test("saved-output recovery refuses role, identity, key, SHA, evidence and canonical-target conflicts", async () => {
   for (const [mode, status] of [
     ["marketing", 403], ["wrong-actor", 404], ["wrong-listing", 404], ["wrong-sha", 404],
-    ["wrong-key", 404], ["refused", 404], ["canonical-conflict", 409],
+    ["wrong-bytes", 404], ["wrong-mime", 404], ["wrong-key", 404], ["refused", 404],
+    ["foreign-check", 404], ["canonical-conflict", 409],
   ] as const) {
     const result = await savedResultRetry(mode);
     assertEquals(result.status, status, mode);
     assertEquals(result.firstPatchCount, 0, mode);
     assertEquals(result.state.phase, null, mode);
+    assertEquals(result.calls.some((call) => call.endsWith("/set_provenance_media")), false, mode);
+  }
+});
+
+Deno.test("visible prospective saves retain actor, scope, role, byte and canonical-target refusals", async () => {
+  for (const [mode, status] of [
+    ["marketing", 403], ["wrong-actor", 404], ["wrong-listing", 503], ["wrong-sha", 404],
+    ["wrong-bytes", 404], ["wrong-mime", 404], ["wrong-key", 404], ["refused", 404],
+    ["foreign-check", 404], ["canonical-conflict", 409],
+  ] as const) {
+    const result = await savedResultRetry(mode, { fresh: true, visible: true });
+    assertEquals(result.status, status, mode);
+    assertEquals(result.state.phase, null, mode);
+    assertEquals(result.firstPatchCount, 0, mode);
     assertEquals(result.calls.some((call) => call.endsWith("/set_provenance_media")), false, mode);
   }
 });
