@@ -164,7 +164,10 @@ struct UIImage {
     func jpegData(compressionQuality: Double) -> Data? { data }
 }
 @MainActor enum PhotoVersionHistory {
-    enum Failure: Error { case missingImage, changedVersion, reviewRequired, invalidHistory }
+    enum Failure: Error {
+        case missingImage, changedVersion, reviewRequired, invalidHistory
+        case unverifiedEarlierSource(hasEditableDisplay: Bool)
+    }
     struct Version {
         var id: String; var imageFile: String; var originalFile: String?; var originalVerified = true
         var effects: [String] = []
