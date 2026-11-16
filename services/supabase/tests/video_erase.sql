@@ -128,7 +128,10 @@ begin
   perform pg_temp.check_erase(exists(select 1 from cost_ledger where org_id=o),'listing deletion retains incurred workspace COGS');
   -- A reflection hold must fence other existing monthly-spend consumers.
   o:=gen_random_uuid();l:=gen_random_uuid();a:=gen_random_uuid();b:=gen_random_uuid();orig:=gen_random_uuid();
-  insert into orgs(id,name,plan) values(o,'Cross-feature synthetic budget','pro');
+  -- This fixture checks reflection COGS against another paid feature, rather
+  -- than unfunded trial admission. Give its synthetic workspace explicit
+  -- manual authority so the render admission reaches the intended cost fence.
+  insert into orgs(id,name,plan,plan_source) values(o,'Cross-feature synthetic budget','pro','manual');
   insert into memberships(user_id,org_id,role) values(u,o,'owner');
   insert into listings(id,org_id,agent_id,address) values(l,o,u,'Synthetic budget room');
   update plan_entitlements set cogs_ceiling_cents=100 where plan='pro';

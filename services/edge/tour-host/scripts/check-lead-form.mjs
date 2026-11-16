@@ -15,9 +15,16 @@ const LIMIT = 15000;
 let checks = 0, cases = 0;
 const failures = [];
 function expect(value, message) { checks++; if (!value) failures.push(message); }
+for (const slug of ["estate-demo", "demo"]) {
+  for (const space of [undefined, "venue", "fitness"]) {
+    const html = renderTourPage({ ...buildDemoTour(space), slug }, "https://functions.invalid/v1", "fixture-anon", "fixture-site");
+    expect(!/<form|<input|<textarea/i.test(html), `${slug}/${space}: fictional demo collects no contact data`);
+    expect(html.includes("This is a demonstration."), `${slug}/${space}: sample contact state is explicit`);
+  }
+}
 function deferred() { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 async function flush() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
-const good = (status = 201, extra = {}) => ({ ok: true, status, async json() { return { ok: true, id: ID, ...extra }; } });
+const good = (status = 201, extra = {}) => ({ ok: true, status, async json() { return { ok: true, accepted: true, ...extra }; } });
 
 function harness(label, { fetch: stub = () => Promise.resolve(good()), hp = "", handoff = false, turnstile = true } = {}) {
   const tour = { ...buildDemoTour(), slug: "synthetic-lead-form", cta: {
@@ -117,7 +124,7 @@ async function run(label, fn) {
 
 for (const [label, response, hp] of [
   ["created", good(), ""], ["deduplicated", good(200, { deduplicated: true }), ""],
-  ["honeypot deliberately accepted without ID", { ok: true, status: 200, async json() { return { ok: true }; } }, "bot"],
+  ["honeypot deliberately accepted without capture receipt", { ok: true, status: 200, async json() { return { ok: true }; } }, "bot"],
   ["whitespace honeypot preserves API truthiness", { ok: true, status: 200, async json() { return { ok: true }; } }, " "],
 ]) await run(label, async (name) => {
   const h = harness(name, { fetch: () => Promise.resolve(response), hp });
@@ -135,11 +142,11 @@ for (const [label, response, hp] of [
 });
 
 for (const [label, body] of [
-  ["empty object", {}], ["false ok", { ok: false, id: ID }], ["string ok", { ok: "true", id: ID }],
-  ["missing ok", { id: ID }], ["null", null], ["array", []], ["number", 1],
-  ["normal missing ID", { ok: true }], ["empty ID", { ok: true, id: "" }],
-  ["whitespace ID", { ok: true, id: " " }], ["numeric ID", { ok: true, id: 1 }],
-  ["not a lead ID", { ok: true, id: "not-a-lead-id" }],
+  ["empty object", {}], ["false ok", { ok: false, accepted: true }], ["string ok", { ok: "true", accepted: true }],
+  ["missing ok", { accepted: true }], ["null", null], ["array", []], ["number", 1],
+  ["normal missing acceptance", { ok: true }], ["legacy id without acceptance", { ok: true, id: ID }],
+  ["false acceptance", { ok: true, accepted: false }], ["string acceptance", { ok: true, accepted: "true" }],
+  ["numeric acceptance", { ok: true, accepted: 1 }],
 ]) await run(label, async (name) => {
   const h = harness(name, { fetch: () => Promise.resolve({ ok: true, status: 200, async json() { return body; } }), handoff: true });
   h.submit(); await flush(); h.failure();
@@ -178,7 +185,7 @@ for (const stage of ["headers", "JSON"]) await run(`${stage} deadline`, async (n
   expect(h.state.fetches[0]?.init.signal?.aborted === true, `${name}: original fetch aborted`);
   expect(h.msg.textContent.includes("confirm") && !h.msg.textContent.includes("not sent"), `${name}: unknown acceptance, not a false rejection claim`);
   expect(h.state.fetches.length === 1, `${name}: no automatic retry`);
-  wait.resolve(stage === "headers" ? good() : { ok: true, id: ID });
+  wait.resolve(stage === "headers" ? good() : await good().json());
   await flush(); h.failure(); // A late response cannot hide the retained form.
 });
 

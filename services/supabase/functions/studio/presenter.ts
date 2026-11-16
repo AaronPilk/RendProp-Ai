@@ -1,6 +1,6 @@
 import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
-import { presignGet } from "../_shared/providers/common.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 import { R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -46,7 +46,7 @@ export async function presenterCall(context: StudioContext, req: Request, name: 
 
 /** Returns only expiring URLs for already authorized originals. Re-read after
  * signing so a concurrent revocation cannot return a newly issued capability. */
-export async function handlePresenterMedia(req: Request, context: StudioContext, sign = presignGet) {
+export async function handlePresenterMedia(req: Request, context: StudioContext, sign?: (bucket:string,key:string,seconds:number)=>Promise<string>) {
   assert(req.method === "POST", 405, "Use a presenter reference preview action.");
   const body = await readJsonLimited(req, 4096), listing = id(body.listing_id);
   await context.authorizeListing(listing);
@@ -60,7 +60,7 @@ export async function handlePresenterMedia(req: Request, context: StudioContext,
   const refs = await Promise.all(before.assets.map(async (asset: Record<string, unknown>) => {
     const asset_id = id(asset.id), source = id(asset.listing_id), key = asset.storage_key;
     assert(asset.bucket === "uploads" && typeof key === "string" && key.startsWith(`uploads/${context.orgId}/${source}/`) && !/[\\?#\u0000-\u001f]/.test(key) && !key.includes(".."), 503, "Presenter reference storage could not be verified.");
-    return { asset_id, url: await sign(R2_BUCKET_UPLOADS, key, 300), expires_at };
+    return { asset_id, url: await (sign?sign(R2_BUCKET_UPLOADS,key,300):privateMediaUrl({actor:context.userId,org:context.orgId,listing:source,bucket:"uploads",key},300)), expires_at };
   }));
   const after = await presenterCall(context, req, "studio_presenter_media", args);
   assert(JSON.stringify(before) === JSON.stringify(after), 409, "Presenter references changed. Reload before continuing.");

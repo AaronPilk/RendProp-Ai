@@ -28,6 +28,7 @@
 // also what ai-photo already speaks, so there is one Gemini dialect in the repo.
 
 import { HttpError } from "../_shared/http.ts";
+import { ProviderError, ProviderHttpError, classifyStatus, definitiveSubmitRejection } from "../_shared/providers/common.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com";
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")?.trim() || undefined;
@@ -49,13 +50,22 @@ function keyHeader(): Record<string, string> {
 }
 
 /** Never let a provider body reach the client verbatim — it can echo a key. */
-function upstream(what: string, status: number, body: string): HttpError {
-  console.error(`ai-chapters ${what} failed (${status}): ${body.slice(0, 400)}`);
-  return new HttpError(
+type GeminiFailurePhase = "files:start" | "files:upload" | "files:get" | "generateContent";
+function upstream(what: GeminiFailurePhase, status: number, _body: string): HttpError {
+  console.error(JSON.stringify({ event: "ai_chapters_provider_failure", phase: what, http_status: status }));
+  const error = new HttpError(
     502,
     `The video model could not be reached (${what} returned ${status}). Try again in a moment.`,
     "upstream",
   );
+  // File upload/poll failures are never evidence about a paid model submit.
+  if (what === "generateContent") {
+    let body: unknown;
+    try { body = JSON.parse(_body); } catch { return error; }
+    if (body && typeof body === "object" && !Array.isArray(body)) return new ProviderHttpError(error,
+      new ProviderError("gemini", classifyStatus(status), "Gemini chapter submit failed", status, definitiveSubmitRejection(status, body)));
+  }
+  return error;
 }
 
 // ── Files API ────────────────────────────────────────────────────────────────
@@ -83,6 +93,73 @@ interface FileEnvelope extends GeminiFile {
   file?: GeminiFile;
 }
 
+// A fetch signal alone does not bound response consumption or an injected
+// transport. Every await shares one absolute deadline; cleanup never awaits a
+// possibly stalled cancel promise. No customer video is buffered here.
+interface GeminiDeadline {
+  signal: AbortSignal;
+  wait<T>(work: Promise<T>): Promise<T>;
+  fetch(url: string, init?: RequestInit): Promise<Response>;
+  text(response: Response): Promise<string>;
+  own(cleanup: () => void): () => void;
+  sleep(milliseconds: number): Promise<void>;
+}
+function deadlineError(): HttpError {
+  return new HttpError(504, "The video model request timed out. Try room suggestions again in a minute.", "upstream");
+}
+async function withinDeadline<T>(deadlineMs: number, run: (scope: GeminiDeadline) => Promise<T>): Promise<T> {
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= Date.now()) throw deadlineError();
+  const abort = new AbortController(), cleanups = new Set<() => void>();
+  let finished = false, rejectDeadline!: (reason: unknown) => void;
+  const expired = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+  void expired.catch(() => {});
+  const cancel = () => { for (const cleanup of cleanups) { try { cleanup(); } catch { /* Best effort only. */ } } };
+  const expire = () => { abort.abort(); cancel(); rejectDeadline(deadlineError()); };
+  const timer = setTimeout(expire, deadlineMs - Date.now());
+  const check = () => { if (abort.signal.aborted || Date.now() >= deadlineMs) { expire(); throw deadlineError(); } };
+  const scope: GeminiDeadline = {
+    signal: abort.signal,
+    async wait<U>(work: Promise<U>): Promise<U> {
+      // A boundary can expire between starting work and attaching the race.
+      void work.catch(() => {});
+      check(); const value = await Promise.race([work, expired]); check(); return value;
+    },
+    own(cleanup) { cleanups.add(cleanup); return () => { cleanups.delete(cleanup); }; },
+    async fetch(url, init) {
+      check();
+      return await scope.wait(fetch(url, { ...init, signal: abort.signal }).then(response => {
+        const cleanup = () => { void response.body?.cancel().catch(() => {}); };
+        if (finished || abort.signal.aborted) cleanup(); else scope.own(cleanup);
+        return response;
+      }));
+    },
+    async text(response) {
+      if (!response.body) return "";
+      const reader = response.body.getReader(), decoder = new TextDecoder(), pieces: string[] = [];
+      const cleanup = () => { void reader.cancel().catch(() => {}); }, release = scope.own(cleanup);
+      try {
+        for (;;) {
+          const { value, done } = await scope.wait(reader.read());
+          if (done) break;
+          pieces.push(decoder.decode(value, { stream: true }));
+        }
+        pieces.push(decoder.decode()); return pieces.join("");
+      } catch (error) {
+        cleanup(); if (abort.signal.aborted || Date.now() >= deadlineMs) throw deadlineError();
+        // Preserve the existing empty-body handling of non-timeout read errors.
+        return "";
+      } finally { release(); try { reader.releaseLock(); } catch { /* Cancellation owns pending reads. */ } }
+    },
+    async sleep(milliseconds) {
+      check(); let handle: ReturnType<typeof setTimeout> | undefined;
+      try { await scope.wait(new Promise<void>(resolve => { handle = setTimeout(resolve, Math.min(milliseconds, deadlineMs - Date.now())); })); }
+      finally { if (handle !== undefined) clearTimeout(handle); }
+    },
+  };
+  try { return await scope.wait(run(scope)); }
+  finally { finished = true; clearTimeout(timer); abort.abort(); cancel(); cleanups.clear(); }
+}
+
 /**
  * Stream a video from a presigned R2 GET straight into the Files API.
  *
@@ -96,10 +173,13 @@ export async function uploadVideoFromUrl(args: {
   mimeType: string;
   displayName: string;
   maxBytes: number;
+  /** The caller's absolute work deadline, including source streaming. */
+  deadlineMs?: number;
 }): Promise<UploadedFile> {
-  const src = await fetch(args.sourceUrl);
+  return await withinDeadline(args.deadlineMs ?? Date.now() + 105_000, async scope => {
+  const src = await scope.fetch(args.sourceUrl);
   if (!src.ok || !src.body) {
-    await src.body?.cancel().catch(() => {});
+    void src.body?.cancel().catch(() => {});
     throw new HttpError(
       502,
       `The walkthrough could not be read from storage (${src.status}).`,
@@ -110,7 +190,7 @@ export async function uploadVideoFromUrl(args: {
   const headerLength = Number(src.headers.get("content-length") ?? "");
   const bytes = Number.isFinite(headerLength) && headerLength > 0 ? headerLength : 0;
   if (bytes <= 0) {
-    await src.body.cancel().catch(() => {});
+    void src.body.cancel().catch(() => {});
     // The resumable protocol wants the length up front; without it the upload
     // would finalize at an unknown size and the model would see a truncated file.
     throw new HttpError(
@@ -120,7 +200,7 @@ export async function uploadVideoFromUrl(args: {
     );
   }
   if (bytes > args.maxBytes) {
-    await src.body.cancel().catch(() => {});
+    void src.body.cancel().catch(() => {});
     throw new HttpError(
       413,
       `This walkthrough is ${(bytes / 1_000_000).toFixed(0)} MB. Room suggestions accept up to ` +
@@ -129,7 +209,7 @@ export async function uploadVideoFromUrl(args: {
   }
 
   // 1. start the resumable session (JSON metadata only)
-  const start = await fetch(`${GEMINI_BASE}/upload/v1beta/files`, {
+  const start = await scope.fetch(`${GEMINI_BASE}/upload/v1beta/files`, {
     method: "POST",
     headers: {
       ...keyHeader(),
@@ -142,17 +222,43 @@ export async function uploadVideoFromUrl(args: {
     body: JSON.stringify({ file: { display_name: args.displayName } }),
   });
   if (!start.ok) {
-    await src.body.cancel().catch(() => {});
-    throw upstream("files:start", start.status, await start.text().catch(() => ""));
+    void src.body.cancel().catch(() => {});
+    throw upstream("files:start", start.status, await scope.text(start));
   }
   const uploadUrl = start.headers.get("x-goog-upload-url");
-  await start.body?.cancel().catch(() => {});
+  void start.body?.cancel().catch(() => {});
   if (!uploadUrl) {
-    await src.body.cancel().catch(() => {});
+    void src.body.cancel().catch(() => {});
     throw upstream("files:start", start.status, "no x-goog-upload-url header");
   }
 
   // 2. stream the bytes and finalize in one command
+  const reader = src.body.getReader();
+  let sourceReleased = false;
+  const cancelSource = () => {
+    if (sourceReleased) return;
+    sourceReleased = true; void reader.cancel().catch(() => {});
+    try { reader.releaseLock(); } catch { /* Cancellation owns pending reads. */ }
+  };
+  scope.own(cancelSource);
+  let transferred = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await scope.wait(reader.read());
+        if (done) {
+          if (transferred !== bytes) throw new HttpError(502, "The walkthrough could not be read completely from storage.", "upstream");
+          cancelSource();
+          controller.close(); return;
+        }
+        if (!(value instanceof Uint8Array) || value.byteLength > bytes - transferred) {
+          throw new HttpError(502, "The walkthrough could not be read completely from storage.", "upstream");
+        }
+        transferred += value.byteLength; controller.enqueue(value);
+      } catch (error) { cancelSource(); controller.error(error); }
+    },
+    cancel() { cancelSource(); },
+  }, { highWaterMark: 0 });
   const init: RequestInit & { duplex?: string } = {
     method: "POST",
     headers: {
@@ -160,11 +266,11 @@ export async function uploadVideoFromUrl(args: {
       "x-goog-upload-offset": "0",
       "x-goog-upload-command": "upload, finalize",
     },
-    body: src.body,
+    body: stream,
     duplex: "half",
   };
-  const put = await fetch(uploadUrl, init);
-  const putText = await put.text().catch(() => "");
+  const put = await scope.fetch(uploadUrl, init);
+  const putText = await scope.text(put);
   if (!put.ok) throw upstream("files:upload", put.status, putText);
 
   let env: FileEnvelope;
@@ -185,6 +291,7 @@ export async function uploadVideoFromUrl(args: {
     mimeType: typeof file.mimeType === "string" ? file.mimeType : args.mimeType,
     sizeBytes: Number.isFinite(size) ? size : bytes,
   };
+  });
 }
 
 /**
@@ -193,11 +300,12 @@ export async function uploadVideoFromUrl(args: {
  * not optional. Bounded by `deadlineMs` — an edge function has a wall clock.
  */
 export async function waitForActive(name: string, deadlineMs: number): Promise<void> {
+  return await withinDeadline(deadlineMs, async scope => {
   const path = name.startsWith("files/") ? name : `files/${name}`;
   let delay = 900;
   while (Date.now() < deadlineMs) {
-    const res = await fetch(`${GEMINI_BASE}/v1beta/${path}`, { headers: keyHeader() });
-    const text = await res.text().catch(() => "");
+    const res = await scope.fetch(`${GEMINI_BASE}/v1beta/${path}`, { headers: keyHeader() });
+    const text = await scope.text(res);
     if (!res.ok) throw upstream("files:get", res.status, text);
     let env: FileEnvelope;
     try {
@@ -216,7 +324,7 @@ export async function waitForActive(name: string, deadlineMs: number): Promise<v
         "upstream",
       );
     }
-    await new Promise((r) => setTimeout(r, delay));
+    await scope.sleep(delay);
     delay = Math.min(3000, Math.round(delay * 1.5));
   }
   throw new HttpError(
@@ -224,20 +332,25 @@ export async function waitForActive(name: string, deadlineMs: number): Promise<v
     "The video model is still preparing this walkthrough. Try room suggestions again in a minute.",
     "upstream",
   );
+  });
 }
 
 /** Best effort. Customer media does not linger on a third party for 48 hours. */
-export async function deleteFile(name: string): Promise<void> {
+export async function deleteFile(name: string, deadlineMs = Date.now() + 5_000): Promise<void> {
   try {
+    await withinDeadline(Math.min(deadlineMs, Date.now() + 5_000), async scope => {
     const path = name.startsWith("files/") ? name : `files/${name}`;
-    const res = await fetch(`${GEMINI_BASE}/v1beta/${path}`, {
+    const res = await scope.fetch(`${GEMINI_BASE}/v1beta/${path}`, {
       method: "DELETE",
       headers: keyHeader(),
     });
-    await res.body?.cancel().catch(() => {});
-    if (!res.ok) console.error(`ai-chapters files:delete returned ${res.status} for ${path}`);
+    void res.body?.cancel().catch(() => {});
+    if (!res.ok) console.error(JSON.stringify({ event: "ai_chapters_provider_failure", phase: "files:delete", http_status: res.status }));
+    });
   } catch (e) {
-    console.error("ai-chapters files:delete threw:", e instanceof Error ? e.message : String(e));
+    const name = e instanceof Error ? e.name : "";
+    const errorName = ["Error", "TypeError", "RangeError", "SyntaxError", "TimeoutError", "AbortError"].includes(name) ? name : "Other";
+    console.error(JSON.stringify({ event: "ai_chapters_provider_failure", phase: "files:delete", http_status: null, error_name: errorName }));
   }
 }
 
@@ -283,6 +396,8 @@ export interface GenerateArgs {
   /** Frames per second the model samples. 1 fps is the documented default. */
   fps: number;
   maxOutputTokens?: number;
+  /** Optional caller work deadline; never extends the existing 90s ceiling. */
+  deadlineMs?: number;
 }
 
 export interface GenerateResult {
@@ -322,13 +437,14 @@ export function buildGenerateBody(args: GenerateArgs): Record<string, unknown> {
 
 /** One `:generateContent` call. Returns the first text part, verbatim. */
 export async function generateChapters(args: GenerateArgs): Promise<GenerateResult> {
+  return await withinDeadline(Math.min(args.deadlineMs ?? Infinity, Date.now() + 90_000), async scope => {
   const url = `${GEMINI_BASE}/v1beta/models/${encodeURIComponent(args.model)}:generateContent`;
-  const res = await fetch(url, {
+  const res = await scope.fetch(url, {
     method: "POST",
     headers: { ...keyHeader(), "content-type": "application/json" },
     body: JSON.stringify(buildGenerateBody(args)),
   });
-  const text = await res.text().catch(() => "");
+  const text = await scope.text(res);
   if (!res.ok) throw upstream("generateContent", res.status, text);
 
   // deno-lint-ignore no-explicit-any
@@ -359,4 +475,5 @@ export async function generateChapters(args: GenerateArgs): Promise<GenerateResu
     outputTokens: num(usage.candidatesTokenCount),
     finishReason,
   };
+  });
 }

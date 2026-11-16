@@ -148,7 +148,8 @@ export distortion coefficients, so this adapter must not invent them.
 
 ## Offline adapter use
 
-Use Python 3.10+ for preparation (Python 3.11/3.12 for the GPU environment).
+Use Python 3.11+ for preparation (Python 3.11/3.12 for the GPU environment);
+the current Pillow 13.0.0 pin requires Python 3.11 or later.
 Run these from this `training` directory; `/local/...` below are locations chosen
 on your machine, not cloud destinations. Existing output is always refused.
 
@@ -199,7 +200,7 @@ git clone --branch v1.5.3 https://github.com/nerfstudio-project/gsplat.git /loca
 git -C /local/gsplat-phase-a checkout --detach 937e29912570c372bed6747a5c9bf85fed877bae
 python3.12 -m venv /local/spatial-gpu-venv
 /local/spatial-gpu-venv/bin/python -m pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-/local/spatial-gpu-venv/bin/python -m pip install -r /local/gsplat-phase-a/examples/requirements.txt numpy==1.26.4 Pillow==12.1.1 tyro==0.9.35 ninja
+/local/spatial-gpu-venv/bin/python -m pip install -r /local/gsplat-phase-a/examples/requirements.txt numpy==1.26.4 Pillow==13.0.0 tyro==0.9.35 ninja
 /local/spatial-gpu-venv/bin/python -m pip install --no-build-isolation -e /local/gsplat-phase-a
 ```
 

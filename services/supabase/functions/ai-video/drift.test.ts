@@ -29,6 +29,7 @@ import {
   assert,
   assertEquals,
   assertNotEquals,
+  assertRejects,
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
@@ -54,6 +55,7 @@ import {
   uncheckedDriftBlock,
 } from "../_shared/drift.ts";
 import { APP_AI_UNIT_CENTS } from "../_shared/ledger.ts";
+import { MAX_DRIFT_FRAME_B64_CHARS, MAX_DRIFT_SOURCE_B64_CHARS, MAX_DRIFT_REQUEST_BODY_BYTES } from "./drift-input.ts";
 import {
   AERIAL_INVENTS_SURFACE,
   AERIAL_MOTIONS,
@@ -631,7 +633,7 @@ const DRIFT_ROUTE = INDEX_SRC.slice(
 Deno.test("wiring: the drift route exists and judges through the routed task", () => {
   assert(DRIFT_ROUTE.length > 500, "failed to slice the drift route out of index.ts");
   assertStringIncludes(DRIFT_ROUTE, "judgeDrift({");
-  assertStringIncludes(DRIFT_ROUTE, "decideDriftAction({ verdict, attempt, retryGranted })");
+  assertStringIncludes(DRIFT_ROUTE, "decideDriftAction({ verdict, attempt, retryGranted, advisory })");
   assertStringIncludes(INDEX_SRC, "resolveRoute(DRIFT_TASK");
   assertStringIncludes(INDEX_SRC, 'needs: ["classifier", "vision", "multi_image"]');
   assertStringIncludes(INDEX_SRC, "carries_customer_media: true");
@@ -649,37 +651,101 @@ Deno.test("wiring: the body is validated BEFORE the burst limiter is touched", (
 });
 
 Deno.test("wiring: the check is role-gated and org-scoped like every other route", () => {
-  assertStringIncludes(INDEX_SRC, 'if (!mem?.role || mem.role === "marketing")');
-  assertStringIncludes(INDEX_SRC, "async function guardDriftCheck(userId: string, req: Request)");
-  assertStringIncludes(INDEX_SRC, "orgForUser(userId, preferredOrg(req))");
+  const guard = INDEX_SRC.match(/^async function guardDriftCheck\([\s\S]*?^}/m)?.[0];
+  assert(guard, "the actual quality-check admission guard exists");
+  assertStringIncludes(guard, "await requireLibraryWrite(adminClient(), userId, orgId)");
+  assert(guard.indexOf("requireLibraryWrite") < guard.indexOf("durableRateLimit"),
+    "fresh writable-library authority precedes the quality-check charge");
+  assertStringIncludes(INDEX_SRC, "async function guardDriftCheck(user: PaidAiCaller, req: Request, listing?: string)");
+  assertStringIncludes(INDEX_SRC, "orgForUser(user.id, preferredOrg(req))");
   // The org handed to the audit RPC is the one the JWT resolved to, never one
   // out of the request body.
   assertStringIncludes(DRIFT_ROUTE, "stampProvenanceQc(orgId, provenanceId,");
 });
 
-Deno.test("wiring: one judgement per clip — a re-post cannot buy a second verdict", () => {
-  assertStringIncludes(DRIFT_ROUTE, "`aidriftjob:${orgId}:${requestId}`");
-  assertStringIncludes(DRIFT_ROUTE, '"conflict"');
+Deno.test("wiring: durable check admission precedes judgement and result persistence precedes reopening", () => {
+  assert(DRIFT_ROUTE.indexOf("await beginDriftCheck(") < DRIFT_ROUTE.indexOf("await judgeDrift("));
+  assertStringIncludes(DRIFT_ROUTE, "if (check.replay) return json(check.replay)");
+  assert(DRIFT_ROUTE.lastIndexOf("await finishDriftCheck(") > DRIFT_ROUTE.indexOf("await recordRoutedAiCost("));
+  assert(!DRIFT_ROUTE.includes("`aidriftjob:${orgId}:${requestId}`"));
 });
 
 Deno.test("wiring: the retry grant is durable and keyed on the SOURCE photo", () => {
   assertStringIncludes(DRIFT_ROUTE, "driftLineageKey(source.b64)");
   assertStringIncludes(DRIFT_ROUTE, "`aidriftlin:${orgId}:${lineage}`");
   // The client's hint may only ever make it stricter.
-  assertStringIncludes(DRIFT_ROUTE, "if (claimed >= 1)");
+  assertStringIncludes(DRIFT_ROUTE, "if (claimed >= 1 || advisory)");
 });
 
-Deno.test("wiring: the refund is bounded, idempotent and never the vendor spend", () => {
-  assertStringIncludes(INDEX_SRC, "async function refundRejectedClipAllowance(");
-  assertStringIncludes(INDEX_SRC, "`aidriftref:${orgId}:${requestId}`");
-  assertStringIncludes(INDEX_SRC, "`aidriftrefmo:${orgId}`");
-  assertStringIncludes(INDEX_SRC, "DRIFT_MAX_REFUNDS_PER_MONTH");
-  // Only a real, model-delivered failure refunds anything: a `hold` must not
-  // turn a provider outage into free clips.
-  assertStringIncludes(
-    DRIFT_ROUTE,
-    'decision.action === "retry" || decision.action === "refuse"',
-  );
+async function actualRefundModule(refundHeldClip=false) {
+  const method=INDEX_SRC.match(/^async function refundRejectedClipAllowance\([\s\S]*?^}/m);
+  const conditional=DRIFT_ROUTE.match(/const charge = !advisory && \(decision\.action[\s\S]*?;/);
+  assert(method&&conditional,"Actual refund helper and route admission must exist");
+  let admission=conditional[0];
+  if(refundHeldClip){
+    const predicate='decision.action === "retry" || decision.action === "refuse"';
+    assert(admission.includes(predicate));admission=admission.replace(predicate,"true");
+  }
+  return await import("data:application/typescript,"+encodeURIComponent(`
+    // ${crypto.randomUUID()}
+    type GenKind="reel"|"aerial"|"drone";
+    export const state:any={calls:[],error:null,data:{refunded:true,reason:"Original allowance restored"}};
+    const adminClient=()=>({rpc:async(name:string,args:any)=>{state.calls.push({name,args});if(name!=="app_video_refund_drift")throw Error("Unexpected spend writer");return {data:state.data,error:state.error};}});
+    ${method[0]}
+    export async function run(action:string,kind:GenKind="reel",advisory=false){
+      const decision={action},orgId="trusted-org",requestId="owned-request",user={id:"trusted-actor"};
+      ${admission}
+      return charge;
+    }
+  `));
+}
+Deno.test("actual drift refund binds owned actor and request to the original-window SQL receipt",async()=>{
+  const m=await actualRefundModule();
+  assertEquals(await m.run("retry"),{refunded:true,reason:"Original allowance restored"});
+  assertEquals(m.state.calls,[{name:"app_video_refund_drift",args:{p_actor:"trusted-actor",p_org:"trusted-org",p_request:"owned-request",p_feature:"reel"}}]);
+  m.state.calls=[];await m.run("refuse","drone");
+  assertEquals(m.state.calls[0].args.p_feature,"drone_render");
+});
+async function assertHeldClipNotRefunded(mutant=false){
+  const m=await actualRefundModule(mutant);
+  for(const action of["hold","accept"]){
+    assertEquals((await m.run(action)).refunded,false,"Held or approved clips must not refund allowance");
+    assertEquals(m.state.calls,[],"Held or approved clips must not refund allowance");
+  }
+}
+Deno.test("actual drift decision never refunds a held or approved clip",async()=>{await assertHeldClipNotRefunded();});
+Deno.test("compiled unconditional drift refund fails the same held-clip boundary",async()=>{
+  await assertRejects(()=>assertHeldClipNotRefunded(true),Error,"Held or approved clips must not refund allowance");
+});
+// Advisory (the property-video worker, or a direct client that sent clip_used:true):
+// the clip is used, so no outcome may hand its plan allowance back.
+Deno.test("actual drift decision never refunds a clip that is used (advisory)",async()=>{
+  const m=await actualRefundModule();
+  for(const action of["retry","refuse"]){
+    assertEquals(await m.run(action,"reel",true),{refunded:false,reason:"this clip is used in your video and stays charged to your plan as usual"});
+  }
+  for(const action of["accept","hold"])assertEquals((await m.run(action,"reel",true)).refunded,false);
+  assertEquals(m.state.calls,[],"A clip that is used must never have its allowance handed back");
+});
+Deno.test("wiring: only an explicit boolean clip_used true makes the direct route advisory",()=>{
+  // Build 147 sends no such field and keeps the enforced retry and refund.
+  assertStringIncludes(DRIFT_ROUTE,'assert(body.clip_used == null || typeof body.clip_used === "boolean",');
+  assertStringIncludes(DRIFT_ROUTE,"const clipUsed = body.clip_used === true;");
+  assertStringIncludes(DRIFT_ROUTE,"const advisory = worker?.advisoryQuality === true || clipUsed;");
+  // Validated with the rest of the body, before the limiter and the paid judge.
+  assert(DRIFT_ROUTE.indexOf("const clipUsed") < DRIFT_ROUTE.indexOf("await guardDriftCheck("));
+  // The refund is fenced on it, and the ledger row says the finding was not enforced and why.
+  assertStringIncludes(DRIFT_ROUTE,'const charge = !advisory && (decision.action === "retry" || decision.action === "refuse")');
+  assertStringIncludes(DRIFT_ROUTE,'...(advisory ? { enforcement: "advisory" } : {}),');
+  assertStringIncludes(DRIFT_ROUTE,"...(clipUsed ? { clip_used: true } : {}),");
+});
+Deno.test("actual drift refund fails closed on unconfirmed SQL acknowledgment without leaking private errors",async()=>{
+  const m=await actualRefundModule();m.state.error={message:"private-database-marker"};
+  const answer=await m.run("retry");
+  assertEquals(answer,{refunded:false,reason:"The clip refund could not be confirmed"});
+  assert(!JSON.stringify(answer).includes("private-database-marker"));
+  m.state.error=null;m.state.data={refunded:"not-confirmed",reason:"private-database-marker"};
+  assertEquals(await m.run("retry"),answer);
 });
 
 Deno.test("wiring: every judge call writes its own ledger row, feature 'qc'", () => {
@@ -699,7 +765,7 @@ Deno.test("wiring: /ai-video/status stays backward compatible", () => {
     INDEX_SRC,
     'return json({ status: "completed", video_url: videoUrl, drift: uncheckedDriftBlock() });',
   );
-  assertStringIncludes(INDEX_SRC, 'status: "completed",\n    video_url: videoUrl,');
+  assertStringIncludes(INDEX_SRC, 'status: "completed", video_url: saved.url,');
   // Both completion paths — the legacy fal one and the routed one — carry it,
   // so a routed job is not silently the unguarded path.
   assertEquals(
@@ -708,7 +774,10 @@ Deno.test("wiring: /ai-video/status stays backward compatible", () => {
     "the legacy fal path and the routed path — a routed job is not the unguarded one",
   );
   // The processing and failed shapes are untouched.
-  assertStringIncludes(INDEX_SRC, 'return json({ status: "failed", error: failMsg });');
+  assertStringIncludes(
+    INDEX_SRC,
+    'return json({ status: "failed", error: terminalFailure?.message ?? "The video service could not complete this generation.",',
+  );
 });
 
 Deno.test("wiring: the grounded aerial no longer builds a rise_reveal prompt", () => {
@@ -743,7 +812,10 @@ Deno.test("wiring: the grounded aerial prompt forbids the surface it used to inv
 });
 
 Deno.test("wiring: the judge's inputs are bounded before they reach a provider", () => {
-  assertStringIncludes(INDEX_SRC, "const MAX_DRIFT_IMAGE_B64_CHARS = 2_000_000;");
+  assertEquals(MAX_DRIFT_FRAME_B64_CHARS, 2_000_000);
+  assertEquals(MAX_DRIFT_SOURCE_B64_CHARS, 12_000_000);
+  assertEquals(MAX_DRIFT_REQUEST_BODY_BYTES, 19_000_000);
+  assertStringIncludes(INDEX_SRC, "const MAX_DRIFT_IMAGE_B64_CHARS = MAX_DRIFT_FRAME_B64_CHARS;");
   assertStringIncludes(INDEX_SRC, "readJsonLimited<DriftBody>(req, MAX_DRIFT_BODY_BYTES)");
   assertStringIncludes(INDEX_SRC, "ALLOWED_IMAGE_MIMES.includes(m)");
 });

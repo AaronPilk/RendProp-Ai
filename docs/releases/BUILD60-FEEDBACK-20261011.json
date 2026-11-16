@@ -1,0 +1,691 @@
+{
+  "schema": 1,
+  "createdAt": "2026-10-11T23:53:08.864660+00:00",
+  "branch": "fix/build58-reel-integration-20261011",
+  "codeAndTestTip": "1a090bb484e839868b8950f2b6d8253052215599",
+  "archive": {
+    "sourceCommit": "17808cc4c14e23a132d028141608325d41f7c7e0",
+    "sourceTrees": {
+      "apps/ios/Rendprop": "8b82122a9d59f5295a0ae99b617cef1445979ad9",
+      "apps/ios/project.yml": "7d2967d79131c7e05e03160050c94473b00a211f",
+      "apps/ios/Rendprop.xcodeproj": "acb010b71f7651407707b1f713d5558e7a8a2afa",
+      "apps/ios/RendpropUITests": "f102f42ec554b31c87e023ca6bbd6823c3966a71"
+    },
+    "version": "1.0.4",
+    "build": "60",
+    "archive": "/Users/pilksclaes/Rendprop AI/_bridge/build60-archive-work/rendprop-archive/Rendprop.xcarchive",
+    "binarySHA256": "f454f3f24962bd0462d2cbf195f844251ff339d38cc4e844a68dc6cce75115eb",
+    "machOUUID": "1B02EF8B-FBE1-30EE-A0C5-61491DF38AED",
+    "dSYMUUID": "1B02EF8B-FBE1-30EE-A0C5-61491DF38AED",
+    "signatureVerified": true,
+    "physicalFixtureMarkersAbsent": [
+      "HomeProjectCreationFixtureHost",
+      "-ui.homeProjectCreationFixture",
+      "prepareBuild60HomeFixtureOwner",
+      "prepareBuild60HomeFixtureLibrary",
+      "b6000000-0000-4000-8000-000000000010",
+      "b6000000-0000-4000-8000-000000000020",
+      "DetailMetadataRegressionHost",
+      "-ui.detailMetadataFixture",
+      "prepareBuild58FixtureOwner",
+      "Synthetic Home creation library"
+    ],
+    "appEncryptedDeclaration": false,
+    "ipa": "/Users/pilksclaes/Rendprop AI/_bridge/build60-archive-work/rendprop-archive/ipa/Rendprop.ipa",
+    "ipaBytes": 24040440,
+    "ipaSHA256": "fcc988ca9f97dcbf283d3c1b58ed7b0fcb725c74e6a2a66a4691e5d75fcc341e",
+    "nativeTreesMatchTip": "adc36190b30cdf67a45b11cefac8c21101222aff",
+    "buildNumberManagement": false,
+    "shippedNativeTreesMatchTip": "1a090bb484e839868b8950f2b6d8253052215599",
+    "testSourceTip": "1a090bb484e839868b8950f2b6d8253052215599",
+    "uiTestCorrection": "1a090bb scrolls the lazy-grid venue card into view before reading its label; shipped app source unchanged."
+  },
+  "deliveryTarget": "internal TestFlight only",
+  "feedback": {
+    "aaronBuild59Submissions": 9,
+    "stephenieBuild56Submissions": 1,
+    "index": "/Users/pilksclaes/Rendprop AI/beta-feedback-20261011/feedback-index.json"
+  },
+  "backend": {
+    "alreadyLive": true,
+    "redeployedHere": false,
+    "migrationRepositoryVersion": "20261011233000",
+    "migrationLiveVersion": "20261011230539",
+    "functions": {
+      "listings": 52,
+      "ai-video": 66
+    },
+    "manifestSourceHashMatches": 53,
+    "receipt": "docs/releases/BUILD59-FEEDBACK-BACKEND-20261011.json"
+  },
+  "gates": {
+    "functions": {
+      "passed": 1907,
+      "failed": 0,
+      "ignored": 1
+    },
+    "standaloneRoutesAndUploads": {
+      "passed": 76,
+      "suites": 6
+    },
+    "databaseRunnerControls": {
+      "passed": 37
+    },
+    "disposablePostgres": {
+      "accepted": true,
+      "invariantsFresh": 270,
+      "invariantsReplayed": 270,
+      "buildControlsFresh": 52,
+      "buildControlsReplayed": 52,
+      "commands": 424,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build60-backend-checks/database-receipt.json"
+    },
+    "reelRecovery": {
+      "passed": true,
+      "actualAssertions": 125,
+      "dispatchAssertions": 14,
+      "compiledNegativeControls": 16,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build60-native-checks/reel-recovery-final/receipt.json"
+    },
+    "actualPhotoRenderer": {
+      "passed": true,
+      "assertions": 148,
+      "negativeControls": 12,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build60-native-checks/photo-export-strengthened/receipt.json"
+    },
+    "actualPackageAssembly": {
+      "passed": true,
+      "assertions": 44,
+      "negativeControls": 4,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build60-package-assembly-checks/receipt.json"
+    },
+    "factsSynchronization": {
+      "passed": true,
+      "assertions": 109,
+      "negativeControls": 9,
+      "sourceBoundAtEnd": true,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build60-native-checks/facts-final/actual/receipt.json",
+      "originalControls": "/Users/pilksclaes/Rendprop AI/_bridge/build60-native-checks/facts-original-controls/summary.json",
+      "soldControls": "/Users/pilksclaes/Rendprop AI/_bridge/build60-native-checks/facts-final/summary.json"
+    },
+    "presentationPrivacy": {
+      "passed": true,
+      "assertions": 36,
+      "negativeControls": 11,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build60-presentation-privacy/receipt.json"
+    },
+    "releaseSimulatorUI": {
+      "accepted": true,
+      "distinctPassingCases": 13,
+      "fullRun": {
+        "passed": 12,
+        "failed": 1,
+        "failedCase": "-[RendpropUITests.DetailMetadataRegressionUITests testVenueKeepsIndustryAreaNounsAndRerenderNavigation]",
+        "xcresult": "/Users/pilksclaes/Rendprop AI/_bridge/build60-ui.xcresult"
+      },
+      "focusedAfterTestScrollCorrection": {
+        "passed": 1,
+        "failed": 0,
+        "xcresult": "/Users/pilksclaes/Rendprop AI/_bridge/build60-ui-venue-fixed.xcresult"
+      },
+      "originalFailurePreserved": true,
+      "productionSourceUnchangedByTestCorrection": true
+    },
+    "shippingBoundaries": {
+      "passed": true,
+      "ordinaryAndLabCompileControls": true,
+      "physicalFixtureMarkersAbsent": 10,
+      "evidenceDirectory": "/tmp/rendprop-app-store-boundaries-MeShOs"
+    }
+  },
+  "ci": {
+    "firstRun": {
+      "runId": 38184964038,
+      "headSha": "17808cc4c14e23a132d028141608325d41f7c7e0",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobsPassed": 9,
+      "jobsFailed": 3,
+      "correctedProblems": [
+        "Closed privacy template package fields",
+        "Four exact manifest checksum secret-scan false positives"
+      ],
+      "unresolvedFinding": "Studio finishing export output timing discrepancy on unchanged source"
+    },
+    "currentRun": {
+      "runId": 38185550169,
+      "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169",
+      "headSha": "1a090bb484e839868b8950f2b6d8253052215599",
+      "status": "completed",
+      "conclusion": "success",
+      "checkedAt": "2026-10-12T13:31:13.361648+00:00",
+      "createdAt": "2026-10-11T23:46:40Z",
+      "updatedAt": "2026-10-12T01:11:28Z",
+      "jobs": [
+        {
+          "name": "Cloudflare Worker (tour-host)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977086",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:53:22Z"
+        },
+        {
+          "name": "Offline audit evidence, consent and adoption source gates",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977205",
+          "activeStep": null,
+          "completedAt": "2026-10-12T01:11:27Z"
+        },
+        {
+          "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977208",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:46:53Z"
+        },
+        {
+          "name": "Offline reel-style preservation and blind-evaluation contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977225",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:47:19Z"
+        },
+        {
+          "name": "Supabase edge functions (deno check + tests)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977226",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:49:20Z"
+        },
+        {
+          "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977227",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:53:14Z"
+        },
+        {
+          "name": "iOS static gates",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977230",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:46:50Z"
+        },
+        {
+          "name": "Secret scan",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977236",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:47:00Z"
+        },
+        {
+          "name": "Studio contracts, build and property workflows (offline)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977238",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:50:03Z"
+        },
+        {
+          "name": "Python workers (render, spatial, training adapter)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977257",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:47:46Z"
+        },
+        {
+          "name": "Supabase migrations (fresh replay + invariants)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977270",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:47:59Z"
+        },
+        {
+          "name": "Web parity inventory and design-token contracts (offline)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977277",
+          "activeStep": null,
+          "completedAt": "2026-10-11T23:46:52Z"
+        }
+      ],
+      "nativeRunnerLabels": [
+        "macos-latest"
+      ],
+      "nativeJobClassification": "Completed success. This macOS job executes production Swift and real UIKit/JPEG/ZIP simulator code, as well as fixture/source controls."
+    },
+    "exportDiscrepancy": {
+      "schema": 1,
+      "createdAt": "2026-10-11T23:51:54.593034+00:00",
+      "mode": "read-only artifact decoding; no rerun or exporter modification",
+      "run": {
+        "id": 38184964038,
+        "jobId": 114605210586,
+        "headSha": "17808cc4c14e23a132d028141608325d41f7c7e0",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38184964038",
+        "outcome": "failure"
+      },
+      "artifact": {
+        "id": 11719173232,
+        "name": "studio-macos-media-export-1",
+        "fixtureReceipt": "/Users/pilksclaes/Rendprop AI/_bridge/build60-ci-finishing-investigation/artifacts/rendprop-finishing-SPFu4K/receipt.json",
+        "decodedOutput": "/Users/pilksclaes/Rendprop AI/_bridge/build60-ci-finishing-investigation/artifacts/rendprop-finishing-SPFu4K/music-captions-mix.mp4",
+        "sha256": "46d9634f76afaa3cc86d5cd6aa2a4aee49dbc176b438bf86b4a3097e2654d8b1",
+        "sourceClip": "/Users/pilksclaes/Rendprop AI/_bridge/build60-ci-finishing-investigation/artifacts/rendprop-finishing-SPFu4K/source.mp4",
+        "log": "/Users/pilksclaes/Rendprop AI/_bridge/build60-ci-tour-host-failed.log"
+      },
+      "sourceBlobs": {
+        "17808cc4c14e23a132d028141608325d41f7c7e0": {
+          "apps/studio/src/editor/export.ts": "f98584d89f6f231958f0e870c98e857ed7a7e2b4",
+          "apps/studio/tests/finishing-browser.mjs": "3b677e6c313c2cf72a4d810acf4b140ab3a5e797"
+        },
+        "d40c7f7": {
+          "apps/studio/src/editor/export.ts": "f98584d89f6f231958f0e870c98e857ed7a7e2b4",
+          "apps/studio/tests/finishing-browser.mjs": "3b677e6c313c2cf72a4d810acf4b140ab3a5e797"
+        },
+        "1a090bb": {
+          "apps/studio/src/editor/export.ts": "f98584d89f6f231958f0e870c98e857ed7a7e2b4",
+          "apps/studio/tests/finishing-browser.mjs": "3b677e6c313c2cf72a4d810acf4b140ab3a5e797"
+        }
+      },
+      "sourceUnchangedFromGreenBuild59": true,
+      "measurements": {
+        "plannedSeconds": 8,
+        "sourceClipVideoAndAudioSeconds": 4,
+        "sourceVideoFrames": 120,
+        "outputVideoSeconds": 8.5398,
+        "outputAudioSeconds": 7.912917,
+        "formatSeconds": 8.5398,
+        "durationExcessSeconds": 0.5398,
+        "existingMaximumDurationDeviationSeconds": 0.5,
+        "videoAudioLengthDifferenceSeconds": 0.626883,
+        "decodedAudioSeconds": 7.914666666666666,
+        "outputFrameCount": 230,
+        "firstRedPTS": 4.522833,
+        "lastBlueBeforeRedPTS": 4.4714,
+        "expectedCutSeconds": 4,
+        "firstRedBoundaryDeviationSeconds": 0.5228330000000003,
+        "maxVideoFrameGapSeconds": 0.09636700000000001,
+        "medianVideoFrameGapSeconds": 0.037799999999999834,
+        "tailVideoPTS": 8.5065
+      },
+      "audioObservations": [
+        {
+          "start": 0.3,
+          "duration": 0.14997916666666666,
+          "rms": 0.12600746432884075,
+          "toneAmplitudes": {
+            "440": 0.005409023572443987,
+            "660": 0.17804895214562477,
+            "880": 5.391194771340146e-05
+          }
+        },
+        {
+          "start": 2,
+          "duration": 0.15,
+          "rms": 0.1246414637973564,
+          "toneAmplitudes": {
+            "440": 0.019427450185010613,
+            "660": 0.17514680230342983,
+            "880": 1.9441252214462025e-05
+          }
+        },
+        {
+          "start": 3.8,
+          "duration": 0.15,
+          "rms": 0.12624528201620758,
+          "toneAmplitudes": {
+            "440": 0.019477229002926918,
+            "660": 0.17742213404798776,
+            "880": 6.280754145548132e-05
+          }
+        },
+        {
+          "start": 4.3,
+          "duration": 0.15,
+          "rms": 0.06252117447403331,
+          "toneAmplitudes": {
+            "440": 0.08841639889603482,
+            "660": 2.0599300586754587e-05,
+            "880": 1.9656640905445914e-06
+          }
+        },
+        {
+          "start": 4.7,
+          "duration": 0.15,
+          "rms": 0.06247212627565836,
+          "toneAmplitudes": {
+            "440": 0.08834889393474187,
+            "660": 8.089305448886516e-06,
+            "880": 1.86621212458046e-06
+          }
+        },
+        {
+          "start": 5.3,
+          "duration": 0.15,
+          "rms": 0.1257300011389643,
+          "toneAmplitudes": {
+            "440": 0.01944190287245975,
+            "660": 5.304245867874844e-06,
+            "880": 0.17674274143175162
+          }
+        },
+        {
+          "start": 6.4,
+          "duration": 0.15,
+          "rms": 0.062485302761117016,
+          "toneAmplitudes": {
+            "440": 0.08836752034735985,
+            "660": 6.6163867263382205e-06,
+            "880": 6.796523829313383e-07
+          }
+        },
+        {
+          "start": 7.2,
+          "duration": 0.15,
+          "rms": 0.04516627173536815,
+          "toneAmplitudes": {
+            "440": 0.06375443785932827,
+            "660": 5.0713758201357323e-05,
+            "880": 2.116638601065254e-05
+          }
+        },
+        {
+          "start": 7.7,
+          "duration": 0.15,
+          "rms": 0.01391079457665873,
+          "toneAmplitudes": {
+            "440": 0.01928173851344723,
+            "660": 4.9264495154122654e-05,
+            "880": 2.1254800038997233e-05
+          }
+        }
+      ],
+      "classification": {
+        "assertion": "finishing-browser.mjs:86, abs(outputDuration-8)<.5",
+        "validRefusal": true,
+        "actualFailure": "Hosted synthetic H.264/AAC download is too long, has a late blue-to-red boundary and video/audio endpoint mismatch. This is a real output timing failure, not a missing binary or a false assertion.",
+        "rootCause": "Not proven. Artifact shows no single >=100ms inter-frame gap, but no recorder/audio/canvas clock trace exists. Scheduler, canvas-capture or MediaRecorder timestamp behavior is plausible; environment underrun cannot be asserted as proven.",
+        "scope": "Pre-existing Studio browser-export instability on unchanged source. No evidence this build60 native code caused it. Successful earlier/later encodes do not repair or erase this failing output."
+      },
+      "recommendation": [
+        "Preserve this failed CI receipt; do not weaken duration, cut-boundary or audio oracles.",
+        "Allow the independently triggered current CI to complete, but report any later success as an unchanged-source pass, not an exporter fix.",
+        "Follow up separately with instrumented recorder/audio/canvas clocks and encoded-output verification; refuse malformed timing before exposing a download or use deterministic timestamps/muxing.",
+        "Internal native TestFlight60 and AppStore57 manual hold remain separate delivery gates."
+      ],
+      "notPerformed": [
+        "No production deployment",
+        "No credential access",
+        "No Studio exporter change",
+        "No retry until green",
+        "No public AppStore change"
+      ]
+    },
+    "previousSnapshot": {
+      "runId": 38185550169,
+      "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169",
+      "headSha": "1a090bb484e839868b8950f2b6d8253052215599",
+      "status": "in_progress",
+      "conclusion": null,
+      "checkedAt": "2026-10-12T00:16:00.012667+00:00",
+      "jobs": [
+        {
+          "name": "Cloudflare Worker (tour-host)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977086",
+          "activeStep": null
+        },
+        {
+          "name": "Offline audit evidence, consent and adoption source gates",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977205",
+          "activeStep": "Paid reel requests survive lost responses and retain downloaded clips"
+        },
+        {
+          "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977208",
+          "activeStep": null
+        },
+        {
+          "name": "Offline reel-style preservation and blind-evaluation contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977225",
+          "activeStep": null
+        },
+        {
+          "name": "Supabase edge functions (deno check + tests)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977226",
+          "activeStep": null
+        },
+        {
+          "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977227",
+          "activeStep": null
+        },
+        {
+          "name": "iOS static gates",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977230",
+          "activeStep": null
+        },
+        {
+          "name": "Secret scan",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977236",
+          "activeStep": null
+        },
+        {
+          "name": "Studio contracts, build and property workflows (offline)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977238",
+          "activeStep": null
+        },
+        {
+          "name": "Python workers (render, spatial, training adapter)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977257",
+          "activeStep": null
+        },
+        {
+          "name": "Supabase migrations (fresh replay + invariants)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977270",
+          "activeStep": null
+        },
+        {
+          "name": "Web parity inventory and design-token contracts (offline)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38185550169/job/114606977277",
+          "activeStep": null
+        }
+      ],
+      "nativeRunnerLabels": [
+        "macos-latest"
+      ],
+      "nativeJobClassification": "A late failure needs evidence-based classification; this macOS job executes production Swift and real UIKit/JPEG/ZIP simulator code as well as fixture/source controls."
+    },
+    "hostedNativeReceiptVerification": {
+      "accepted": true,
+      "jobId": 114606977205,
+      "successfulSteps": 64,
+      "skippedSteps": 0,
+      "evidenceDirectory": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review",
+      "artifactIds": {
+        "native-audit-evidence-1": 11720613662,
+        "listing-package-assembly-1": 11719823665
+      },
+      "counts": {
+        "packageAssembly": {
+          "assertions": 44,
+          "negativeControls": 4
+        },
+        "renderer": {
+          "assertions": 148,
+          "negativeControls": 12
+        },
+        "reelRecovery": {
+          "assertions": 125,
+          "dispatchAssertions": 14,
+          "negativeControls": 16
+        },
+        "facts": {
+          "assertions": 109,
+          "negativeControls": 9,
+          "receipts": 10
+        }
+      },
+      "receipts": [
+        {
+          "kind": "packageAssembly",
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/package-assembly/receipt.json",
+          "sha256": "c95beda881445dc0fcd9fba6253796ff50e59b14dd2be0747e66159cc35f98b3"
+        },
+        {
+          "kind": "renderer",
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/Users/runner/work/_temp/rendprop-photo-export-renderer-05yy699l/receipt.json",
+          "sha256": "5851e9a272d5e303c2a45bd768ce8445aca42e3cb0167cc05360798c16ad0cc2"
+        },
+        {
+          "kind": "reelRecovery",
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/Users/runner/work/_temp/rendprop-reel-request-recovery-1/receipt.json",
+          "sha256": "71cc0bab84e28c8956a4dcc08953b831e1264f1b37a32bb31c4a220bf7788707"
+        }
+      ],
+      "factsReceipts": [
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-0i09jzvn/receipt.json",
+          "sha256": "92ce35bc726a0ecfd04350c11952826169bc8b0fb445832f1df07965488e2b11"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-91pu6gf3/receipt.json",
+          "sha256": "e4798347a0f29fcd3db5ac42473d65f73c4ee641ab57811dbe0fdf1cc4d0ac89"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-b78mf2kt/receipt.json",
+          "sha256": "c4ba09a3671c8efad4c2b3c6e17e027d546e3d12a6b42f70546819944500351f"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-fw9r9dzm/receipt.json",
+          "sha256": "af260491f780a9938e7b85c751616a8fd1419a880bd2655249875fc25ff21bfe"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-kncrm1x7/receipt.json",
+          "sha256": "447daf77dbfbd48778342f9053bed640c7f95cd2bf63b602f0cd9356150b4491"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-m5ntpwa7/receipt.json",
+          "sha256": "6f4c3c57d8eb2e704485668e3cc35836c12c4330511322bccedfd2d9712dfdb9"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-rkosxs7f/receipt.json",
+          "sha256": "7c54b5d26a67eb8ded3f04f846955983dc6677eeee554767c861c5948beb09c1"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-s0c0pa34/receipt.json",
+          "sha256": "1966d176c5600abc13569fa462bdd0955a6d2f28e34113730d96bbac775d658e"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-t24e320n/receipt.json",
+          "sha256": "81b3d3982a8e376401caf52188ac3fb8f8e64a1e10441bbd45fc91fc03fd03a9"
+        },
+        {
+          "file": "/Users/pilksclaes/Rendprop AI/_bridge/build60-hosted-native-final-review/native-audit/tmp/rendprop-listing-facts-sync-z2dx253w/receipt.json",
+          "sha256": "d786bb450371d41c726fefa5ce671fbd3b2f7219eed0f14bdd156a2b7dc7e47a"
+        }
+      ],
+      "sourceBindingVerified": true,
+      "noRerun": true
+    }
+  },
+  "apple": {
+    "uploadExitCode": 0,
+    "uploadId": "4d353aef-a30b-4c73-86d4-b12ac7f6268e",
+    "availabilityConfirmed": true,
+    "processing": {
+      "cfBundleVersion": "60",
+      "createdDate": "2026-10-11T16:40:59-07:00",
+      "state": {
+        "errors": [],
+        "warnings": [],
+        "infos": [],
+        "state": "COMPLETE"
+      },
+      "cfBundleShortVersionString": "1.0.4",
+      "uploadedDate": "2026-10-11T16:51:02-07:00",
+      "platform": "IOS"
+    },
+    "testingNotesFile": "/Users/pilksclaes/Rendprop AI/_bridge/build60-apple/what-to-test.txt",
+    "confirmedAt": "2026-10-11T23:54:33.602177+00:00",
+    "buildId": "4d353aef-a30b-4c73-86d4-b12ac7f6268e",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "usesNonExemptEncryption": false,
+    "internalGroup": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "containsBuild60": true,
+      "readback": "/Users/pilksclaes/Rendprop AI/_bridge/build60-apple/build60-group-readback.json"
+    },
+    "testingNotesMatch": true,
+    "testingNotes": "Build 60 \u2014 latest beta feedback fixes\n\n\u2022 Share everything: open a listing and send its tour, photos, verified retained originals when available, disclosure notes, reels, aerial clips and listing details as one ZIP or separate files.\n\u2022 Get started: with two or more existing homes, choose Start a new home and name the new listing.\n\u2022 Reels: validation or allowance refusals no longer leave Generate stuck. Timeouts and already-started responses retain the saved request to prevent another paid submission.\n\u2022 Sold listings: equivalent timestamp formats no longer keep facts waiting to sync.\n\u2022 Aerial intro now sits beside Re-render fly-through.\n\u2022 Server deletion and reel-accounting fixes are already live.\n\nPlease check deleting/restoring a test listing, opening the full ZIP, creating a new home from Get started, and generating a reel. Republish was confirmed working in build 59 feedback. Measurements and 3D remain Coming soon. This is an internal TestFlight update; the App Store submission stays on build 57 with manual release.\n",
+    "testingNotesReadback": "/Users/pilksclaes/Rendprop AI/_bridge/build60-apple/build60-testing-notes-readback.json",
+    "latestReadback": "/Users/pilksclaes/Rendprop AI/_bridge/build60-apple/build60-final-readback.json"
+  },
+  "preservedAppStoreSubmission": {
+    "version": "1.0.4",
+    "build": "57",
+    "versionId": "39ff74df-71d4-4bf1-92f4-9c709e7f4366",
+    "buildId": "46e2df20-e688-4e14-afa7-88655f28e8ba",
+    "state": "WAITING_FOR_REVIEW",
+    "releaseType": "MANUAL",
+    "unchanged": true,
+    "readback": "/Users/pilksclaes/Rendprop AI/_bridge/build60-apple/build57-after.json",
+    "lastVerifiedAt": "2026-10-12T13:31:13.151625+00:00"
+  },
+  "limitations": [
+    "Closed transports/disposable databases/simulator UI do not certify new provider generations or real-phone acceptance.",
+    "Earlier hosted Studio duration failure remains unresolved even if later CI succeeds.",
+    "No App Store release, withdrawal, resubmission or build association change.",
+    "Originals require verified available history and Include originals enabled. ZIP contains README; Separate files omits it and does not recheck extra-file readability after the sheet opens."
+  ],
+  "updatedAt": "2026-10-12T13:33:32.712259+00:00",
+  "independentReview": {
+    "author": "Claude",
+    "reviewDateUTC": "2026-10-12",
+    "source": "/Users/pilksclaes/.codex/attachments/e4e2a6cb-e549-41a6-a5c9-b5a1692df692/Pasted text.txt",
+    "sha256": "8d09e3a2e25bfe18d74fe94a8090e4aa410af7aee34d3c3dc511e507cc616379",
+    "verdict": "GO for internal TestFlight acceptance, NO-GO for public/manual release until phone acceptance",
+    "reviewedTip": "cab5d479280ccf6c5b753bc1b78338cf62b2d92b",
+    "corrections": [
+      "The remaining hosted native audit runs on macos-latest, not Linux.",
+      "A late source-extracted/runtime harness failure may identify app behavior and cannot automatically be dismissed as a fixture problem."
+    ],
+    "duplicateAttachment": "/Users/pilksclaes/.codex/attachments/a37c1860-1d5b-4ddd-8c19-359a00fc4914/Pasted text.txt"
+  }
+}

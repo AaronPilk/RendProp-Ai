@@ -1,0 +1,615 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-12T20:15:53.392814+00:00",
+  "scope": "iOS 1.0.4 (63) internal TestFlight; full real-phone reel acceptance pending",
+  "status": "TESTFLIGHT63_AVAILABLE_FULL_REEL_FAILED_RECOVERY_FIX_PENDING",
+  "source": {
+    "archiveCommit": "9754785241f03b2a99d9902ebf12c32473d01923",
+    "nativeTrees": {
+      "apps/ios/Rendprop": "4bbe0500d77c9f6560aa01f3f0a4f2f4410737be",
+      "apps/ios/project.yml": "466c66df77d8f9509b625dac79dd13e64b188ba8",
+      "apps/ios/Rendprop.xcodeproj": "9002f1a8aada9acec5e36da66e67c8c8885714eb"
+    },
+    "archiveSourceBindingVerified": true,
+    "wireGateSourceBindingVerified": true,
+    "backendCommit": "12467ff",
+    "previousBuild62Checkpoint": {
+      "archiveCommit": "32a62d440836ed7c04eae7e2415426b414167626",
+      "proofCommit": "f201960f17299b94506adb2745a5820a11fafddf",
+      "sameNativeAppAndProjectTreesAtThatCheckpoint": true
+    },
+    "excludedDebugSimulatorFixtures": {
+      "files": [
+        "apps/ios/Rendprop/Auth/PhaseOneFixtures.swift",
+        "apps/ios/Rendprop/RendpropApp.swift"
+      ],
+      "note": "The identified session fixture and AppRoot entry are DEBUG && simulator only. Build63 contains their source changes; its physical Release binary excludes all 16 fixture markers. Earlier build62 equivalence evidence is historical for those two files; no whole Build 62 to 63 native equivalence is claimed because Build 63 fixes the shipping QC serializer.",
+      "historicalReleaseExclusionEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-release-exclusion/receipt.json",
+        "sha256": "f4ab5a6c84807c78fbda3e4d9d53c0cd7e5a970035a011b73301326822fd23c6"
+      }
+    },
+    "releaseArchiveReadbackEvidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-release-exclusion/receipt.json",
+      "sha256": "aebbc56c89ebc3da4dbf7919e3f6815db6999906135d1a5f234c6b25811378ec",
+      "boundary": "Read-only archive/source binding and16-marker exclusion. This is not a new compiler SIL proof; old62SIL evidence remains historical."
+    }
+  },
+  "change": {
+    "reel": "One explicit property-QC retry uses the same selected JPEG and push_in. A terminal fail/refuse instead renders bounded local motion from that same selected photo, preserving framing/orientation and selected edits. Durable retention precedes accepted-receipt acknowledgement. No local fallback for auth, quota, consent, identity, network, decoder or unavailable-QC failures.",
+    "qualityProvenance": "Reel and single-photo animation forward the accepted job provenance ID to the quality request.",
+    "contact": "Removed the duplicate Listing contact Toolbox tile; the top Who should buyers contact? entry remains.",
+    "originalPhotoMotionLabel": "Completion and reopened reels retain the count of shots made with original photo motion.",
+    "qualityAttemptWire": "aiVideoDrift serializes bounded attempt 0 for a first clip and 1 for its single safer retry. Negative and oversized values clamp to0/3. Legacy request and nil saved-receipt defaults remain 1."
+  },
+  "archive": {
+    "status": "PASS",
+    "version": "1.0.4",
+    "build": "63",
+    "archive": "/Users/pilksclaes/Rendprop AI/_bridge/build63-archive-work/rendprop-archive/Rendprop.xcarchive",
+    "ipa": "/Users/pilksclaes/Rendprop AI/_bridge/build63-archive-work/rendprop-archive/ipa/Rendprop.ipa",
+    "ipaBytes": 24151295,
+    "ipaSHA256": "38c2ce0285a9c94601cfcf4d8debe49d16a4ee2084506085aa8ceef2780192f3",
+    "signatureVerified": true,
+    "exportedAppStoreProfile": true,
+    "exportedDebugEntitlement": false,
+    "archiveAndDsymUUIDMatch": true,
+    "exportedUUIDMatchesArchiveAndDSYM": true,
+    "machOUUID": "3EBBE21E-2A68-360B-91B0-FFFCDC3BED7F",
+    "physicalFixtureMarkersAbsent": 16,
+    "evidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-apple/archive-verified.json",
+      "sha256": "ffb069e619eff1e8d5b60efbbb5cf06833308d9ed4f8508e162874536ea15334"
+    }
+  },
+  "backend": {
+    "status": "DEPLOYED_SOURCE_VERIFIED",
+    "functions": [
+      "ai-video"
+    ],
+    "version": 68,
+    "sourceCommit": "12467ff",
+    "jwtVerified": true,
+    "matchedRuntimeFiles": 46,
+    "indexSHA256": "4e25db082373c2cea09d25d9530363cb956920e0f468abd9a19cd3caffe1b342",
+    "change": "Owned cached terminal QC verdict recovery requires no new generation or judge/refund. Reel burst cap 20 supports up to 16 bounded submissions for 8 photos; generation-token expiry no longer prevents the owned quality-refund path.",
+    "evidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-qc-recovery/deployment-receipt.json",
+      "sha256": "cb4fda960c6d000e943d82279cd61fe6eccf609ca4bcd5e96f8284f37d32e27e"
+    },
+    "checks": {
+      "status": "PASS",
+      "cachedVerdictAssertions": 51,
+      "expiryAssertions": 70,
+      "compiledNegativeControls": 17,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-qc-recovery/receipt.json",
+        "sha256": "134814a8b787dd67674ba2358c405878287d185a236787fa462139f0b9b3f7f4"
+      }
+    }
+  },
+  "automatedChecks": {
+    "originalPhotoMotion": {
+      "status": "PASS_AT_BUILD62_CHECKPOINT",
+      "assertions": 51,
+      "compiledNegativeControls": 2,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build62-original-photo-motion-orientation/receipt.json",
+        "sha256": "73674bd1aac1141da5958eda82c27c405b5295fa899b233ec788700c5971a78d"
+      },
+      "sourceBindingBoundary": "Historical build62 receipt; not relabeled as current full-source hashes after the shipping LiveAPI serializer change."
+    },
+    "reelBatch": {
+      "status": "PASS_AT_BUILD62_CHECKPOINT",
+      "assertions": 124,
+      "compiledNegativeControls": 2,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build62-reel-batch/receipt.json",
+        "sha256": "ed5d1b12f7e012838146c78285c7d1a9d2048400621c5e93e7879ee5f0d26a9c"
+      },
+      "sourceBindingBoundary": "Historical build62 receipt; not relabeled as current full-source hashes after the shipping LiveAPI serializer change."
+    },
+    "acceptedRequestRecovery": {
+      "status": "PASS",
+      "assertions": 220,
+      "additionalLabDispatchAssertions": 14,
+      "compiledNegativeControls": 40,
+      "currentSourceHashesMatch": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-original-motion-recovery/receipt.json",
+        "sha256": "f5804981ff8ea7bfa520537e500b00b964e28f2485ef063993674ecde9caa6c2"
+      },
+      "boundary": "Fresh current-source host-only actual-body recovery proof,42compile/run variants. API/media boundaries are closed; no provider quality or full-phone acceptance guarantee."
+    },
+    "movingPhotoIdentityAndProvenance": {
+      "status": "PASS_AT_BUILD62_CHECKPOINT",
+      "assertions": 22,
+      "compiledNegativeControls": 7,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build62-moving-photo-provenance/receipt.json",
+        "sha256": "b16e858fa5fddeca4746f942012ff4978d2fbc4c53f74f936868f2a97f558496"
+      },
+      "sourceBindingBoundary": "Historical build62 receipt; not relabeled as current full-source hashes after the shipping LiveAPI serializer change."
+    },
+    "reelLifecycle": {
+      "status": "PASS_AT_BUILD62_CHECKPOINT",
+      "assertions": 34,
+      "compiledNegativeControls": 6,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build62-reel-lifecycle/receipt.json",
+        "sha256": "eebe63bb62dfc77e316b51055c6af42a90ee47cc77c1f1a39dbc4580113bea9b"
+      },
+      "sourceBindingBoundary": "Historical build62 receipt; not relabeled as current full-source hashes after the shipping LiveAPI serializer change."
+    },
+    "listingPackageAssembly": {
+      "status": "PASS_AT_BUILD62_CHECKPOINT",
+      "assertions": 44,
+      "compiledNegativeControls": 4,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build62-listing-package-assembly/receipt.json",
+        "sha256": "8323d9b926ed4637ed1da87c58c1906fe2b7b09fc16a8832470c9027091a0d01"
+      },
+      "sourceBindingBoundary": "Historical build62 receipt; not relabeled as current full-source hashes after the shipping LiveAPI serializer change."
+    },
+    "leadPrivacy": {
+      "status": "PASS_AT_BUILD62_CHECKPOINT",
+      "assertions": 19,
+      "compiledNegativeControls": 4,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build62-native-lead-privacy/receipt.json",
+        "sha256": "0fcbeea0be00a1a6e8fee50983da1e5b0dcbb3ef3d9f56fa7dea5a956bc66df5"
+      },
+      "sourceBindingBoundary": "Historical build62 receipt; not relabeled as current full-source hashes after the shipping LiveAPI serializer change."
+    },
+    "singleListingContactEntry": {
+      "status": "PASS_AT_BUILD62_CHECKPOINT",
+      "assertions": 4,
+      "compiledNegativeControls": 0,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build62-contact-entry/receipt.json",
+        "sha256": "8c7a06e92667d97e7c29314d938a70b2efba0211ea90d531d406d2dafab134f4"
+      },
+      "boundary": "Source assertions only; its actual navigation is included in the passing DetailMetadata UI cases.",
+      "sourceBindingBoundary": "Historical build62 receipt; not relabeled as current full-source hashes after the shipping LiveAPI serializer change."
+    },
+    "videoDriftActualWire": {
+      "status": "PASS",
+      "assertions": 107,
+      "compiledNegativeControls": 4,
+      "currentSourceHashesMatch": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-drift-wire/receipt.json",
+        "sha256": "eb679aef4ee1cae7389caa34ee6194cf3fdad0b33c8d28b234f8a58259e58649"
+      },
+      "boundary": "Actual client request, serializer, executor, digest and decoder through Foundation URLSession/URLProtocol. Account/token and server replies are closed fixtures; no provider or full-phone quality guarantee."
+    }
+  },
+  "releaseUi": {
+    "status": "11_RELEASE_DETAIL_PASS_2_DEBUG_SESSION_PASS_2_DEBUG_SESSION_FAIL",
+    "correctedSessionRun": {
+      "status": "PARTIAL_PASS_2_OF_4",
+      "configuration": "Debug, locally ad hoc signed simulator",
+      "passed": 2,
+      "failed": 2,
+      "tests": [
+        {
+          "name": "testAerialRecoversWithoutSecondTap",
+          "status": "PASS",
+          "seconds": 18.178
+        },
+        {
+          "name": "testReelRecoversWithoutSecondTap",
+          "status": "PASS",
+          "seconds": 28.793
+        },
+        {
+          "name": "testPhotoRecoversWithoutSecondTap",
+          "status": "FAIL",
+          "seconds": 20.455,
+          "failure": "No connection retry UI",
+          "firstCapturedUi": "AX shows Photo versions sheet open, Enhanced selected and Earlier edits unverified; expected connection UI was absent. Cause not proven by this snapshot."
+        },
+        {
+          "name": "testPublishRecoversWithoutSecondTap",
+          "status": "FAIL",
+          "seconds": 95.22,
+          "failure": "Expected /functions/v1/renders/publish-app count 1, actual nil after recovery wait",
+          "boundary": "Connection notice and retry button appeared; no successful publish dispatch was counted. Fixture lacks successful upload/storage routes; contribution not proven by this log alone."
+        }
+      ],
+      "evidence": [
+        {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-identified-signed-first.log",
+          "sha256": "8398c8194197865a2758dd884d00b8e896b7c26fda2baa4b962919b5ae838b86"
+        },
+        {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-identified-signed-rest.log",
+          "sha256": "7cff9122c43a79b1d0914471504a6abddbcdb6bfb49e2ed384822eb9ba0a9773"
+        }
+      ],
+      "resultBundles": [
+        "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-identified-signed-first.xcresult",
+        "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-identified-signed-rest.xcresult"
+      ],
+      "furtherRuns": "Stopped at user request while physical phone QA continues. No fixture or production-auth mutation follows these results."
+    },
+    "attempts": [
+      {
+        "name": "initial Release detail/session",
+        "status": "11_DETAIL_PASS_4_SETUP_FAIL",
+        "reason": "Fixture HTTP server was not started; product session assertions did not execute.",
+        "log": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/detail-session.log"
+      },
+      {
+        "name": "Release with fixture server",
+        "status": "INTERRUPTED_WRONG_CONFIGURATION",
+        "reason": "Session fixture hooks are Debug-only; Release cannot enter them. No app repair is inferred.",
+        "log": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-fixture-corrected.log"
+      },
+      {
+        "name": "Debug old fixture",
+        "status": "FAILED_OBSOLETE_GUEST_FIXTURE",
+        "reason": "Expected signup/retry from a signed-out account, which mandatory identified account admission intentionally no longer supports. AX stayed on the feature screen and no connection notice appeared. This is an unsupported old fixture flow, not an environment outage.",
+        "log": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-debug-fixture.log",
+        "resultBundle": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-debug-fixture.xcresult"
+      },
+      {
+        "name": "Debug modern identified fixture, unsigned simulator app",
+        "status": "FAILED_FIXTURE_KEYCHAIN_MISSING_ENTITLEMENT",
+        "reason": "Loopback identity exchange succeeded; real AuthStore failed closed on Keychain -34018. No feature recovery assertion ran. Runner previously forced CODE_SIGNING_ALLOWED=NO. Test runner now enables local ad hoc signing.",
+        "log": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-identified-fixture.log",
+        "resultBundle": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-identified-fixture.xcresult",
+        "diagnosisEvidence": {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/session-fixture-modernization/identified-keychain-diagnosis.json",
+          "sha256": "0c114cea9707c21c4e58c2f5997bab517a8c9df2ff6274b0771b7a8e06e3f55e"
+        }
+      },
+      {
+        "name": "Signed Debug identified-session fixtures",
+        "status": "2_PASS_2_FAIL",
+        "passed": 2,
+        "failed": 2,
+        "evidence": [
+          {
+            "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-identified-signed-first.log",
+            "sha256": "8398c8194197865a2758dd884d00b8e896b7c26fda2baa4b962919b5ae838b86"
+          },
+          {
+            "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/network-identified-signed-rest.log",
+            "sha256": "7cff9122c43a79b1d0914471504a6abddbcdb6bfb49e2ed384822eb9ba0a9773"
+          }
+        ],
+        "reason": "Exact Aerial/Reel passes and Photo/Publish failures preserved in correctedSessionRun. No full-suite pass inferred."
+      }
+    ],
+    "scopeBoundary": "15 distinct affected cases: 11 Release DetailMetadata cases passed; four separate Debug identified session cases contain two passes and two unresolved failures. Mixed configurations are not one all-green Release suite.",
+    "initialReleaseRun": {
+      "configuration": "Release",
+      "selectedTests": 15,
+      "passed": 11,
+      "failed": 4,
+      "passedSuite": "DetailMetadataRegressionUITests",
+      "failedSuite": "SessionNetworkFlow",
+      "failureBoundary": "All four failed at setUp because the fixture HTTP service 127.0.0.1:18765 refused /__control/reset. Product recovery assertions did not execute. Preserve the failed result and run those four with the fixture service active.",
+      "resultBundle": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/detail-session.xcresult",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ui/detail-session.log",
+        "sha256": "a1f9c47c698bdc95c70f2af5d1c4abad0376b487619b2b36bba44a29ad0de9e2"
+      }
+    },
+    "configuration": "Release DetailMetadata + Debug SessionNetworkFlow, separate runs",
+    "distinctAffectedCases": 15,
+    "passed": 13,
+    "failed": 2,
+    "failureBoundary": "Modern signed Debug Photo had no connection retry UI; Publish counted no publish request after 95.220 seconds. Eleven Release Detail cases and the two other Debug network cases passed. Original setup/configuration failures remain recorded separately.",
+    "boundaryToBuild63": "Observed tests ran on build62 source. No new simulator UI run occurred for63; preserve11Release DetailMetadata passes and2/4 signed Debug SessionNetworkFlow passes."
+  },
+  "ci": {
+    "runId": 38287758937,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38287758937",
+    "headSha": "0c9a941fc81df5d773516fa47c2683a1f4f904cc",
+    "observedAt": "2026-10-12T18:52:55.598606+00:00",
+    "status": "completed",
+    "conclusion": "failure",
+    "passedJobs": 11,
+    "failedJobs": 1,
+    "totalJobs": 12,
+    "complete": true,
+    "evidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ci-38287758937/latest-summary.json",
+      "sha256": "e6e17aba92cd8e5879becfa38912f0335c2884ae2350e62d8394ee6ef7ec77c6"
+    },
+    "failedJobNames": [
+      "Cloudflare Worker (tour-host)"
+    ],
+    "classification": {
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ci-38287758937/tour-host-classification.json",
+        "sha256": "5bc8bdfb39ec23b1b1fdb519158d37f8ff0104a20b3c708387e6e338b99b3d82"
+      },
+      "summary": "Hosted exporter baseline negative control was refused by the shipping audio-loss detector. Fixed variant was not reached; missing loss readings prevent independently separating environment underrun from false positive. Original failure remains; no oracle weakening or green retry is claimed."
+    },
+    "currentBranchCI": {
+      "runId": 38297646472,
+      "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38297646472",
+      "headSha": "4ae7b958ac9ed6de54e6aced51aa4ec8c3fd3817",
+      "status": "in_progress",
+      "conclusion": "",
+      "dispatchAttempts": 1,
+      "nativeAndProjectTreesMatchArchive63": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-ci-wiring/ci-status-20261012T202927Z.json",
+        "sha256": "d0f0cc6d289abfbae41f978be32cf1088605f839838b7d082bb8f8f61192c232"
+      },
+      "boundary": "New source run after actual test dependency and CI wiring changes. Original 11-pass/one-failure result is retained; no current all-green approval is claimed.",
+      "observedAt": "2026-10-12T20:29:27.747299+00:00",
+      "passedJobs": 10,
+      "failedJobs": 1,
+      "totalJobs": 12,
+      "failure": "Supabase Typecheck every function: ai-video/index.ts1629 TS2345, bad_request is not an ErrorCode. Narrow correction assigned to backend owner. No rerun performed.",
+      "failureEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-ci-wiring/deno-typecheck-failed.log",
+        "sha256": "99f19bdef02361487f46191135a7de0c3cc8f7ad5d7cbfe474d04c06d937ff2a"
+      },
+      "latestSnapshotEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-ci-wiring/ci-status-20261012T200906Z.json",
+        "sha256": "ed67a2472870c73e71dcdff3cf95441cb586d04ca65ca7ad7de6316fd5acabe4"
+      },
+      "runningJobs": 1,
+      "complete": false,
+      "failed": [
+        {
+          "name": "Supabase edge functions (deno check + tests)",
+          "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38297646472/job/114972510776"
+        }
+      ],
+      "active": [
+        {
+          "name": "Offline audit evidence, consent and adoption source gates",
+          "steps": [
+            "Floor measurements preserve dimensions, layout and wire data"
+          ]
+        }
+      ]
+    }
+  },
+  "physicalPhone": {
+    "device": "iPhone 15 Pro",
+    "observedBuild": "61",
+    "reel": {
+      "status": "PARTIAL_PASS_FULL_BATCH_FAILED",
+      "selectedPhotos": 8,
+      "fullEightPhotoReelPassed": false,
+      "partialOneClipPlaybackAndPhotosSavePassed": true,
+      "savedClip": "H.264, 1080x1920, 30 FPS, five seconds, 9.7 MB; opened in iOS Photos and observed playback.",
+      "failure": "Second source received terminal property QC refusal for changed finishes/invented objects; full batch stopped. No second provider attempt for that rejected source is inferred.",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-live-acceptance/phone-real-reel.json",
+        "sha256": "29949a632d5445b9a0936802a18e33251741dc925987e1afc6b1565427464513"
+      }
+    },
+    "customPhotoEdit": {
+      "status": "CLARIFICATION_AND_GENERATED_PREVIEW_PASS",
+      "observationSource": "Root agent live iPhone Mirroring observation, reported during this run",
+      "input": "Make this room look better",
+      "clarification": "Remove clutter",
+      "generatedPreviewObserved": true,
+      "originalsDeclutteredStagedLibrariesAccessible": true,
+      "exportModalMlsAndAspectOptionsObserved": true,
+      "savedExportPassed": true,
+      "limitation": "Nine individual files saved and inspected. The current unreviewed custom version was withheld as disclosed. This does not certify a full listing ZIP or byte-for-byte comparison with every source file on the phone.",
+      "saveToFiles": {
+        "status": "PASS",
+        "observedAt": "2026-10-12T17:58:12.494553+00:00",
+        "items": 9,
+        "separateVersions": [
+          "retained original",
+          "enhanced",
+          "decluttered",
+          "virtually staged rustic"
+        ],
+        "disclosuresPresent": true,
+        "unreviewedCustomVersionWithheldAndCountDisclosed": true,
+        "directory": "/Users/pilksclaes/Library/Mobile Documents/com~apple~CloudDocs/Rendprop QA 2026-10-12",
+        "fileMetadataAndHashesRecorded": true,
+        "fullListingZIPVerified": false,
+        "evidence": {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-live-acceptance/photo-export-files.json",
+          "sha256": "630924739ad1e24ada552f797c1b4ae98e41ae8b0253cb15222a8d9183700549"
+        }
+      }
+    },
+    "build62FullReelPlaybackAndExport": {
+      "status": "UNVERIFIED",
+      "requiredSequence": "Eight selected real photos -> QC -> any original-photo-motion fallback -> stitch -> playback -> save/export -> reopen output.",
+      "boundary": "Historical phone62 run; remains unverified as a full batch."
+    },
+    "build62Startup": {
+      "status": "OBSERVED_PASS",
+      "observationSource": "Root live physical iPhone observation, reported during this run",
+      "installedBuild": "62",
+      "retainedListingPhotoCountObserved": 13,
+      "sold855ListingObserved": true,
+      "boundary": "Startup and existing content observation only. Full recovery/reel playback/export not certified."
+    },
+    "build63FullReelPlaybackAndExport": {
+      "status": "FAILED_AT_FIRST_PHOTO_RECOVERED_QC_RETRY_PENDING",
+      "startedAtUTC": "2026-10-12T19:30:00Z",
+      "build": "63",
+      "style": "Fly-through",
+      "selectedRealPhotos": 8,
+      "lastRootObservation": "Photo 1 timed out after five minutes; recovery returned saved QC fail/retry and retained one pending receipt. No subsequent photos submitted.",
+      "fullBatchStitchPlaybackExportPassed": false,
+      "timeoutApproximateUTC": "2026-10-12T19:36:00Z",
+      "recoveryTappedApproximateUTC": "2026-10-12T19:37:00Z",
+      "qcCompletedAtUTC": "2026-10-12T19:42:17Z",
+      "reportedSubmissionToQcSeconds": 668,
+      "qualityVerdict": "fail",
+      "qualityAction": "retry",
+      "qualityAttempt": 0,
+      "qualityReasons": "Minor wall panel/clock warping",
+      "normalSourceProvenanceValidReported": true,
+      "allowanceRefundReported": true,
+      "recoveryWasReadOnlyNoGenerationPOST": true,
+      "pendingReceiptsRetained": 1,
+      "uiCopyIssue": "Couldn\u2019t recover clip / we\u2019re generating again despite read-only recovery",
+      "subsequentSelectedPhotosSubmitted": 0,
+      "requiredSequence": "Eight selected real photos -> QC -> any original-photo-motion fallback -> stitch -> playback -> save/export -> reopen output.",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-ci-wiring/phone-status-20261012T195158Z.json",
+        "sha256": "9f262f19b7fcd84b70c67bf5ffbc32a6b7c6f5f1f4a91413dbeafaae14c789fb"
+      }
+    },
+    "build62OwnedRequestRecovery": {
+      "status": "RECOVERY_OBSERVED_NO_ADDITIONAL_PROVIDER_OR_QC_COST",
+      "observationSource": "Root physical phone recovery; independently bound DB comparison from backend agent",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-qc-recovery/phone-recovery-live-comparison.json",
+        "sha256": "01bede86e7b5e72bb7310a3cad3b2be4cbfa45bf09d3e254a0d2074c094bcf6f"
+      },
+      "boundary": "Owned legacy cached verdict recovery succeeded and existing generation/QC rows stayed unchanged. This is not a fresh full eight-photo acceptance or a retrospective provenance repair.",
+      "outputSavedToPhotos": {
+        "status": "OBSERVED_PASS",
+        "approximateObservedAtUTC": "2026-10-12T19:21:00Z",
+        "build": "62",
+        "scope": "Output retained after recovery of the old expired owned request",
+        "boundary": "Photos save reported by root. This is not the fresh complete8-photo acceptance and no additional duration or frame-quality measurement is inferred.",
+        "recoveryEvidence": {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-qc-recovery/phone-recovery-live-comparison.json",
+          "sha256": "01bede86e7b5e72bb7310a3cad3b2be4cbfa45bf09d3e254a0d2074c094bcf6f"
+        }
+      }
+    },
+    "build63Installed": {
+      "status": "READBACK_PASS",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-apple/installed-app-safe.json",
+        "sha256": "f39fad6f329bb463c54c22e80e59fef94e7a9198d89b1c4219775c27fbc38be6"
+      }
+    },
+    "fullListingZIP": {
+      "status": "ORIGINALS_ONLY_FULL_ZIP_PASS_UNREVIEWED_CUSTOM_ATTEMPT_BLOCKED",
+      "selectedPhotos": 13,
+      "extraFiles": 4,
+      "format": "MLS",
+      "aspect": "original",
+      "retainedAllVersions": true,
+      "authority": "Root physical phone Save to Files observation and downloaded archive CRC/metadata/hash inspection",
+      "firstAttempt": {
+        "result": "BLOCKED",
+        "observedMessageFragment": "Compare this edit with source\u2026",
+        "classification": "Expected unreviewed custom-version gate, not a packaging failure",
+        "selectedPhotos": 13,
+        "extraFiles": 4,
+        "format": "MLS",
+        "aspect": "original",
+        "retainedAllVersions": true
+      },
+      "saveAndZIPInspectionPassed": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-ci-wiring/phone-status-20261012T200404Z.json",
+        "sha256": "a3aecc4b4730234054876baf129fb54ae09b7414a23d91265ce5cd8841e33870"
+      },
+      "scope": "Build63 legacy flat listing ZIP of original versions; new Build64 organized coordinator folders are not yet phone-verified",
+      "successfulOriginalsAttempt": {
+        "status": "PASS",
+        "observedSaveUTC": "2026-10-12T20:07:00Z",
+        "zipBytes": 170379140,
+        "crcError": null,
+        "photoCount": 13,
+        "videoCount": 3,
+        "noteCount": 2,
+        "allPhotoStoredDimensions": [
+          4032,
+          3024
+        ],
+        "allOriginals12MP": true,
+        "firstRetainedOriginalByteExactToPriorExport": true,
+        "unreviewedCustomIncluded": false,
+        "evidence": {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-phone-acceptance/originals-listing-zip.json",
+          "sha256": "a1f9afa9c84463e857615d9b601c4ff1941549a0ecce07ff80187af69cb4c96c"
+        }
+      }
+    }
+  },
+  "limitations": [
+    "Fresh eight-photo Build 63 run failed at the first photo: five-minute timeout then saved fail/retry verdict after 11m08s. Subsequent photos were not submitted; native recovery/continuation fix is in progress for Build 64. Closed checks do not prove full phone completion.",
+    "Normal unsponsored purchase/trial/restore and real authentication/account-switch acceptance remain unverified in this live run; sponsored owner QA is not evidence of normal customer budget admission.",
+    "Individual photo export and the original-only legacy whole-listing ZIP passed. New organized coordinator folders, buyer enquiry delivery and aerial generation remain unverified.",
+    "Local source-photo motion is a bounded 2D camera effect from the selected photo, not a reconstructed 3D room or an invented connecting room.",
+    "No indefinite execution after OS suspension/termination or guaranteed APNs delivery is claimed.",
+    "Successful sponsored hold rows observed earlier had no ledger_id while the provider charges were recorded; this snapshot does not certify later accounting repair.",
+    "Prior CI completed 11 passes / one failure; current all-green approval remains unverified. Modern identified-session UI has exactly two passes and two unresolved failures. Initial renderer/control, signing/configuration and obsolete guest-fixture failures remain preserved; later success must not erase them."
+  ],
+  "apple": {
+    "submissionOrReleaseByThisDocument": false,
+    "releasePolicy": "MANUAL",
+    "johnAppleModified": false,
+    "testflight": {
+      "build": "63",
+      "version": "1.0.4",
+      "buildID": "ab827125-2129-4b87-a9ea-ce8804535f34",
+      "processingState": "VALID",
+      "internalBuildState": "IN_BETA_TESTING",
+      "groupName": "Rendprop team",
+      "membershipVerified": true,
+      "testingNotesVerified": true,
+      "checkedUTC": "2026-10-12T19:03:43.993613+00:00",
+      "singleUploadAttempt": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-apple/testflight-availability.json",
+        "sha256": "39681278664d68380acb7f7bd8a9fc3617d29e7e695e6c5cd96a80ad7e27a739"
+      },
+      "uploadEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build63-apple/upload-once.json",
+        "sha256": "8070d843cd533bf4e552149b9e15139bd98e72069eca4fddc5b88f8b7a2e3ffa"
+      }
+    },
+    "storeSnapshot": {
+      "build": "57",
+      "state": "WAITING_FOR_REVIEW",
+      "releaseType": "MANUAL",
+      "checkedUTC": "2026-10-12T19:03:43.993613+00:00",
+      "modifiedByThisLane": false
+    }
+  },
+  "allAppFeaturesCertified": false,
+  "ciHistory": [
+    {
+      "runId": 38286283841,
+      "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38286283841",
+      "headSha": "f201960f17299b94506adb2745a5820a11fafddf",
+      "observedAt": "2026-10-12T17:51:00.261786+00:00",
+      "status": "in_progress",
+      "passedJobs": 9,
+      "totalJobs": 12,
+      "failedJobs": 1,
+      "complete": false,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-ci-38286283841/status-20261012T174902Z.json",
+        "sha256": "01769b82b2a19b40b24da6f0b0dfe3336cdeccff6b97fe733873b6b29aa1051d"
+      }
+    }
+  ],
+  "previousArchive62": {
+    "status": "PASS",
+    "version": "1.0.4",
+    "build": "62",
+    "archive": "/Users/pilksclaes/Rendprop AI/_bridge/build62-archive-work/rendprop-archive/Rendprop.xcarchive",
+    "ipa": "/Users/pilksclaes/Rendprop AI/_bridge/build62-archive-work/rendprop-archive/ipa/Rendprop.ipa",
+    "ipaBytes": 24151076,
+    "ipaSHA256": "86273f66f70e8bcca19cadbf31f0b831f3b16f6b79feadfd9e92960136a2692c",
+    "signatureVerified": true,
+    "exportedAppStoreProfile": true,
+    "exportedDebugEntitlement": false,
+    "archiveAndDsymUUIDMatch": true,
+    "exportedUUIDMatchesArchiveAndDSYM": true,
+    "physicalFixtureMarkersAbsent": 12,
+    "uploadStartedAtArchiveReceipt": false,
+    "evidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build62-apple/archive-verified.json",
+      "sha256": "e142f621f5247036d284bd6011a44c930c2ae1a27afd68ca818a95da4011cdf0"
+    }
+  }
+}

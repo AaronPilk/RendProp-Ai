@@ -1,6 +1,6 @@
 import XCTest
 
-/// Real screens + real loopback HTTP; the server cuts only signup connections.
+/// Real screens + real loopback HTTP; the server cuts identified-token refresh.
 /// Run only on a disposable simulator, never a device containing customer data.
 final class SessionNetworkFlow: XCTestCase {
     private let base = URL(string: "http://127.0.0.1:18765")!
@@ -26,15 +26,17 @@ final class SessionNetworkFlow: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
     override func tearDownWithError() throws { app?.terminate(); app = nil }
 
-    private func launch(_ surface: String) throws {
+    private func launch(_ surface: String, reviewAccount: Bool = false) throws {
         XCTAssertEqual(try control("reset")["ok"] as? Bool, true)
         app = XCUIApplication()
         app.launchArguments = ["-uiTesting", "-sessionNetworkTesting", "-hasOnboarded", "YES"]
+        if reviewAccount { app.launchArguments.append("-ui.reviewAccountFixture") }
         app.launchEnvironment["RENDP_TEST_URL"] = base.absoluteString
         app.launchEnvironment["RENDP_TEST_RUN"] = UUID().uuidString
         app.launchEnvironment["RENDP_TEST_SURFACE"] = surface
         app.launch()
-        XCTAssertFalse(app.staticTexts["phase1.fixture.error"].exists)
+        let fixtureError = app.staticTexts["phase1.fixture.error"].firstMatch
+        XCTAssertFalse(fixtureError.exists, "Fixture setup failed: \(fixtureError.label)\n\(app.debugDescription)")
     }
 
     private func tap(_ id: String, maxSwipes: Int = 12) throws {
@@ -56,8 +58,10 @@ final class SessionNetworkFlow: XCTestCase {
         let before = try control("state")
         XCTAssertEqual(before["blocked"] as? Bool, true)
         XCTAssertEqual(before["accepted"] as? Int, 0)
+        XCTAssertEqual(before["identifiedExchanges"] as? Int, 1)
         let beforeRequests = before["requests"] as? [String:Int] ?? [:]
-        XCTAssertGreaterThan(beforeRequests["/auth/v1/signup"] ?? 0, 0)
+        XCTAssertGreaterThan(beforeRequests["/auth/v1/token?grant_type=refresh_token"] ?? 0, 0)
+        XCTAssertEqual(beforeRequests["/auth/v1/signup"] ?? 0, 0, "An identified feature must not create a guest")
         XCTAssertEqual(beforeRequests[route] ?? 0, 0, "Feature ran before a session")
         XCTAssertEqual(try control("unblock")["ok"] as? Bool, true)
         // No tap after network recovery. Poll the local server, not the button.
@@ -69,7 +73,9 @@ final class SessionNetworkFlow: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         } while Date() < deadline
         XCTAssertEqual((state["requests"] as? [String:Int])?[route], expectedCalls, "Original action did not resume exactly once")
-        XCTAssertEqual(state["accepted"] as? Int, 1, "More than one anonymous session minted")
+        XCTAssertEqual(state["accepted"] as? Int, 1, "Identified refresh must be single-flight")
+        XCTAssertEqual(state["identifiedExchanges"] as? Int, 1, "Feature recovery must not repeat sign-in")
+        XCTAssertEqual((state["requests"] as? [String:Int])?["/auth/v1/signup"] ?? 0, 0)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Sign in with Apple")).firstMatch.exists)
     }
 
@@ -89,11 +95,14 @@ final class SessionNetworkFlow: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "2 photos changed")).firstMatch.waitForExistence(timeout: 15))
     }
 
-    func testAerialRecoversWithoutSecondTap() throws {
+    func testAerialComingSoonCannotSubmitOrRequestSessionRecovery() throws {
         try launch("aerial")
-        try tap("phase1.aerialGenerate")
-        try recoverAndAssert("/functions/v1/ai-video/aerial")
-        XCTAssertTrue(app.staticTexts["Aerial ready"].waitForExistence(timeout: 45))
+        XCTAssertTrue(app.staticTexts["aerial.comingSoon"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["phase1.aerialGenerate"].exists)
+        XCTAssertFalse(app.otherElements["session.connection.notice"].exists)
+        let requests = try control("state")["requests"] as? [String:Int] ?? [:]
+        XCTAssertEqual(requests["/functions/v1/ai-video/aerial"] ?? 0, 0)
+        XCTAssertEqual(requests["/auth/v1/signup"] ?? 0, 0)
     }
 
     func testReelRecoversWithoutSecondTap() throws {
@@ -103,5 +112,51 @@ final class SessionNetworkFlow: XCTestCase {
         try tap("phase1.reelGenerate")
         try recoverAndAssert("/functions/v1/ai-video/reel-clip", expectedCalls: 2)
         XCTAssertTrue(app.staticTexts["Your reel is ready"].waitForExistence(timeout: 60))
+    }
+
+    func testReviewAccountWrongPasswordSignOutAndSwitch() throws {
+        try launch("review", reviewAccount: true)
+        XCTAssertTrue(app.buttons["account.emailSignInOption"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["account.signInApple"].exists)
+
+        func enter(_ email: String, _ password: String) throws {
+            try tap("account.emailSignInOption")
+            let emailField = app.textFields["account.emailAddress"]
+            let passwordField = app.secureTextFields["account.emailPassword"]
+            XCTAssertTrue(emailField.waitForExistence(timeout: 5))
+            let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"),
+                                                      object: emailField)
+            XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed)
+            emailField.tap(); emailField.typeText(email)
+            passwordField.tap(); passwordField.typeText(password)
+            try tap("account.emailSubmit")
+        }
+
+        try enter("review-a@example.invalid", "incorrect")
+        XCTAssertTrue(app.staticTexts["account.emailError"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["account.emailSubmit"].exists)
+        XCTAssertFalse(app.staticTexts["reviewFixture.owner"].exists)
+        // iOS can offer to save a typed password when this sheet closes. A
+        // relaunch clears that system prompt while keeping this test run's
+        // isolated Auth state, and also verifies rejection did not persist it.
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["account.emailSignInOption"].waitForExistence(timeout: 10))
+
+        try enter("review-a@example.invalid", "fixture-a-only")
+        XCTAssertTrue(app.staticTexts["reviewFixture.owner"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["reviewFixture.owner"].label,
+                       "10000000-0000-4000-8000-000000000003")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["reviewFixture.owner"].waitForExistence(timeout: 10),
+                      "Accepted credentials must restore through the Keychain")
+        try tap("reviewFixture.signOut")
+        XCTAssertTrue(app.buttons["account.emailSignInOption"].waitForExistence(timeout: 10))
+
+        try enter("review-b@example.invalid", "fixture-b-only")
+        XCTAssertTrue(app.staticTexts["reviewFixture.owner"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["reviewFixture.owner"].label,
+                       "10000000-0000-4000-8000-000000000006")
+        let requests = try control("state")["requests"] as? [String: Int] ?? [:]
+        XCTAssertEqual(requests["/auth/v1/token?grant_type=password"], 3)
     }
 }

@@ -4,6 +4,7 @@ All cluster files/logs stay under this checkout's ignored build/ directory.
 """
 import hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
+from fresh_schema_migrations import partition_fresh_migrations
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 SQL = ROOT / 'services/supabase'
 # Only an executable directory may be configured, never a DB URL/connection.
@@ -19,7 +20,7 @@ if not (PG/'initdb').is_file(): raise RuntimeError('Configured PostgreSQL binari
 ENV = {'PATH': '/usr/bin:/bin:/opt/homebrew/bin', 'LC_ALL': 'C'}
 (ROOT / 'build').mkdir(exist_ok=True)
 OUT = pathlib.Path(tempfile.mkdtemp(prefix='pres-', dir=ROOT / 'build'))
-SOCK = OUT / 's'; SOCK.mkdir()
+SOCK = pathlib.Path(tempfile.mkdtemp(prefix='rp-pres-s-', dir='/tmp'))
 if len(str(SOCK).encode())>85: raise RuntimeError('Checkout path is too long for a Unix socket; use a shorter isolated checkout')
 CONN = ['-h', str(SOCK), '-p', '55473', '-U', 'postgres', '-d', 'postgres']
 PSQL = [str(PG/'psql'), '-X', '--no-password', *CONN, '-v', 'ON_ERROR_STOP=1', '-Atq']
@@ -29,6 +30,31 @@ def run(args, text=None):
     if p.returncode: raise AssertionError(p.stderr[-6000:])
     return p.stdout.strip()
 def query(sql): return run(PSQL, sql)
+def deletion_inventory(actor):
+    # Complete rows in this isolated fixture, including custody and cleanup intent.
+    tables = ['orgs','memberships','listings','capture_assets','render_jobs','renders','media_provenance',
+              'studio_documents','studio_creative_results','studio_presenter_profiles','studio_presenter_drafts',
+              'studio_presenter_jobs','studio_presenter_quotes','studio_property_music_copies','video_erase_jobs',
+              'upload_operations','privacy_cleanup_jobs','deletion_requests',
+              'studio_production_reviews','studio_production_versions','studio_project_media','studio_property_music',
+              'studio_presenter_media_sources','studio_presenter_closed_submissions','voice_storage_reservations',
+              'upload_reservations','video_erase_batches','video_erase_stages','cost_ledger']
+    pairs = [f"'{table}',(select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb) from public.{table} r)" for table in tables]
+    pairs += [f"'actor',(select to_jsonb(u) from auth.users u where id='{actor}')",
+              f"'profile',(select to_jsonb(p) from public.profiles p where id='{actor}')"]
+    return json.loads(query('select jsonb_build_object('+','.join(pairs)+');'))
+def require_shared_deletion_refusal(actor, label):
+    before = deletion_inventory(actor)
+    assert any(m['user_id']==actor and m['org_id']==ORG for m in before['memberships']), label+' fixture actor/workspace'
+    assert len({m['user_id'] for m in before['memberships'] if m['org_id']==ORG})>1, label+' shared fixture'
+    error(f"set role service_role;select prepare_account_deletion('{actor}','fixture-uploads','fixture-renders');", 'RP409: This account has retained work or likeness records in a shared or former workspace.')
+    after = deletion_inventory(actor)
+    ok(label+' normal account deletion refuses retained shared work without changing complete records or scheduling cleanup',
+       after==before and not any(r['user_id']==actor for r in after['deletion_requests']))
+def operator_auth_delete(actor):
+    # Synthetic operator invalidator only, not a successful app-delete workflow.
+    heir = B if actor==A else A
+    return f"reset role;update public.listings set agent_id='{heir}' where org_id='{ORG}' and agent_id='{actor}';delete from auth.users where id='{actor}';"
 def ok(name, check=True):
     assert check, name
     passed.append(name)
@@ -63,11 +89,11 @@ try:
  run([PG/'initdb','-D',OUT/'data','-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
  run([PG/'pg_ctl','-D',OUT/'data','-l',OUT/'server.log','-w','-o',f"-k '{SOCK}' -p 55473 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
  query((SQL/'tests/ci-bootstrap.sql').read_text())
- for path in sorted((SQL/'migrations').glob('*.sql')):query(path.read_text())
+ for path in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]:query(path.read_text())
  ok('all real migrations apply from an empty database')
  query(MIGRATION.read_text());ok('presenter migration replays safely')
  query('\n'.join(f"insert into auth.users(id,email) values('{u}','presenter-{i}@fixture.invalid');" for i,u in enumerate([A,B,C,M,X])))
- query(f"insert into orgs(id,name) values('{ORG}','Presenter fixture'),('{OTHER}','Other fixture');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}'),('{L2}','{ORG}','{A}'),('{XL}','{OTHER}','{X}');")
+ query(f"insert into orgs(id,name,plan,plan_source) values('{ORG}','Presenter fixture','pro','manual'),('{OTHER}','Other fixture','pro','manual');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}'),('{L2}','{ORG}','{A}'),('{XL}','{OTHER}','{X}');")
  for asset,listing,org,kind,duration in [(PHOTO,LIST,ORG,'photo',None),(PHOTO2,LIST,ORG,'photo',None),(VIDEO,LIST,ORG,'video',12),(VIDEO2,L2,ORG,'video',9),(XPHOTO,XL,OTHER,'photo',None)]:
   query(f"insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,sha256,bytes,duration_s) values('{asset}','{listing}','{kind}','uploads','uploads/{org}/{listing}/{asset}.{'jpg' if kind=='photo' else 'mp4'}',true,'{'a'*64}',1000,{duration or 'null'});")
  query(f"insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes) values('{uid(306)}','{LIST}','photo','uploads','uploads/{ORG}/{LIST}/legacy.jpg',true,1000);")
@@ -159,15 +185,21 @@ try:
  for mutation in [f"delete from studio_presenter_profiles where id='{PROFILE}'",f"delete from listings where id='{LIST}'"]:
   deleted=json.loads(query(f"begin;{mutation};select json_build_array((select count(*) from studio_presenter_profiles),(select count(*) from studio_presenter_drafts),(select count(*) from studio_creative_results));rollback;"))
   ok('profile deletion removes associated private job receipt' if 'studio_presenter_profiles where' in mutation else 'source property deletion removes reusable likeness data and private job receipt',deleted==[0,0,0])
- deletion=query(f"begin;set role service_role;select prepare_account_deletion('{A}','fixture-uploads','fixture-renders');reset role;delete from auth.users where id='{A}';select json_build_array((select count(*) from studio_presenter_profiles),(select count(*) from studio_presenter_drafts),(select count(*) from studio_creative_results));rollback;").splitlines()
- ok('identity deletion cascades profiles drafts and agency-owned likeness job snapshots',json.loads(deletion[-1])==[0,0,0])
- author_delete=query(f"begin;set role service_role;select prepare_account_deletion('{B}','fixture-uploads','fixture-renders');reset role;delete from auth.users where id='{B}';select json_build_array((select count(*) from studio_presenter_profiles),(select count(*) from studio_presenter_drafts),(select count(*) from studio_creative_results));rollback;").splitlines()
- ok('agency author deletion removes drafts without deleting another persons profile',json.loads(author_delete[-1])==[1,0,0])
+ require_shared_deletion_refusal(A, 'likeness subject')
+ deletion=query('begin;'+operator_auth_delete(A)+"select json_build_array((select count(*) from studio_presenter_profiles),(select count(*) from studio_presenter_drafts),(select count(*) from studio_creative_results));rollback;").splitlines()
+ ok('synthetic operator identity invalidation cascades profiles drafts and agency-owned likeness job snapshots',json.loads(deletion[-1])==[0,0,0])
+ require_shared_deletion_refusal(B, 'agency author')
+ author_delete=query('begin;'+operator_auth_delete(B)+"select json_build_array((select count(*) from studio_presenter_profiles),(select count(*) from studio_presenter_drafts),(select count(*) from studio_creative_results));rollback;").splitlines()
+ ok('synthetic operator author invalidation removes drafts without deleting another persons profile',json.loads(author_delete[-1])==[1,0,0])
  query(f"insert into capture_assets(listing_id,kind,bucket,storage_key,uploaded,sha256,bytes) select '{LIST}','photo','uploads','uploads/{ORG}/{LIST}/extra-'||n||'.jpg',true,'{'a'*64}',1000 from generate_series(1,201) n;")
  capped=workspace();ok('bounded candidate response advertises truncated older media',len(capped['reference_candidates'])==200 and capped['truncated']['reference_candidates'] is True)
  completed=True
 finally:
  failure=str(sys.exc_info()[1]) if sys.exc_info()[1] else None
- if started:run([PG/'pg_ctl','-D',OUT/'data','-m','fast','-w','stop'])
+ try:
+  if started:run([PG/'pg_ctl','-D',OUT/'data','-m','fast','-w','stop'])
+ finally:
+  if not (OUT/'data'/'postmaster.pid').exists():
+   shutil.rmtree(SOCK,ignore_errors=True)
  receipt={'ok':completed,'passed':len(passed),'checks':passed,'productionCalls':0,'socketOnly':True,'clusterStopped':started,'output':str(OUT),'sourceSHA256':source_hashes,'error':failure}
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt,indent=2))

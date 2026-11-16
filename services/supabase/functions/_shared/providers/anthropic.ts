@@ -81,6 +81,19 @@ export type AnthropicEffort = typeof ANTHROPIC_EFFORTS[number];
 /** The default answer ceiling this adapter shipped with, used whenever neither
  *  a params row nor the caller says otherwise. */
 export const ANTHROPIC_DEFAULT_MAX_TOKENS = 400;
+/** Explicit server callers may allow a larger bounded answer; absent stays30s. */
+export const ANTHROPIC_MAX_REQUEST_MS=90_000;
+export function anthropicRequestTimeout(value?:number):number {
+ return Math.min(ANTHROPIC_MAX_REQUEST_MS,Math.max(1,Number.isFinite(value)?Math.floor(value!):BUDGETS.submitMs));
+}
+
+/** Closed completion metadata; never retains raw provider text or stop sequences. */
+export const ANTHROPIC_STOP_REASONS = ["end_turn","max_tokens","stop_sequence","tool_use","pause_turn","refusal","model_context_window_exceeded"] as const;
+export type AnthropicStopReason = typeof ANTHROPIC_STOP_REASONS[number] | "unknown";
+export function anthropicStopReason(value:unknown):AnthropicStopReason {
+  return typeof value === "string" && (ANTHROPIC_STOP_REASONS as readonly string[]).includes(value) ? value as AnthropicStopReason : "unknown";
+}
+
 
 /**
  * The `output_config` for one call, or null for "send no output_config at all".
@@ -104,6 +117,19 @@ export function outputConfigFor(
   const effort = paramEnum(params, "effort", ANTHROPIC_EFFORTS);
   if (effort) return { effort };
   return /sonnet-5/i.test(model) ? { effort: "low" } : null;
+}
+
+/** Explicit server-owned structured output, never read from customer input or
+ * route params. Other classifiers retain their exact existing request body. */
+export type AnthropicJSONSchema = Readonly<{type:"object";properties:Readonly<Record<string,unknown>>;required:readonly string[];additionalProperties:false}>;
+export function anthropicOutputConfig(model:string,params?:Record<string,unknown>|null,jsonSchema?:AnthropicJSONSchema):Record<string,unknown>|null {
+  const config=outputConfigFor(model,params);
+  if(jsonSchema===undefined)return config;
+  if(model!=="claude-sonnet-5"||jsonSchema.type!=="object"||jsonSchema.additionalProperties!==false
+    ||!jsonSchema.properties||!Array.isArray(jsonSchema.required)
+    ||new TextEncoder().encode(JSON.stringify(jsonSchema)).byteLength>8192)
+    throw new ProviderError(PROVIDER,"validation","Unsupported server structured-output contract");
+  return {...config,format:{type:"json_schema",schema:jsonSchema}};
 }
 
 /**
@@ -156,6 +182,12 @@ export interface MessagesArgs {
   /** An explicit params blob, when the caller has one but no step. Wins over
    *  whatever a passed step carries; omit it in every ordinary call. */
   params?: Record<string, unknown> | null;
+  onUsage?: (usage: {inputTokens:number;outputTokens:number;cacheReadInputTokens?:number;cacheCreationInputTokens?:number}) => void;
+  onStopReason?: (reason:AnthropicStopReason) => void;
+  signal?:AbortSignal;
+  timeoutMs?:number;
+  /** Dedicated server caller only. Never forward route/customer schema fields. */
+  jsonSchema?:AnthropicJSONSchema;
 }
 
 /** One bounded /v1/messages call → the concatenated text of the reply. */
@@ -182,15 +214,25 @@ export async function anthropicMessages(args: MessagesArgs): Promise<string> {
     messages: [{ role: "user", content: args.content }],
   };
   if (args.system) body.system = args.system;
-  const outputConfig = outputConfigFor(model, params);
+  const outputConfig = anthropicOutputConfig(model, params, args.jsonSchema);
   if (outputConfig) body.output_config = outputConfig;
 
   const data = await fetchJson<Record<string, unknown>>(
     PROVIDER,
     `${ANTHROPIC_BASE}/v1/messages`,
     { method: "POST", headers: anthropicHeaders(), body: JSON.stringify(body) },
-    BUDGETS.submitMs,
+    anthropicRequestTimeout(args.timeoutMs),
+    undefined,
+    args.signal?{signal:args.signal}:undefined,
   );
+  args.onStopReason?.(anthropicStopReason(data.stop_reason));
+  const usage = data.usage as Record<string, unknown> | undefined;
+  if (args.onUsage && usage && Number.isSafeInteger(usage.input_tokens) && Number(usage.input_tokens) >= 0 &&
+      Number.isSafeInteger(usage.output_tokens) && Number(usage.output_tokens) >= 0) {
+    args.onUsage({inputTokens:Number(usage.input_tokens),outputTokens:Number(usage.output_tokens),
+      ...(Number.isSafeInteger(usage.cache_read_input_tokens)&&Number(usage.cache_read_input_tokens)>=0?{cacheReadInputTokens:Number(usage.cache_read_input_tokens)}:{}),
+      ...(Number.isSafeInteger(usage.cache_creation_input_tokens)&&Number(usage.cache_creation_input_tokens)>=0?{cacheCreationInputTokens:Number(usage.cache_creation_input_tokens)}:{})});
+  }
   const content = Array.isArray(data.content) ? data.content : [];
   const text = (content as Array<Record<string, unknown>>)
     .filter((b) => b?.type === "text" && typeof b.text === "string")

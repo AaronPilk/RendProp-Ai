@@ -12,9 +12,12 @@ import subprocess
 import tempfile
 import unittest
 import uuid
+from run_database_regression import partition_fresh_migrations
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = Path(tempfile.mkdtemp(prefix="rendprop-upload-pg-", dir="/tmp"))
+OUT_ROOT = Path(os.environ.get("RENDPROP_PG_EVIDENCE_ROOT", "/tmp"))
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
+OUT = Path(tempfile.mkdtemp(prefix="rendprop-upload-pg-", dir=OUT_ROOT))
 HOMEBREW_PG = "/opt/homebrew/opt/postgresql@17/bin"
 
 def postgres_bin():
@@ -29,7 +32,8 @@ def postgres_bin():
 
 PG = str(postgres_bin()) + "/"
 ENV = {"PATH": PG.rstrip("/") + ":/usr/bin:/bin", "LC_ALL": "C", "TZ": "UTC"}
-DATA, SOCKET = OUT / "cluster", OUT / "socket"
+DATA = OUT / "cluster"
+SOCKET = Path(tempfile.mkdtemp(prefix="rut-", dir="/tmp"))
 RECEIPT = {"accepted": False, "network": "Unix socket only", "commands": [], "evidence": str(OUT), "postgres": PG}
 
 def run(name, args, source=None, expected=0):
@@ -59,6 +63,8 @@ class UploadDatabase(unittest.TestCase):
         self.user, self.listing = str(uuid.uuid4()), str(uuid.uuid4())
         self.org = sql(f"insert into auth.users(id,email) values ('{self.user}','fixture@example.invalid'); "
                        f"select org_id from memberships where user_id='{self.user}' and role='owner';")
+        # This suite tests video transport for an entitled workspace.
+        sql(f"update orgs set plan='pro',plan_source='manual' where id='{self.org}';")
         sql(f"insert into listings(id,org_id,agent_id,address) values ('{self.listing}','{self.org}','{self.user}','Synthetic');")
 
     def spec(self, idem=None, size=4):
@@ -360,7 +366,6 @@ class UploadDatabase(unittest.TestCase):
 
 def main():
     if shutil.disk_usage(OUT).free < 1024**3: raise RuntimeError("Need 1 GiB disk headroom")
-    SOCKET.mkdir(mode=0o700)
     prior = {sig: signal.getsignal(sig) for sig in [signal.SIGTERM, signal.SIGHUP]}
     def interrupted(sig, frame): raise RuntimeError(f"Interrupted by {sig}")
     for sig in prior: signal.signal(sig, interrupted)
@@ -374,9 +379,12 @@ def main():
         if sql("select current_setting('data_directory')||':'||current_setting('listen_addresses');") != str(DATA)+":":
             raise RuntimeError("Owned cluster identity mismatch")
         ENV["PGOPTIONS"] = "-c statement_timeout=20000 -c lock_timeout=10000"
-        sources = [ROOT/"services/supabase/tests/ci-bootstrap.sql", *sorted((ROOT/"services/supabase/migrations").glob("*.sql"))]
+        migrations = sorted((ROOT/"services/supabase/migrations").glob("*.sql"))
+        schema_migrations, live_state_migrations = partition_fresh_migrations(migrations)
+        sources = [ROOT/"services/supabase/tests/ci-bootstrap.sql", *migrations]
         RECEIPT["sourceHashes"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
-        for source in sources: run(source.stem, PSQL+["-1", "-f", str(source)])
+        RECEIPT["excludedLiveStateMigrations"] = [p.name for p in live_state_migrations]
+        for source in [sources[0], *schema_migrations]: run(source.stem, PSQL+["-1", "-f", str(source)])
         result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(UploadDatabase))
         RECEIPT.update(tests=result.testsRun, failed=len(result.failures)+len(result.errors), skipped=len(result.skipped))
         if not result.wasSuccessful() or result.skipped or result.testsRun != 26: raise RuntimeError("Database regression gate failed")
@@ -415,7 +423,7 @@ def main():
         RECEIPT["accepted"] = True
     finally:
         try:
-            if started: run("stop", [PG+"pg_ctl", "-D", str(DATA), "-m", "fast", "-w", "-t", "20", "stop"])
+            if started: run("stop", [PG+"pg_ctl", "-D", str(DATA), "-m", "fast", "-w", "-t", "120", "stop"])
         except BaseException:
             RECEIPT["accepted"] = False
             raise

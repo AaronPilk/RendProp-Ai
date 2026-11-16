@@ -19,17 +19,19 @@
 //   tenant's tag when it carries others, and touch nothing at all when this
 //   tenant's own tag cannot be confirmed present.
 
-import type { R2Object } from "../_shared/r2.ts";
+import type { OwnedCleanupPrefix, R2Object } from "../_shared/r2.ts";
 import { ghlOrgTag, isGhlOrgTag } from "../_shared/ghl.ts";
 
 /** One CRM contact this tenant's deletion still needs to reach, by email. */
 export interface GhlCleanupTarget {
-  email: string;
+  email?: string;
+  phone?: string;
   org_id: string;
 }
 
 export interface DeletionPayload {
   r2: R2Object[];
+  r2_prefixes?: OwnedCleanupPrefix[];
   stream_uids: string[];
   ghl_targets: GhlCleanupTarget[];
   apple_refresh_token: string | null;
@@ -72,7 +74,7 @@ export function dbEmpty(d: DeletionPayload["db"]): boolean {
  * from, evaluated AFTER every destructive step has actually run (P0-4).
  */
 export function payloadEmpty(p: DeletionPayload): boolean {
-  return p.r2.length === 0 && p.stream_uids.length === 0 &&
+  return p.r2.length === 0 && !p.r2_prefixes?.length && p.stream_uids.length === 0 &&
     p.ghl_targets.length === 0 && !p.apple_refresh_token &&
     !p.analytics_user_id && !p.profile_id && !p.auth_user_id && dbEmpty(p.db) &&
     !p.provider_leases?.length && !p.multipart_uploads?.length &&

@@ -1,0 +1,236 @@
+{
+  "kind": "Direct Bria private beta and separate saved-photo libraries \u2014 internal TestFlight43",
+  "verifiedAt": "2026-10-03T00:56:33.649631+00:00",
+  "source": {
+    "branch": "fix/bria-beta-feedback-20261002",
+    "runtimeCommit": "8de8fd070eec2d55b0f62e12fe8488c99752e8a3",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/20",
+    "pullRequestBase": "release/appstore-1.0.3-20261002",
+    "draftAtDelivery": true,
+    "note": "Later documentation-only commit records delivery. Shared branches and Claude checkout were not rewritten."
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "43",
+    "minimumOS": "16.0"
+  },
+  "ci": {
+    "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37081287467",
+    "sourceCommit": "8de8fd070eec2d55b0f62e12fe8488c99752e8a3",
+    "passedJobs": 12,
+    "finalAttempt": 2,
+    "expectedJobNames": [
+      "Cloudflare Worker (tour-host)",
+      "Cloudflare Worker (upload-gateway, deno check + tests)",
+      "Disposable PostgreSQL publication, invariant and deletion regression",
+      "Offline audit evidence, consent and adoption source gates",
+      "Offline reel-style preservation and blind-evaluation contracts",
+      "Python workers (render, spatial, training adapter)",
+      "Secret scan",
+      "Studio contracts, build and property workflows (offline)",
+      "Supabase edge functions (deno check + tests)",
+      "Supabase migrations (fresh replay + invariants)",
+      "Web parity inventory and design-token contracts (offline)",
+      "iOS static gates"
+    ],
+    "earlierCandidateFailure": {
+      "source": "e140442218b08a6e8871757ae30507eb90a6ed74",
+      "runID": 37079573597,
+      "issue": "New RPC replacements lost Presenter ancestry/revocation guards. Corrected and negative-control-tested before deployment."
+    },
+    "sameSourceFinishingFixture": {
+      "initialAttempt": "failed",
+      "initialDurationSeconds": 8.607033,
+      "initialSourcePlaybackGapMilliseconds": 607,
+      "failedOutputPreserved": true,
+      "strictRerun": "passed",
+      "rerunDurationSeconds": 8.0355,
+      "rerunPhotoBoundarySeconds": 4.05,
+      "rerunChecksPassed": 11,
+      "browserErrors": 0,
+      "externalRequests": 0,
+      "priorBaseDurationSeconds": 8.023167,
+      "runtimeFixtureOrToleranceChanged": false,
+      "qualification": "Transient source playback gap in the failed synthetic export remains evidence about timing under runner load; the strict same-source rerun passed without a fix or relaxed assertion."
+    }
+  },
+  "nativeChecks": {
+    "debugSimulatorCasesPassed": 6,
+    "focusedReleaseArm64SimulatorCasesPassed": 1,
+    "failures": 0,
+    "skips": 0,
+    "testedNativeCandidate": "e140442218b08a6e8871757ae30507eb90a6ed74",
+    "nativeInputsIdenticalAtFinalRuntime": true,
+    "scope": "MockAPIClient and synthetic photos; separate runs, no physical camera/provider/Files or Photos delivery proof.",
+    "earlierHarnessAndResultImportFailuresPreserved": true
+  },
+  "softwareChecks": {
+    "photoHistoryAssertions": 340,
+    "actualGallerySyncAssertions": 46,
+    "reelFailureAssertions": 80,
+    "reflectionControllerScenarios": 20,
+    "presenterRevocationAssertions": 119,
+    "presenterControllerIntegrationTests": 1,
+    "directAdapterAndHandlerDenoTests": 42,
+    "legacyVideoEraseSQLChecks": 51,
+    "directVideoEraseSQLChecks": 37,
+    "concurrentAdmissionAndReceiptCalls": 40,
+    "paidProviderJobs": 0
+  },
+  "archive": {
+    "createdAt": "2026-10-03T00:18:02+00:00",
+    "scheme": "RendpropSpatialTestFlight",
+    "sourceInputs": 218,
+    "compiledTrackedSwiftInputs": 139,
+    "compiledGeneratedSwiftInputs": 1,
+    "signatureVerified": true,
+    "executableSHA256": "c4e55dd2424051febf6b54ed11f3e28ee4cf8478946a33ba3cfbad9152c723d1",
+    "arm64UUID": "21C2F4EF-ABD7-37DF-9DBF-443F0D25F04B",
+    "allUUIDsMatch": true,
+    "derivedDataAndArchiveDSYMBytesMatch": true,
+    "qualification": "Independently verified source-bound archive; moved DerivedData app product is not claimed byte-matched. Actual export and Apple availability are separate proofs."
+  },
+  "upload": {
+    "startedAt": "2026-10-03T00:51:04.732057+00:00",
+    "finishedAt": "2026-10-03T00:52:23.056305+00:00",
+    "exitCode": 0,
+    "attempts": 1,
+    "internalOnly": true
+  },
+  "appleReadback": {
+    "checkedAt": "2026-10-03T00:55:46.256587+00:00",
+    "available": true,
+    "buildID": "da5b14ab-5e37-4125-a5fa-35d671bc1927",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-10-02T17:53:01-07:00",
+    "internalBuildState": "IN_BETA_TESTING",
+    "groupName": "Rendprop team",
+    "existingGroupBuildIncluded": true,
+    "usesNonExemptEncryption": false,
+    "minimumOS": "16.0"
+  },
+  "testNotes": {
+    "verifiedAt": "2026-10-03T00:56:33.649631+00:00",
+    "locale": "en-US",
+    "readbackVerified": true,
+    "textSHA256": "b706dfd4fd7f506ba17af53cc7804896343ab03a052c1ada57ffac9b78216622"
+  },
+  "feedback": {
+    "availableAttachmentsReviewed": 27,
+    "newCrashesSurfaced": 0,
+    "qualification": "Limited to reviewed material, not a complete crash census; all customer artifacts remain private."
+  },
+  "backend": {
+    "function": "ai-video",
+    "version": 47,
+    "status": "ACTIVE",
+    "verifyJWT": true,
+    "apiListedFilesMatched": 30,
+    "sourceCommit": "8de8fd070eec2d55b0f62e12fe8488c99752e8a3",
+    "verifiedAt": "2026-10-03T00:36:57.580066+00:00",
+    "migrationName": "video_erase_direct_bria",
+    "sourceMigrationVersion": "20261002225458",
+    "liveMigrationVersion": "20261003003531",
+    "sourceMigrationSHA256": "71933902c7b8c2a75691df38adfcd09401e1e8ac8620d933f5a7118f874e9637",
+    "exactFunctionBodiesMatched": 12,
+    "clientMutatingFunctionGrantsDenied": true,
+    "existingMembershipScopedHeldCentsAuthenticatedReadPreserved": true,
+    "jobAndStageRLS": true,
+    "clientTableGrantsAndPolicies": 0,
+    "stageServiceCRUD": true,
+    "privateConfigValuesMatched": 6,
+    "trustedBetaUsers": 1,
+    "maskCentsPerSecond": 2,
+    "eraseCentsPerSecond": 4.5,
+    "priceVersion": "bria_catalog_20261002",
+    "priceBasis": "Signed-in catalog; not invoice-reconciled",
+    "outputHosts": [
+      "d1ei2xrl63k822.cloudfront.net"
+    ],
+    "defaultProvider": "fal",
+    "globalProviderOverride": false,
+    "AIClipAllowanceAndWorkspaceCeilingPreserved": true,
+    "batchFenceCents": 240,
+    "unauthenticatedQuoteAndStatusHTTP": [
+      401,
+      401
+    ],
+    "newSecurityWarningsOrErrors": 0,
+    "preexistingSecurityWARNEntries": 26
+  },
+  "public42Readback": {
+    "checkedAt": "2026-10-03T00:57:25.085838+00:00",
+    "operation": "GET only",
+    "publicBuild": "42",
+    "publicBuildID": "56692628-791e-4072-a222-09fc11929726",
+    "version": "1.0.3",
+    "releaseType": "AFTER_APPROVAL",
+    "versionState": "WAITING_FOR_REVIEW",
+    "reviewState": "WAITING_FOR_REVIEW",
+    "reviewSubmittedDate": "2026-10-02T20:17:03.947Z",
+    "publicBuildBindingPreserved": true
+  },
+  "scope": {
+    "publicAppStoreRelease": false,
+    "testerOrGroupConfigurationChanges": false,
+    "paidAIOrGPUCalls": 0,
+    "spatialGlobalFlagEnabled": false,
+    "spatialBudgetChanged": false,
+    "claudeCheckoutTouched": false
+  },
+  "knownLimits": [
+    "No real paid Bria API/output-quality trial was performed. Unexpected output hosts fail closed and may strand paid outputs; existing pinned jobs cannot recover through normal polling after config changes.",
+    "People/reflection removal edits selected clips under five seconds with documented750p provider limit; whole-video furniture decluttering is not delivered.",
+    "Photo lineage is local to the iPhone; native published selection sync is not a complete cross-device version library.",
+    "Unfinished photo jobs do not resume after force-quit.",
+    "The fal reel502 account/provider cause remains unproven; stop/resume behavior does not prove upstream recovery.",
+    "Physical camera, AR/LiDAR, room reconstruction, generated geometry, staging fidelity and Files/Photos exports require phone acceptance."
+  ],
+  "remainingAcceptance": [
+    "Install43 over the existing app and verify fresh v3 consent/decline/revocation behavior.",
+    "Declutter then stage; browse/download both saved libraries, choose publication separately, and verify retained sources.",
+    "Choose one detected people/reflection interval, explicitly start the Bria edit, compare audio/timing/room geometry, and accept only a usable result.",
+    "Check interrupted reels retain completed clips and finishing saved clips requests no new generation."
+  ],
+  "evidenceSHA256": {
+    "ci-success.json": "39e8365ea0cd4537a2d7f57294bcda5a04084067bd0abe378fd640beb83b0690",
+    "ci-final-attempt1-failure.json": "8b1695a4595a31779e87658df5b54730e0cccab3538856c181a3b870ae042601",
+    "ci-one-rerun-reason.json": "13e9fdbdc77fb28891258e94f89c0fa36064487b80101189e636f615abfb4bdf",
+    "testflight43-final/source-manifest.json": "93f63c278506467a93576497b34fe018fc0c3025833ef72c4290bb5c73c34981",
+    "testflight43-final/archive-source-binding.json": "b38bf3a74d356b867c89ed65e903cea003d61c18310bd2956b2391af51af3c20",
+    "testflight43-final/archive-independent-preflight.json": "1c621507e5bce07c53b939265e2ff09a9bdaf81437794507a6f9098fb58e6b69",
+    "testflight43-final/independent-final-release-review.json": "48c2c04ecd427a992c8272d5354b223ea6f90f49ba0b0c1dd8fa7dd5c5a802eb",
+    "testflight43-final/owner-release-gate.json": "5e12bc11b1aea1b1126a89cd3c8159106cb68089670e47abee3615df1ca05738",
+    "testflight43-final/upload-result.json": "2c33feddf5c7e998a3c1e2f42f5d54c6d71413cf72e6f3d206a326dfe5591860",
+    "testflight43-final/testflight-ready.json": "9c9dded59dcf042684caa9c3d13803b898bdac320545aa88af0353a97d762740",
+    "testflight43-final/test-notes-receipt.json": "28e616694531b59b0ebfc76c866f59ae9065407b22e50a0a0944c160e78e53fb",
+    "backend-proof/source-and-grants-readback.json": "b5c357864a153a77c067e44c450c8a6ee377c75988bdb5e6816bddfe1c3c2611",
+    "backend-proof/schema-security-readback.json": "2f89343dc2a0cde11ef072bc48d8fbf70085c88bd0f9ddd7657a66d8fd1919f4",
+    "backend-proof/beta-config-readback.json": "76dc05e61d5dd806dd8aba415e7596824a5908aaf490cb23e9de44a0ff2d16b9",
+    "backend-proof/unauthenticated-probes.json": "dd83e7bdc3d33d684ca8623948d27a8883654be20e3a10c4ead61eeb24559057",
+    "ci-studio-export-failure-37081287467/passing-attempt2-review.json": "461813959da0edfb35735809218db53280b1ba6b6c4533276758fe7cab28e36e",
+    "testflight43-final/uploaded-package-local-binding.json": "95105a245be773cd18339c4fa9707301247e8c841b060d82e67c222e2301bd5f"
+  },
+  "uploadedPackage": {
+    "verifiedAt": "2026-10-03T01:03:52.360683+00:00",
+    "ipaSHA256": "bb5f943ff98273989aac60f5fafdb37d1f87023fe5d901fb3ae21699439cd8c6",
+    "ipaBytes": 20259263,
+    "transferLogPathAndChecksumMatch": true,
+    "uploadAttemptTimeMatched": true,
+    "signatureVerified": true,
+    "signatureAuthority": "Apple Distribution",
+    "teamID": "5F5C5G25Y6",
+    "getTaskAllow": false,
+    "appleSignIn": "Default",
+    "executableSHA256": "0c108e35061671ab2adcc48b10638b21cdaf3825d54ba937913e93b4cdcafb03",
+    "arm64UUID": "21C2F4EF-ABD7-37DF-9DBF-443F0D25F04B",
+    "nativeSectionsByteExactToSourceArchive": 37,
+    "resourcesByteExactToSourceArchive": 7,
+    "allIPAAppFilesMatchRetainedResignedApp": 11,
+    "developmentOrSecretResourcesFound": 0,
+    "qualification": "Re-signing changes the executable checksum. All37 file-backed native sections and seven packaged resources match the source-bound archive; actual upload path/checksum and Apple availability are independently bound."
+  }
+}

@@ -6,6 +6,7 @@ import type { StudioServices } from "../src/data/services";
 import type { Workspace } from "../src/data/contracts";
 import type { CloudDocument } from "../src/data/documents";
 import "../src/styles.css";
+import "../src/features/creative/creative.css";
 const user="33333333-3333-4333-8333-333333333333",other="33333333-3333-4333-8333-333333333334",org="11111111-1111-4111-8111-111111111111",otherOrg="11111111-1111-4111-8111-111111111112";
 let actor=user,activeOrg=org,epoch=1,lose=false,hold=false,release:(()=>void)|undefined;
 const subscribers=new Set<(snapshot:unknown)=>void>(),calls:any[]=[],pending:any[]=[];

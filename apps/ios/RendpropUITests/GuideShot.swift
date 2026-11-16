@@ -41,13 +41,13 @@ final class GuideShot: XCTestCase {
         // Keys verified against source: RendpropApp.swift
         // @AppStorage("hasOnboarded"), RootTabView @AppStorage("space.type"),
         // @AppStorage("appearance"), AIConsent
-        // "ai.thirdPartyProcessing.consent.v2", Config.uiTestGuideState.
+        // "ai.thirdPartyProcessing.consent.v3", Config.uiTestGuideState.
         app.launchArguments += [
             "-uiTesting",
             "-hasOnboarded", "YES",
             "-space.type", "real_estate",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v2", "YES",
+            "-ai.thirdPartyProcessing.consent.v3", "YES",
             "-ui.guideState", "2",
         ]
         app.launch()
@@ -82,7 +82,7 @@ final class GuideShot: XCTestCase {
     // MARK: - Navigation helpers (mirrors StoreShots.swift)
 
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
     /// First element matching any identifier, else any element whose label is

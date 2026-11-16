@@ -414,9 +414,9 @@ export interface VerifyAppleJWSOptions {
    * applejws.test.ts can mint a throwaway chain instead of shipping a copy of
    * Apple's private key (which does not exist).
    *
-   * This is safe because it is UNREACHABLE FROM A REQUEST: nothing in
-   * functions/me or functions/apple-subscriptions passes an options object at
-   * all, the field is typed as a Uint8Array (JSON.parse can never produce one),
+   * This is safe because it is UNREACHABLE FROM A REQUEST: production callers
+   * never pass trustRoot (me/standard-price passes only a bounded `now` Date),
+   * the field is typed as a Uint8Array (JSON.parse can never produce one),
    * and the runtime check below refuses anything else. Do not add a code path
    * that derives this value from a request, an env var, or a database row.
    */
@@ -547,7 +547,7 @@ export interface AppleTransaction {
   originalTransactionId: string;
   productId: string;
   bundleId: string;
-  /** "Sandbox" | "Production" — stored, never used to decide trust. */
+  /** Verified environment; Sandbox is isolated from retail billing authority. */
   environment: string;
   purchaseDate: string | null;
   /** null for a non-subscription purchase; callers treat that as a 400. */
@@ -555,12 +555,21 @@ export interface AppleTransaction {
   revocationDate: string | null;
   revocationReason: number | null;
   type: string | null;
+  /** Present only when Apple signed the purchased consumable quantity. */
+  quantity?: number;
   /** "PURCHASED" | "FAMILY_SHARED" */
   inAppOwnershipType: string | null;
   appAccountToken: string | null;
   webOrderLineItemId: string | null;
   subscriptionGroupIdentifier: string | null;
   signedDate: string | null;
+  /** Apple signs price in milliunits (USD 49.00 is 49000), never cents. */
+  priceMilliunits?: number | null;
+  currency?: string | null;
+  storefront?: string | null;
+  offerType?: number | null;
+  offerIdentifier?: string | null;
+  offerDiscountType?: string | null;
 }
 
 /** Shape a verified JWSTransaction payload. Throws 401 if the identity fields are missing. */
@@ -572,22 +581,31 @@ export function decodeTransaction(payload: Record<string, unknown>): AppleTransa
   if (!transactionId || !originalTransactionId || !productId || !bundleId) {
     reject("transaction is missing its identity fields");
   }
+  const environment = str(payload.environment);
+  if (environment !== "Sandbox" && environment !== "Production") reject("transaction has no recognized App Store environment");
   return {
     transactionId: transactionId!,
     originalTransactionId: originalTransactionId!,
     productId: productId!,
     bundleId: bundleId!,
-    environment: str(payload.environment) ?? "Production",
+    environment,
     purchaseDate: msToIso(payload.purchaseDate),
     expiresDate: msToIso(payload.expiresDate),
     revocationDate: msToIso(payload.revocationDate),
     revocationReason: num(payload.revocationReason),
     type: str(payload.type),
+    ...(payload.type === 'Consumable' && typeof payload.quantity === 'number' && Number.isSafeInteger(payload.quantity) ? {quantity:payload.quantity} : {}),
     inAppOwnershipType: str(payload.inAppOwnershipType),
     appAccountToken: str(payload.appAccountToken),
     webOrderLineItemId: str(payload.webOrderLineItemId),
     subscriptionGroupIdentifier: str(payload.subscriptionGroupIdentifier),
     signedDate: msToIso(payload.signedDate),
+    priceMilliunits: typeof payload.price === "number" && Number.isSafeInteger(payload.price) && payload.price >= 0 ? payload.price : null,
+    currency: str(payload.currency),
+    storefront: str(payload.storefront),
+    offerType: num(payload.offerType),
+    offerIdentifier: str(payload.offerIdentifier),
+    offerDiscountType: str(payload.offerDiscountType),
   };
 }
 
@@ -698,22 +716,31 @@ export function deriveEntitlement(
 
 // ── Products → plans ────────────────────────────────────────────────────────
 //
-// docs/LAUNCH-CONTRACT.md § "Plans and product IDs". All six products live in
+// All retail products live in
 // ONE subscription group (`rendprop_plans`) so Apple manages the upgrade or
 // downgrade; the trial is an INTRODUCTORY OFFER on each product, not a product
-// of its own, and `free` is the lapsed floor with no product at all. `solo` is
-// a legacy alias of starter and is deliberately absent — it is never sold.
+// of its own, and `free` is the lapsed floor with no product at all. The
+// original $49 Starter and $99 Pro identifiers now grant Max and Ultra. They
+// stay known so preexisting subscriptions can renew and restore. `solo` is a
+// legacy database-only alias and is never an Apple product.
 
 const PRODUCT_TO_PLAN: Readonly<Record<string, AppleSoldPlan>> = Object.freeze({
-  "com.rendprop.app.starter.monthly": "starter",
-  "com.rendprop.app.starter.annual": "starter",
-  "com.rendprop.app.pro.monthly": "pro",
-  "com.rendprop.app.pro.annual": "pro",
+  "com.rendprop.app.pro29.monthly": "pro",
+  "com.rendprop.app.starter.monthly": "max",
+  "com.rendprop.app.starter.annual": "max",
+  "com.rendprop.app.pro.monthly": "ultra",
+  "com.rendprop.app.pro.annual": "ultra",
   "com.rendprop.app.team.monthly": "team",
   "com.rendprop.app.team.annual": "team",
+  "com.rendprop.app.team4.monthly": "team",
+  "com.rendprop.app.team5.monthly": "team",
+  "com.rendprop.app.team6.monthly": "team",
+  "com.rendprop.app.team7.monthly": "team",
+  "com.rendprop.app.team8.monthly": "team",
+  "com.rendprop.app.team9.monthly": "team",
 });
 
-export type AppleSoldPlan = "starter" | "pro" | "team";
+export type AppleSoldPlan = "pro" | "max" | "ultra" | "team";
 
 /** The plan a product id grants, or null when the product is not one of ours. */
 export function productToPlan(productId: string | null | undefined): AppleSoldPlan | null {

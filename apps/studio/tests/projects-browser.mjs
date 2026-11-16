@@ -8,7 +8,7 @@ import {build} from "vite";
 import {chromium,expect} from "@playwright/test";
 const root=resolve(import.meta.dirname,".."),artifacts=await mkdtemp(join(tmpdir(),"rendprop-projects-")),dist=join(artifacts,"dist");
 const receipt={proof:"Real Projects and VideoEditor, separate browser storage, synthetic source bytes, isolated API/CAS/object store. No production, provider or camera calls.",checks:[],errors:[],externalRequests:[]};
-const documents=new Map(),media=new Map(),calls=[];let browser,server,page,holdNext=null,release;
+const documents=new Map(),media=new Map(),calls=[];let browser,server,page,holdNext=null,release,rejectNextProject=false,loseNextProject=false;
 const digest=data=>createHash("sha256").update(data).digest("hex");
 function manifest(row){const count=Math.ceil(row.bytes/8388608),complete=row.parts.size===count;return {...row,complete,parts:Array.from({length:count},(_,index)=>({index,bytes:Math.min(8388608,row.bytes-index*8388608),sha256:row.parts.has(index)?digest(row.parts.get(index)):null,complete:row.parts.has(index),...(complete?{url:`https://fixture.r2.cloudflarestorage.com/${row.actor}/${row.id}/${index}`}:{})}))};}
 try{
@@ -21,7 +21,9 @@ try{
    if(url.pathname==="/fixture/projects")return send({projects:[...documents].filter(([k])=>k.startsWith(prefix)).map(([,d])=>({key:d.key,name:d.payload.name,archived:d.payload.archived,listingId:d.listing_id,revision:d.revision,updatedAt:d.updated_at}))});
    if(url.pathname==="/fixture/documents"){
     const key=body?.key??url.searchParams.get("key"),id=prefix+key,prior=documents.get(id);
+    if(body&&!prior&&rejectNextProject){rejectNextProject=false;return send({error:"This workspace already has 100 saved projects"},400);}
     if(body){if((prior?.revision??0)!==body.expected_revision)return send({error:"Project changed"},409);assert.equal(body.listing_id,null);documents.set(id,{...body,revision:(prior?.revision??0)+1,updated_at:new Date().toISOString()});}
+    if(body&&!prior&&loseNextProject){loseNextProject=false;return send({error:"Fixture lost save reply after commit"},503);}
     if(holdNext===req.method){holdNext=null;await new Promise(done=>{release=done;});}
     return send({document:documents.get(id)??null});
    }
@@ -39,8 +41,21 @@ try{
  }catch(error){receipt.errors.push(String(error));res.writeHead(500).end();}});
  await new Promise(done=>server.listen(0,"127.0.0.1",done));const origin=`http://127.0.0.1:${server.address().port}`;
  browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});
- async function newPage(query=""){
+ async function newPage(query="",controlOriginalStorage=false){
   const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:"block"});
+  if(controlOriginalStorage)await context.addInitScript(()=>{
+   // Delay only the real connection's success callback, before a transaction
+   // starts. Transactions and Blob commits still use actual IndexedDB.
+   window.projectStorageGate={held:false,callbacks:[],rejectWrites:false};
+   const open=IDBFactory.prototype.open,success=Object.getOwnPropertyDescriptor(IDBRequest.prototype,"onsuccess");
+   IDBFactory.prototype.open=function(...args){
+    const request=open.apply(this,args);if(args[0]!=="rendprop-media-v1")return request;
+    Object.defineProperty(request,"onsuccess",{configurable:true,get(){return success.get.call(request);},set(callback){success.set.call(request,event=>{if(window.projectStorageGate.held)window.projectStorageGate.callbacks.push(()=>callback.call(request,event));else callback.call(request,event);});}});
+    return request;
+   };
+   const transaction=IDBDatabase.prototype.transaction;
+   IDBDatabase.prototype.transaction=function(...args){if(this.name==="rendprop-media-v1"&&args[1]==="readwrite"&&window.projectStorageGate.rejectWrites)throw new DOMException("Synthetic browser quota rejection.","QuotaExceededError");return transaction.apply(this,args);};
+  });
   await context.route("**/*",route=>{const url=new URL(route.request().url());if(url.origin===origin)return route.continue();
    if(url.hostname==="fixture.r2.cloudflarestorage.com"){const [,actor,id,index]=url.pathname.split("/"),row=media.get(id);assert.equal(row?.actor,actor);return route.fulfill({status:200,headers:{"Access-Control-Allow-Origin":origin,"Content-Type":"application/octet-stream"},body:row.parts.get(Number(index))});}
    receipt.externalRequests.push(url.href);return route.abort();});
@@ -48,6 +63,43 @@ try{
  }
  page=await newPage();const clip=p=>p.getByRole("button",{name:/Select clip 1:/});const status=p=>p.getByText("Project and originals saved to your account.",{exact:true});
  const png=await page.evaluate(()=>{const c=document.createElement("canvas");c.width=800;c.height=450;const g=c.getContext("2d");g.fillStyle="#731cc2";g.fillRect(0,0,800,450);return c.toDataURL().split(",")[1];});
+ const originalPage=page,delayed=await newPage("",true);page=delayed;
+ await delayed.evaluate(()=>{window.projectStorageGate.held=true;});
+ await delayed.getByLabel("Add photos or videos",{exact:true}).setInputFiles({name:"private-room.png",mimeType:"image/png",buffer:Buffer.from(png,"base64")});
+ await expect.poll(()=>delayed.evaluate(()=>window.projectStorageGate.callbacks.length)).toBe(1);
+ await expect(clip(delayed)).toHaveCount(0);
+ assert.equal(await delayed.evaluate(()=>Object.keys(localStorage).filter(key=>key.endsWith(":scratch")).reduce((count,key)=>count+JSON.parse(localStorage[key]).clips.length,0)),0);
+ await expect(delayed.getByText("Keeping originals in this browser…",{exact:true})).toBeVisible();
+ assert.equal(calls.filter(call=>call.method!=="GET").length,0);
+ await delayed.evaluate(()=>{window.projectStorageGate.held=false;for(const callback of window.projectStorageGate.callbacks.splice(0))callback();});
+ await expect(clip(delayed)).not.toHaveAccessibleName(/original file missing/);
+ await expect(delayed.getByText(/^Local video: originals/)).toBeVisible();
+ await delayed.reload();await expect(clip(delayed)).not.toHaveAccessibleName(/original file missing/);
+ receipt.checks.push("A pending IndexedDB connection keeps imported clip metadata unaccepted; the real committed Blob restores after release and immediate reload without a cloud write");
+ const priorDraft=await delayed.evaluate(()=>Object.fromEntries(Object.keys(localStorage).filter(key=>key.endsWith(":scratch")).map(key=>[key,localStorage[key]])));
+ const otherPng=await delayed.evaluate(()=>{const canvas=document.createElement("canvas");canvas.width=800;canvas.height=450;const drawing=canvas.getContext("2d");drawing.fillStyle="#c21c73";drawing.fillRect(0,0,800,450);return canvas.toDataURL().split(",")[1];});
+ await delayed.evaluate(()=>{window.projectStorageGate.rejectWrites=true;});
+ await delayed.getByLabel("Add photos or videos",{exact:true}).setInputFiles({name:"another-room.png",mimeType:"image/png",buffer:Buffer.from(otherPng,"base64")});
+ await expect(delayed.getByText("Synthetic browser quota rejection.",{exact:true}).first()).toBeVisible();
+ await expect(delayed.getByRole("button",{name:/Select clip \d+:/})).toHaveCount(1);await expect(clip(delayed)).not.toHaveAccessibleName(/original file missing/);
+ assert.deepEqual(await delayed.evaluate(()=>Object.fromEntries(Object.keys(localStorage).filter(key=>key.endsWith(":scratch")).map(key=>[key,localStorage[key]]))),priorDraft);
+ assert.equal(calls.filter(call=>call.method!=="GET").length,0);
+ await delayed.evaluate(()=>{window.projectStorageGate.rejectWrites=false;});
+ await delayed.getByLabel("Add photos or videos",{exact:true}).setInputFiles({name:"another-room.png",mimeType:"image/png",buffer:Buffer.from(otherPng,"base64")});
+ await expect(delayed.getByRole("button",{name:/Select clip 2:/})).not.toHaveAccessibleName(/original file missing/);
+ await delayed.reload();await expect(clip(delayed)).not.toHaveAccessibleName(/original file missing/);await expect(delayed.getByRole("button",{name:/Select clip 2:/})).not.toHaveAccessibleName(/original file missing/);
+ receipt.checks.push("Rejected original storage preserves the previously accepted draft and original; retry commits both files and they restore together after reload");
+ await delayed.context().close();page=originalPage;
+ const switched=await newPage("",true);page=switched;
+ await switched.evaluate(()=>{window.projectStorageGate.held=true;});
+ await switched.getByLabel("Add photos or videos",{exact:true}).setInputFiles({name:"private-room.png",mimeType:"image/png",buffer:Buffer.from(png,"base64")});
+ await expect.poll(()=>switched.evaluate(()=>window.projectStorageGate.callbacks.length)).toBe(1);
+ await switched.getByRole("button",{name:"Switch fixture account",exact:true}).click();await expect(switched.getByText("Fixture account B",{exact:true})).toBeVisible();
+ await switched.evaluate(()=>{window.projectStorageGate.held=false;for(const callback of window.projectStorageGate.callbacks.splice(0))callback();});
+ const oldAccountBytes=await switched.evaluate(()=>new Promise((resolve,reject)=>{const open=indexedDB.open("rendprop-media-v1",1);open.onerror=()=>reject(open.error);open.onsuccess=()=>{const db=open.result,request=db.transaction("sources","readonly").objectStore("sources").getAll();request.onsuccess=()=>{db.close();resolve(request.result.filter(row=>row.scope.includes("11111111-1111-4111-8111-111111111111")).length);};request.onerror=()=>{db.close();reject(request.error);};};}));
+ assert.equal(oldAccountBytes,0);await expect(clip(switched)).toHaveCount(0);assert.equal(calls.filter(call=>call.method!=="GET").length,0);
+ receipt.checks.push("An account change aborts a pending original connection before its write or draft admission; the new account receives no clip or original");
+ await switched.context().close();page=originalPage;
  await page.getByLabel("Add photos or videos",{exact:true}).setInputFiles({name:"private-room.png",mimeType:"image/png",buffer:Buffer.from(png,"base64")});
  await expect(clip(page)).not.toHaveAccessibleName(/original file missing/);await expect(page.getByText(/^Local video: originals/)).toBeVisible();
  assert.equal(calls.filter(c=>c.method!=="GET").length,0);await page.reload();await expect(clip(page)).toBeVisible();await expect(clip(page)).not.toHaveAccessibleName(/original file missing/);
@@ -79,6 +131,33 @@ try{
   receipt.checks.push("An account switch while a tentative project writer is opening aborts it before any cloud document write");
   const viewer=await newPage("?role=marketing");await viewer.getByLabel("Open video project",{exact:true}).selectOption(key);await expect(clip(viewer)).not.toHaveAccessibleName(/original file missing/);await expect(viewer.getByLabel("Project name",{exact:true})).toBeDisabled();await expect(viewer.getByRole("button",{name:"Save a copy",exact:true})).toBeDisabled();await expect(viewer.getByRole("button",{name:"Archive",exact:true})).toBeDisabled();
   receipt.checks.push("A current read-only workspace role can restore its own saved project but receives no cloud editing controls");
+ const rejected=await newPage();
+ await rejected.getByLabel("Add photos or videos",{exact:true}).setInputFiles({name:"unsaved-room.png",mimeType:"image/png",buffer:Buffer.from(png,"base64")});
+ await expect(clip(rejected)).not.toHaveAccessibleName(/original file missing/);
+ await rejected.getByLabel("Project name",{exact:true}).fill("Local work at project limit");
+ rejectNextProject=true;const beforeRejected=documents.size;
+ await rejected.getByRole("button",{name:"Save project to account",exact:true}).click();
+ await expect(rejected.getByText("This workspace already has 100 saved projects",{exact:true})).toBeVisible();
+ await expect(rejected.getByLabel("Open video project",{exact:true})).toHaveValue("");
+ await expect(rejected.getByRole("button",{name:"Save project to account",exact:true})).toBeEnabled();
+ await expect(clip(rejected)).not.toHaveAccessibleName(/original file missing/);
+ assert.equal(documents.size,beforeRejected);
+ receipt.checks.push("An explicit project-creation rejection preserves the editable local draft and original without adopting a nonexistent cloud project or requiring endless retries");
+ loseNextProject=true;
+ await rejected.getByRole("button",{name:"Save project to account",exact:true}).click();
+ await expect(rejected.getByText("Project save is awaiting confirmation. Retry sync before creating another copy.",{exact:true})).toBeVisible();
+ const uncertainKey=await rejected.getByLabel("Open video project",{exact:true}).inputValue();assert.ok(uncertainKey.startsWith("project:"));
+ assert.equal(documents.size,beforeRejected+1);
+ await rejected.getByRole("button",{name:"Retry saving",exact:true}).click();await expect(status(rejected)).toBeVisible();
+ await expect(rejected.getByLabel("Open video project",{exact:true})).toHaveValue(uncertainKey);
+ assert.equal(documents.size,beforeRejected+1);assert.equal([...documents.values()].find(row=>row.key===uncertainKey).revision,1);
+ receipt.checks.push("A lost reply after project creation retains the exact uncertain key and reconciles it without creating another project or writing a second revision");
+ rejectNextProject=true;
+ await rejected.getByRole("button",{name:"Save a copy",exact:true}).click();
+ await expect(rejected.getByText("This workspace already has 100 saved projects",{exact:true})).toBeVisible();
+ await expect(rejected.getByLabel("Open video project",{exact:true})).toHaveValue(uncertainKey);await expect(status(rejected)).toBeVisible();
+ assert.equal(documents.size,beforeRejected+1);
+ receipt.checks.push("A rejected Save a copy keeps the previous cloud project selected and confirmed instead of replacing its writer with a failed new identity");
  for(const width of [1440,390]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:join(artifacts,`projects-${width}.png`),fullPage:true});}
  assert.deepEqual(receipt.errors,[]);assert.deepEqual(receipt.externalRequests,[]);receipt.status="passed";
 }catch(error){receipt.status="failed";receipt.failure=String(error.stack??error);process.exitCode=1;await page?.screenshot({path:join(artifacts,"failure.png"),fullPage:true}).catch(()=>{});if(page)await writeFile(join(artifacts,"failure.txt"),await page.locator("body").innerText().catch(()=>""));}

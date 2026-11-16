@@ -203,9 +203,9 @@
         <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
       </array>
     </dict>
-    <!-- Performance data: MetricKit hang / CPU / disk-write exceptions and a
-         median launch time, all from the same subscriber, all as one small
-         number or category each. -->
+    <!-- Performance data: MetricKit hang / CPU / disk-write diagnostics,
+         reduced to small duration/category fields. The routine metric-payload
+         callback does not upload launch histograms or a median launch time. -->
     <dict>
       <key>NSPrivacyCollectedDataType</key>
       <string>NSPrivacyCollectedDataTypePerformanceData</string>

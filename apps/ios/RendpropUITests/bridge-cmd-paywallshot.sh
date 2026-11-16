@@ -152,7 +152,8 @@ xcodebuild test \
   -derivedDataPath "$DD_DIR" \
   -resultBundlePath "$RESULT" \
   > "$LOG" 2>&1
-echo "TEST_EXIT=$?"
+TEST_EXIT_CODE=$?
+echo "TEST_EXIT=$TEST_EXIT_CODE"
 grep -E "error:|Test Case|passed|failed" "$LOG" | tail -30
 
 # ---------------------------------------------------------- 5. export the PNGs
@@ -293,9 +294,14 @@ fi
 PAYWALL_PNG="MISSING"
 # xcresulttool names exports "<name>_0_<UUID>.png"; the manifest rename keeps
 # that suffix, so match on the prefix rather than the exact name.
-SRC="$(ls "$RAW_DIR"/p01-paywall-monthly*.png 2>/dev/null | head -n 1)"
-[ -n "$SRC" ] || SRC="$RAW_DIR/$DELIVERABLE"
-if [ -e "$SRC" ]; then
+SRC=""
+if [ "$TEST_EXIT_CODE" -eq 0 ]; then
+  SRC="$(ls "$RAW_DIR"/p01-paywall-monthly*.png 2>/dev/null | head -n 1)"
+  [ -n "$SRC" ] || SRC="$RAW_DIR/$DELIVERABLE"
+else
+  echo "TEST_FAILED — no App Review screenshot will be copied; read $LOG and the activity notes"
+fi
+if [ -n "$SRC" ] && [ -e "$SRC" ]; then
   W=$(sips -g pixelWidth  "$SRC" 2>/dev/null | awk '/pixelWidth/{print $2}')
   H=$(sips -g pixelHeight "$SRC" 2>/dev/null | awk '/pixelHeight/{print $2}')
   if [ "$W" = "$WANT_W" ] && [ "$H" = "$WANT_H" ]; then

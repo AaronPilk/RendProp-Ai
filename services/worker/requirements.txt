@@ -9,8 +9,8 @@
 
 boto3==1.35.99        # R2 (S3 API): download capture, upload mp4/poster, presign
 botocore==1.35.99     # pinned with boto3 — they move in lockstep
-requests==2.32.3      # Supabase PostgREST + Cloudflare Stream REST
-urllib3==2.2.3        # requests' transport; pinned so CVE bumps are deliberate
+requests==2.34.2      # Supabase PostgREST + Cloudflare Stream REST
+urllib3==2.8.0        # upstream's September 2026 streaming/proxy fixes
 
 # System binaries (NOT pip): ffmpeg + ffprobe are REQUIRED (the encode + poster +
 # the pipeline's keyframe extraction). The Dockerfile installs them. Locally:

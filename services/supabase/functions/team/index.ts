@@ -1,3 +1,5 @@
+import { workspaceDirectory } from "../_shared/workspaces.ts";
+import { libraryAccess } from "../_shared/library-access.ts";
 // team — seats, invites and members for one org.
 //
 //   GET    /team                    -> { org, plan, seats:{used,allowed}, members[], invites[], can_manage }
@@ -82,6 +84,7 @@ import {
   throwRpc,
 } from "../_shared/http.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { privateTestingHostMode, privateTestingContext, privateTestingMembers } from "../_shared/internal-testing.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { generateCode, hashCode, normalizeCode, normalizeEmail } from "./codes.ts";
 
@@ -132,6 +135,11 @@ const DEFAULT_OVERVIEW_WINDOW = "30d";
  *  losing somebody's lead to a tidy-up would be the worst bug in this file. */
 const CONTENT_TABLES = ["listings", "leads"] as const;
 
+/** Members looked up per `in.(…)` filter on GET /team. */
+const PROFILE_PAGE = 100;
+/** Invite emails queued at once by POST /team/invites/bulk. */
+const INVITE_MAIL_CONCURRENCY = 6;
+
 type Admin = ReturnType<typeof adminClient>;
 
 async function orgIsEmpty(admin: Admin, orgId: string): Promise<boolean> {
@@ -150,7 +158,7 @@ async function orgIsEmpty(admin: Admin, orgId: string): Promise<boolean> {
 async function roleInOrg(admin: Admin, userId: string, orgId: string): Promise<string | null> {
   const { data, error } = await admin
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (error) throw new HttpError(500, `Membership lookup failed: ${error.message}`);
+  if (error) throw new HttpError(500, "We couldn't load your team just now. Try again in a minute.");
   return (data?.role as string | undefined) ?? null;
 }
 
@@ -203,10 +211,10 @@ async function queueInviteEmail(
   code: string,
   role: string,
   actorId: string,
-): Promise<void> {
-  if (!address || typeof inviteId !== "string") return;
+): Promise<boolean> {
+  if (!address || typeof inviteId !== "string") return false;
   try {
-    const { error } = await adminClient().rpc("notification_enqueue_invite", {
+    const { data, error } = await adminClient().rpc("notification_enqueue_invite", {
       p_org: orgId,
       p_invite: inviteId,
       p_email: address,
@@ -214,9 +222,17 @@ async function queueInviteEmail(
       p_role: role,
       p_inviter: actorId,
     });
-    if (error) console.error("invite mail not queued:", error.message);
-  } catch (e) {
-    console.error("invite mail not queued:", e instanceof Error ? e.message : String(e));
+    // The SQL helper deliberately returns ok:false instead of throwing when
+    // enqueue fails. Neither an HTTP 200 nor an address proves that mail was
+    // queued, and queue acceptance is not evidence of delivery to an inbox.
+    const queued = !error && data?.ok === true &&
+      (data.queued === true || data.reason === "already_queued");
+    if (!queued) console.error("invite mail not queued");
+    return queued;
+  } catch {
+    // Do not echo database/provider errors that may contain the invite code.
+    console.error("invite mail not queued");
+    return false;
   }
 }
 
@@ -257,17 +273,34 @@ Deno.serve(async (req) => {
       const { data, error } = await adminClient()
         .rpc("accept_org_invite", { p_user: user.id, p_token_hash: await hashCode(code) });
       if (error) throwRpc(error.message);
-      const r = (data ?? {}) as { org_id?: string; org_name?: string | null; role?: string };
-      return json({ ok: true, org_id: r.org_id ?? null, org_name: r.org_name ?? null, role: r.role ?? null });
+      const r = (data ?? {}) as { org_id?: string; org_name?: string | null; role?: string; private_testing?: boolean; team_name?: string };
+      if (r.private_testing === true && (!r.org_id || !r.org_name || typeof r.team_name !== "string")) {
+        throw new HttpError(503, "Your private testing workspace could not be verified. Please retry.");
+      }
+      return json({ ok: true, org_id: r.org_id ?? null, org_name: r.org_name ?? null, role: r.role ?? null,
+        ...(r.private_testing === true ? { access_mode: "private_testing", team_name: r.team_name } : {}) });
     }
 
     // ── Everything below acts on the CALLER'S org ────────────────────────────
     const user = await getUser(req);
     const admin = adminClient();
-    const orgId = await orgForUser(user.id, preferredOrg(req));
+    const directory = await workspaceDirectory(admin, user.id, preferredOrg(req));
+    const selectedOrg = directory.active_org_id;
+    await libraryAccess(admin, user.id, selectedOrg);
+    let orgId = directory.billing_org_id;
+    // A downgraded member keeps their private library, so the normal billing
+    // resolver correctly falls back to it. Let that member open GET /team to
+    // see their paused seat without reopening Team-funded creation routes.
+    if (req.method === "GET" && seg.length === 0 && orgId === directory.own_org_id) {
+      const { data: pausedOrg, error: pausedError } = await admin.rpc("paused_team_org", { p_actor: user.id });
+      if (pausedError) throw new HttpError(503, "Team status could not be loaded. Please retry.");
+      if (typeof pausedOrg === "string") orgId = pausedOrg;
+    }
+    const selectedPrivateTesting = await privateTestingContext(admin, user.id, selectedOrg);
     const myRole = await roleInOrg(admin, user.id, orgId);
-    if (!myRole) throw new HttpError(403, "Not a member of this org", "forbidden");
-    const canManage = MANAGER_ROLES.has(myRole);
+    if (!myRole && !selectedPrivateTesting) throw new HttpError(403, "Not a member of this team", "forbidden");
+    const parentAccess = directory.own_org_id === orgId ? await libraryAccess(admin,user.id,orgId) : null;
+    const canManage = !!parentAccess?.can_manage_subscription && MANAGER_ROLES.has(myRole ?? "") && !selectedPrivateTesting;
 
     const requireManager = () => {
       if (!canManage) {
@@ -277,45 +310,87 @@ Deno.serve(async (req) => {
 
     // ── GET /team ────────────────────────────────────────────────────────────
     if (req.method === "GET" && seg.length === 0) {
-      const seats = await seatCounts(admin, orgId);
-      const { data: rows } = await admin
-        .from("memberships").select("user_id, role").eq("org_id", orgId);
-      const ids = (rows ?? []).map((r) => r.user_id as string);
-      const { data: people } = ids.length
-        ? await admin.from("profiles").select("id, name, email").in("id", ids)
-        : { data: [] as { id: string; name: string | null; email: string | null }[] };
-      const byId = new Map((people ?? []).map((p) => [p.id, p]));
-
-      // Pending invites are visible to MANAGERS ONLY, and never with the code:
-      // the plaintext existed once, in the response that created it. An agent
-      // on the team has no business reading who else is mid-invite.
-      const { data: invites } = canManage
-        ? await admin.from("org_invites")
+      // Independent reads for one screen. Issued together and examined in the
+      // order they used to run in, so the first failure reported is the same;
+      // one after another they were nine database round trips.
+      let membersQuery = admin.from("memberships").select("user_id, role").eq("org_id", orgId);
+      if (!canManage) membersQuery = membersQuery.eq("user_id", user.id);
+      const reads = await Promise.allSettled([
+        seatCounts(admin, orgId),
+        admin.rpc("team_seat_status", { p_org: orgId }),
+        canManage && !(user as { is_anonymous?: boolean }).is_anonymous
+          ? Promise.all([privateTestingMembers(admin, user.id, orgId), privateTestingHostMode(admin, user.id, orgId)])
+          : Promise.resolve([[], null] as const),
+        privateTestingContext(admin, user.id, orgId),
+        membersQuery,
+        // Pending invites are visible to MANAGERS ONLY, and never with the code:
+        // the plaintext existed once, in the response that created it. An agent
+        // on the team has no business reading who else is mid-invite.
+        canManage
+          ? admin.from("org_invites")
             .select("id, email, role, created_at, expires_at")
             .eq("org_id", orgId).is("accepted_at", null).is("revoked_at", null)
             .gt("expires_at", new Date().toISOString())
             .order("created_at", { ascending: false })
-        : { data: [] as unknown[] };
+          : Promise.resolve({ data: [] as unknown[], error: null }),
+        admin.from("orgs").select("name, plan").eq("id", orgId).maybeSingle(),
+      ]);
+      const settled = <T>(result: PromiseSettledResult<T>): T => {
+        if (result.status === "rejected") throw result.reason;
+        return result.value;
+      };
+      const seats = settled(reads[0]);
+      const { data: seatRows, error: seatError } = settled(reads[1]);
+      if (seatError || !Array.isArray(seatRows)) throw new HttpError(503, "Team seat status could not be loaded. Please retry.");
+      const activeById = new Map((seatRows as { user_id: string; seat_active: boolean }[])
+        .map((row) => [row.user_id, row.seat_active === true]));
+      const [privateMembers, privateTeam] = settled(reads[2]);
+      const privateAccess = settled(reads[3]);
+      const { data: rows, error: membersError } = settled(reads[4]);
+      if (membersError) throw new HttpError(503, "The team could not be loaded. Please retry.");
+      const ids = (rows ?? []).map((r) => r.user_id as string);
+      // One `id=in.(…)` filter per 100 members: a 500-seat roster in a single
+      // filter is an ~18 KB query string, past what the API gateway accepts.
+      const people: { id: string; name: string | null; email: string | null }[] = [];
+      const profilePages = await Promise.all(Array.from({ length: Math.ceil(ids.length / PROFILE_PAGE) }, (_, page) =>
+        admin.from("profiles").select("id, name, email").in("id", ids.slice(page * PROFILE_PAGE, (page + 1) * PROFILE_PAGE))));
+      for (const page of profilePages) {
+        if (page.error) throw new HttpError(503, "The team could not be loaded. Please retry.");
+        people.push(...(page.data ?? []) as typeof people);
+      }
+      const byId = new Map(people.map((p) => [p.id, p]));
 
-      const { data: org } = await admin
-        .from("orgs").select("name, plan").eq("id", orgId).maybeSingle();
+      const { data: invites, error: invitesError } = settled(reads[5]);
+      if (invitesError) throw new HttpError(503, "Pending invitations could not be loaded. Please retry.");
+
+      const { data: org, error: orgError } = settled(reads[6]);
+      if (orgError || !org) throw new HttpError(503, "The workspace could not be loaded. Please retry.");
 
       return json({
+        actor_id: user.id,
+        content_org_id: selectedOrg,
         org_id: orgId,
         org_name: org?.name ?? null,
-        plan: org?.plan ?? null,
-        can_manage: canManage,
-        seats,
-        members: (rows ?? []).map((r) => {
+        plan: privateAccess ? "team" : org?.plan ?? null,
+        access_mode: privateTeam || privateAccess ? "private_testing" : "private_libraries",
+        ...(privateAccess ? { team_name: privateAccess.sponsor_org_name } : {}),
+        can_manage: canManage && !privateAccess,
+        seats: { ...seats, paused: [...activeById.values()].filter((active) => !active).length },
+        members: [...(rows ?? []).map((r) => {
           const p = byId.get(r.user_id as string);
+          if (!activeById.has(r.user_id as string)) throw new HttpError(503, "Team seat status could not be loaded. Please retry.");
           return {
             user_id: r.user_id,
             role: r.role,
             name: p?.name ?? null,
             email: p?.email ?? null,
             is_you: r.user_id === user.id,
+            seat_active: activeById.get(r.user_id as string),
           };
-        }),
+        }), ...privateMembers.filter((p) => !ids.includes(p.user_id)).map((p) => ({
+          user_id: p.user_id, role: p.role, name: p.name, email: p.email, is_you: p.user_id === user.id,
+          access_mode: "private_testing", benefits_active: p.benefits_active,
+        }))],
         invites: invites ?? [],
       });
     }
@@ -343,7 +418,8 @@ Deno.serve(async (req) => {
       // `window` is echoed as the token the caller sent, not as the interval:
       // the screen round-trips it, and `from`/`to`/`window_seconds` from the RPC
       // are what actually define the period.
-      return json({ ...(data as Record<string, unknown>), window: requested });
+      assert(data && (data as Record<string, unknown>).org_id === orgId,503,"Team overview identity could not be verified.");
+      return json({ ...(data as Record<string, unknown>), actor_id:user.id, content_org_id:selectedOrg, window: requested });
     }
 
     // ── POST /team/invites ───────────────────────────────────────────────────
@@ -395,8 +471,10 @@ Deno.serve(async (req) => {
       // `token_hash`, which is a credential and never leaves the database. The
       // plaintext code exists here and nowhere else, ever.
       const created = (data ?? {}) as Record<string, unknown>;
-      await queueInviteEmail(orgId, created.id, email, code, role, user.id);
-      return json({ ...created, code, emailed: Boolean(email) }, 201);
+      const emailQueued = await queueInviteEmail(orgId, created.id, email, code, role, user.id);
+      // `emailed` is retained for older clients; both fields report queue
+      // acceptance only. The valid code remains available if email failed.
+      return json({ ...created, code, emailed: emailQueued, email_queued: emailQueued }, 201);
     }
 
     // ── POST /team/invites/bulk ──────────────────────────────────────────────
@@ -447,21 +525,26 @@ Deno.serve(async (req) => {
       // 200 when the whole list was already on the team, because nothing was.
       const report = (data ?? {}) as Record<string, unknown>;
 
-      // Queue one mail per issued invite. Sequential rather than parallel: this
-      // is at most 200 rows against the same table, and a burst of 200
-      // concurrent RPCs would contend on the outbox for no gain when the drain
-      // runs once a minute anyway. Failures are already swallowed per-invite,
+      // Queue one mail per issued invite, a few at a time. One by one, 200
+      // invites were 200 database round trips in a row (30-50 s from a region
+      // away from the database, long enough for the app to give up on a
+      // request that had already issued every code). All at once would be a
+      // burst against the outbox. Failures are already swallowed per-invite,
       // so one bad address cannot stop the other 199.
       const results = Array.isArray(report.results) ? report.results as Array<Record<string, unknown>> : [];
-      let queued = 0;
-      for (const r of results) {
-        if (r.outcome !== "issued") continue;
+      const issued = results.flatMap((r) => {
+        if (r.outcome !== "issued") return [];
         const addr = typeof r.email === "string" ? r.email : null;
         const codeOut = typeof r.code === "string" ? r.code : null;
-        if (!addr || !codeOut) continue;
-        await queueInviteEmail(orgId, r.id, addr, codeOut, role, user.id);
-        queued++;
-      }
+        return addr && codeOut ? [{ id: r.id, addr, codeOut }] : [];
+      });
+      let queued = 0, next = 0;
+      await Promise.all(Array.from({ length: Math.min(INVITE_MAIL_CONCURRENCY, issued.length) }, async () => {
+        while (next < issued.length) {
+          const invite = issued[next++];
+          if (await queueInviteEmail(orgId, invite.id, invite.addr, invite.codeOut, role, user.id)) queued++;
+        }
+      }));
       return json({ ...report, emails_queued: queued }, Number(report.issued ?? 0) > 0 ? 201 : 200);
     }
 
@@ -472,7 +555,7 @@ Deno.serve(async (req) => {
         .update({ revoked_at: new Date().toISOString() })
         .eq("id", seg[1]).eq("org_id", orgId).is("accepted_at", null).is("revoked_at", null)
         .select("id");
-      if (error) throw new HttpError(500, `Could not revoke the invite: ${error.message}`);
+      if (error) throw new HttpError(500, "We couldn't cancel that invite just now. Try again in a minute.");
       // Scoped to the caller's org, so another tenant's invite id is a 404 and
       // not a hint that the id exists.
       if (!data || data.length === 0) throw new HttpError(404, "No pending invite with that id", "not_found");
@@ -485,6 +568,17 @@ Deno.serve(async (req) => {
       const target = seg[1];
       if (target === user.id) {
         throw new HttpError(400, "You can't remove yourself from your own team.");
+      }
+      const privateMembers = await privateTestingMembers(admin, user.id, orgId);
+      if (privateMembers.some((member) => member.user_id === target)) {
+        const { data, error } = await admin.rpc("remove_private_internal_tester", {
+          p_actor: user.id, p_sponsor_org: orgId, p_beneficiary: target,
+        });
+        if (error) throwRpc(error.message);
+        if (data?.ok !== true || data?.removed !== true || data?.private_testing !== true) {
+          throw new HttpError(503, "Testing access removal could not be verified. Please retry.");
+        }
+        return json({ ok: true, private_testing: true });
       }
       const targetRole = await roleInOrg(admin, target, orgId);
       if (!targetRole) throw new HttpError(404, "That person isn't on this team", "not_found");

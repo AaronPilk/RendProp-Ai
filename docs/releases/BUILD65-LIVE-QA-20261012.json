@@ -1,0 +1,384 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-12T22:58:28.222200+00:00",
+  "status": "INTERNAL_TESTFLIGHT_AVAILABLE_REEL_VISUAL_REJECTED_BUILD66_FIX_IN_PROGRESS",
+  "allAppFeaturesCertified": false,
+  "source": {
+    "commit": "6c6db41ac85808b40f544ee891bce6d7787c52e1",
+    "trees": {
+      "apps/ios/Rendprop": "2581d2527cefe9467ea16166781e7951e157d577",
+      "apps/ios/project.yml": "ab5a73a1fdb329416d683673e9f99c26d007a7c7",
+      "apps/ios/Rendprop.xcodeproj": "1cdd6282c0b3393d06339212e07bc90cb28aeaa9"
+    }
+  },
+  "archive": {
+    "version": "1.0.4",
+    "build": 65,
+    "uuid": "C41E481E-3BE7-3226-8F83-1C618A7A3F6C",
+    "dSYMUUID": "C41E481E-3BE7-3226-8F83-1C618A7A3F6C",
+    "signedExportVerified": true,
+    "debugEntitlement": false,
+    "fixtureMarkersAbsent": 16,
+    "ipaBytes": 24310004,
+    "ipaSHA256": "7a040efceeb56b9bbf52012a11063e8b15d0c785a1cda4156944de73f118f1f0",
+    "evidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-apple/archive-verified.json",
+      "sha256": "b01a7399e553cefac9536d6cc3444c0b50d691f4638a36373c9c0fb8d0f4fdd7"
+    }
+  },
+  "testflight": {
+    "buildID": "ecf77727-0e9e-4aa6-b028-27abe54a5c56",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "existingRendpropTeamVerified": true,
+    "notesVerified": true,
+    "uploadedOnce": true,
+    "evidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-apple/testflight-availability.json",
+      "sha256": "410989b91a65d9be0cecaf4fd6230c1969b269b792ba07ac38adc35adca5b27e"
+    },
+    "uploadEvidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-apple/upload-once.json",
+      "sha256": "05a27fcb6fb6406983491e8732610af15b7b92130155e190848e6adb58308a7c"
+    }
+  },
+  "changes": [
+    "Reel preview follows the encoded video aspect rather than a fixed-height box.",
+    "Prepared source JPEG retains available photo detail up to2048 pixels at0.95 quality; no invented upscale.",
+    "Original-photo motion uses proportional center-cover; no stretch or accepted failed AI geometry.",
+    "Source-only QC bound accepts complete stills up to2048 pixels/9MB, leaves frame bound2M base64 unchanged, and reserves the extra source input-token quote."
+  ],
+  "automated": {
+    "nativeRecovery": {
+      "actualAssertions": 264,
+      "labDispatchAssertions": 14,
+      "compiledNegativeControls": 48,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-reel-quality/recovery-current/receipt.json",
+        "sha256": "c460e25b8b5a71434e8e62c8cf9b5c592d2beadc4cbba4f76a3a70b561c2ec59"
+      }
+    },
+    "actualUIKitAVFoundation": {
+      "assertions": 230,
+      "compiledNegativeControls": 8,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-reel-quality/renderer-final/receipt.json",
+        "sha256": "73f42853eadfd9bb63f2d9dda25479dcf41f209b4378750472fc5f18ac253330"
+      }
+    },
+    "actualHTTPSourceJPEG": {
+      "assertions": 120,
+      "compiledNegativeControls": 4,
+      "sourceJPEGBytes": 2976887,
+      "base64Characters": 3969184,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-reel-quality/renderer-final/actual-jpeg-wire/receipt.json",
+        "sha256": "3af71c2303f4b0a1ff4b576b338f65e910e1cc19f7c0e40a5936a33b68352250"
+      }
+    },
+    "serverSourceAdmission": {
+      "actualTests": 5,
+      "compiledNegativeControls": 8,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-qc-source/actual-source-final/receipt.json",
+        "sha256": "fb0417b8387ca3d2bda327e599ab278fdfab481fce089162f3367906b4be0628"
+      }
+    },
+    "unchangedCoordinatorUIKitExport": {
+      "assertions": 623,
+      "compiledNegativeControls": 30,
+      "currentUnchangedFilesVerifiedByArchivePreflight": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-coordinator-export/full-final/receipt.json",
+        "sha256": "acb1afa20eb6bd6138e4ad5b7fa48d20641cbf4b18ceee0ab703c62c28fdfec6"
+      }
+    }
+  },
+  "backend": {
+    "function": "ai-video",
+    "version": 71,
+    "commit": "42c7d7a",
+    "JWTVerified": true,
+    "readbackRuntimeFilesMatched": 49,
+    "evidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-reel-source-qc/deployment-receipt.json",
+      "sha256": "8dd947c74110c70e877f3310f593aa5da28faa4340fd70ec5f9b15cd60b65923"
+    }
+  },
+  "ci": {
+    "runID": 38309615943,
+    "headSha": "6c6db41ac85808b40f544ee891bce6d7787c52e1",
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38309615943",
+    "status": "completed",
+    "conclusion": "failure",
+    "dispatchedOnce": true,
+    "counts": {
+      "passed": 11,
+      "failed": 1,
+      "running": 0
+    },
+    "evidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-ci/ci-final-38309615943.json",
+      "sha256": "560faab526c12da6b4e64428497364bbbce0359d06614ca713ef4d846e216fd5"
+    },
+    "prior64": "11passed/0failed/1remaining native cancelled by concurrency after the authorized65 source change; not relabeled fully green.",
+    "priorFailuresPreserved": true,
+    "backendTests": {
+      "passed": 2070,
+      "failed": 0,
+      "ignored": 1,
+      "ignoredCase": "Optional real local SQL controller lifecycle",
+      "auxiliaryPassed": [
+        62,
+        10,
+        4
+      ],
+      "actualSourceBoundaryTestsRan": 5,
+      "log": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-ci/supabase-edge-success.log",
+        "sha256": "d0951caea0da6b082ef0c6529a0353a45f8395051093603e829becff005db18c"
+      }
+    },
+    "failure": {
+      "job": "Offline audit evidence, consent and adoption source gates",
+      "step": 38,
+      "name": "Reel generation stops at failures and retains completed clips",
+      "classification": "Closed clip-failure extraction fixture did not compile after new recovery/batch dependencies. Signed app compilation passed; no product assertion reached in this failed fixture. This result remains a CI failure.",
+      "errors": [
+        "ReelQualityRefusal missing",
+        "AIShot fields missing",
+        "PendingReelBatch metadata and batch/preparedJPEG fixture plumbing missing"
+      ],
+      "log": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-ci/native-failed.log",
+        "sha256": "b6bfb2be2b997d63675e34ddfd79103a4c7638e3a77a2399361ef1098a2303a8"
+      },
+      "noRerun": true,
+      "runner": "apps/ios/tests/run-reel-clip-failures.sh",
+      "lifecycleRunnerSkipped": true
+    },
+    "laterNativeStepsSkipped": [
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66
+    ],
+    "laterNativeStepsNotClaimedPassed": true
+  },
+  "realPhone": {
+    "build65": "INSTALLED_VERSION_VERIFIED_PHYSICAL_FEATURE_ACCEPTANCE_PENDING",
+    "organizedPackage64": {
+      "status": "PASS",
+      "bytes": 406383527,
+      "entries": 399,
+      "imageFiles": 203,
+      "originalMasters": 13,
+      "declutteredMasters": 13,
+      "stagedMasters": 12,
+      "videos": 4,
+      "duplicateOrTraversalPaths": 0,
+      "platformRatiosPassed": true,
+      "firstOriginalByteExact": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build64-coordinator-export/actual-phone/receipt.json",
+        "sha256": "e2f64270221c82f9b9e707b1c20f60b80808f8b49aebd879064d10271bc02ee2"
+      },
+      "crcEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build64-phone-acceptance/coordinator-zip-crc.json",
+        "sha256": "8330d20d10a7205218936c5ad2cc7c80982d68251cbe09917d2186c202a43eea"
+      }
+    },
+    "KIEClip64": {
+      "status": "PHONE_SAVE_AND_SERVER_QC_PASS_SAMPLED_QUALITY_REVIEW",
+      "dimensions": "1080x1920",
+      "fps": 30,
+      "bitrateMbps": 15.115171,
+      "sampledFrames": 5,
+      "persistentEncodedSidebarsInSamples": false,
+      "roomDetail": "visibly soft",
+      "uncontrolledMotionDifferenceFromOldFAL": "Push-in versus Fly-through",
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-reel-quality/actual-phone64/quality-review.json",
+        "sha256": "1285392e9cc1c199a281b928b0b737bd711a89bd7a0cb3c37208903d9c007405"
+      }
+    },
+    "fullEightPhotoReel": "FUNCTIONAL_COMPLETION_VISUAL_ACCEPTANCE_FAIL: phone65 finished8 sources and saved40-second1080x1920 export; user rejected zoomed framing/motion. Technical metadata passed; reopening remains unverified.",
+    "owner2KPhoto": "Supplier generation completed; exact exported master dimensions and physical acceptance are still pending. Public2K routing is unchanged.",
+    "ownerCeilingConfirmation": "The property owner confirmed that the ceiling is correct in the edited image. The provisional structural-change concern was a false alarm and is withdrawn. No new paid fidelity judge was committed or deployed.",
+    "installed65": {
+      "version": "1.0.4",
+      "build": "65",
+      "verifiedAt": "2026-10-12T21:42:41.308284+00:00",
+      "readOnly": true,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-apple/installed-app-safe.json",
+        "sha256": "d63c737aef400c993f24700b392f8c9cc6c5af4c8c62497c2a1163157c509255"
+      }
+    },
+    "currentEightPhotoRun": {
+      "status": "FUNCTIONAL_COMPLETION_VISUAL_ACCEPTANCE_FAIL",
+      "build": 65,
+      "motion": "Fly-through",
+      "sourceCount": 8,
+      "observedFirstSubmitAt": "2026-10-12T22:00:38Z",
+      "observedFirstAcceptedAt": "2026-10-12T22:00:42Z",
+      "authority": "Parent live phone observed functional ready preview and saved export; the user rejected visual quality. Downloaded actual MP4 independently measured; reopening remains unverified.",
+      "providerGenerations": 12,
+      "qcProviderCalls": 16,
+      "geometryApprovedAISources": 6,
+      "originalPhotoMotionSources": 2,
+      "generationToLastQCSeconds": 849.574471,
+      "catalogCostEstimateCents": 234.24,
+      "invoiceReconciled": false,
+      "nativeReadyPreviewObservedByParent": true,
+      "visualAcceptance": "FAIL: user rejected excessive zoom/cropped scene and lack of usable drone fly-through motion for Instagram. Machine geometry acceptance is not marketing quality approval.",
+      "actualMP4DownloadAndNewExportInspection": "PASS_TECHNICAL_METADATA_ONLY_VISUAL_FAIL",
+      "serverEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-eight-photo-real-run/terminal-server-receipt.json",
+        "sha256": "48cb5fddfeeb4bd2cd0645285b61d43e1123864598e78f775ff13488f5903a5d"
+      },
+      "framingDiagnosis": {
+        "sampledSources": [
+          3,
+          4
+        ],
+        "sourcePixels": [
+          672,
+          1195
+        ],
+        "providerRawPixels": [
+          1920,
+          1088
+        ],
+        "providerLostPicturedCeilingFloorBeforeAssembly": true,
+        "nativePortraitCoverAddsSecondCrop": true,
+        "priorKIESourceAutoClaimWithdrawn": true,
+        "limitation": "Measured raw owned clips and exact source pairs; final exported phone reel is not measured by this receipt. Native full-photo fit alone cannot restore supplier-removed scene.",
+        "evidence": {
+          "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-eight-photo-real-run/raw-clip-quality-review/receipt.json",
+          "sha256": "f10ab560c401d778bf7e1f4924bc5dc8fc5c01ffed905ce51e7b72475cfcfd5b"
+        }
+      },
+      "exportedMP4": {
+        "file": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build65-eight-photo-real-run/actual-phone-export/reel-04.mp4",
+        "sha256": "21d2a691eba17a7102124c06be4211deb457520e13f3c6269c7b29b6a8076286",
+        "bytes": 75369896,
+        "codec": "h264",
+        "width": 1080,
+        "height": 1920,
+        "fps": "30/1",
+        "durationSeconds": 40.0,
+        "bitRate": 15073979,
+        "visualAcceptance": "FAIL",
+        "reopenVerified": false,
+        "evidence": {
+          "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build65-eight-photo-real-run/actual-phone-export/export-measurement-receipt.json",
+          "sha256": "71f1ca3423b12bb9d5abd0bd6611a64b9d64c6bd88babc991101e6226d4486e9"
+        }
+      }
+    }
+  },
+  "apple": {
+    "build": "57",
+    "state": "WAITING_FOR_REVIEW",
+    "releaseType": "MANUAL",
+    "modified": false,
+    "JohnAppleUntouched": true
+  },
+  "limitations": [
+    "Build65 full reel visual acceptance FAILED. Exact downloaded40-second1080x1920 MP4 metadata is measured; reopening remains unverified. Build66 framing/background changes are in archive preparation.",
+    "Build65 selected eight-photo batch reached a ready preview, but usable marketing quality failed. Build66 background continuation and revised framing require their own proof.",
+    "Owner-only provider comparisons do not certify ordinary unsponsored purchase/trial/restore, account-switch privacy, buyer enquiry delivery or aerial generation.",
+    "Historical smaller AI masters are retained honestly; a1080p container does not guarantee sharp source detail.",
+    "Prior failed/cancelled CI and UI results remain preserved; this is not an all-features-tested statement.",
+    "Hosted CI65 ended11 passed/1 failed at the extracted clip-failure fixture compilation; its first failure is preserved and has not been rerun."
+  ],
+  "stagingPrompt": {
+    "status": "TECHNICAL_STAGE_COMPLETE_SINGLE_MATCHED_PAIR_HUMAN_COMPARISON",
+    "commit": "5896a8cd6dfa816075f2404c35e2a077b710214c",
+    "function": "ai-photo",
+    "version": 73,
+    "verifyJWT": true,
+    "runtimeClosureFilesMatched": 38,
+    "scope": "Real-estate staging only: furniture/style affects movable furnishings. Selected source structure, finishes, colors, camera angle and permanent surroundings are explicitly preserved. Manual comparison/approval remains required.",
+    "actualHandlerTests": 49,
+    "actualHandlerFailed": 0,
+    "compiledPromptControls": 5,
+    "compiledHandlerIntegrationControls": 1,
+    "nativeSourceUnchanged": true,
+    "noNewPaidJudge": true,
+    "noModelPriceGrantOrRouteChange": true,
+    "handlerEvidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-stage-prompt/handler-final/receipt.json",
+      "sha256": "3003519f5966000d986be486184b1bc09ade408d2972abb78c59588acea5e790"
+    },
+    "deploymentEvidence": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-stage-prompt/deployment/release-receipt.json",
+      "sha256": "263c00fbb188cfa79b3628513cf167931bb7ab58d90db9a897bf233a64b2fd5f"
+    },
+    "actualPhone": {
+      "build": 65,
+      "style": "modern",
+      "provider": "gemini",
+      "model": "gemini-3.1-flash-image",
+      "imageSize": "2K",
+      "sourceAuthority": "Root actual phone selection of a clean capture-derived family; Enhanced source derived from a12MP original. No furnishing brief or second reference.",
+      "providerSeconds": 14.324783,
+      "ownedOutputBytes": 3087893,
+      "linkedOriginalBytes": 3353378,
+      "ownedListingMatch": true,
+      "sourceHashPresent": true,
+      "linkedOriginalGeometryInServerMetadata": null,
+      "localExactGeometryPending": false,
+      "manualVisualAcceptancePending": false,
+      "fallbackOrRetry": false,
+      "newAutomatedJudge": false,
+      "evidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-stage-prompt/actual-phone-stage/receipt.json",
+        "sha256": "940833a270d98e4fb6cbd4a6c770e75dea438d3aabdd6bc2f3f8e3c7b1736489"
+      },
+      "originalMetadataEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-stage-prompt/actual-phone-stage/original-metadata-readback.json",
+        "sha256": "551547ab0e8ad4cfd9f4dfc29e7f525d816d7dbda60cbc347fac8a68fcd8d84a"
+      },
+      "outputDimensions": [
+        1792,
+        2390
+      ],
+      "outputPixels": 4282880,
+      "linkedSourceRawDimensions": [
+        4032,
+        3024
+      ],
+      "sourceOrientation": "portrait after metadata transform",
+      "manualVisualComparison": "Root matched-source comparison found intended movable furnishings with building/doors/ceiling preserved in this pair; limited human observation, not universal certification.",
+      "visualEvidence": {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build65-stage-prompt/actual-phone-stage/visual-comparison-receipt.json",
+        "sha256": "db79a1d512399c67caac93a3fcda68d88c0c8b70df571d0f9d9186f4ee35379c"
+      }
+    }
+  }
+}

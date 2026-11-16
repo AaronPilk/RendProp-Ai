@@ -62,7 +62,7 @@ import {
   readJsonLimited,
   respondError,
 } from "../_shared/http.ts";
-import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { publicRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import {
   ALLOWED_EVENT_NAMES,
@@ -174,10 +174,10 @@ Deno.serve(async (req) => {
     // does not spend the device's hourly allowance) and BEFORE any database
     // write. Both counters are charged; the device one is the meaningful bound
     // and the IP one catches a fleet of fabricated device ids.
-    if (!(await durableRateLimit(`events:dev:${deviceId}`, DEVICE_MAX_PER_HOUR, HOUR_SECONDS))) {
+    if (!(await publicRateLimit(`events:dev:${deviceId}`, DEVICE_MAX_PER_HOUR, HOUR_SECONDS))) {
       throw new HttpError(429, "Too many event batches from this device — try again later.", "rate_limited");
     }
-    if (!(await durableRateLimit(`events:ip:${clientIp(req)}`, IP_MAX_PER_HOUR, HOUR_SECONDS))) {
+    if (!(await publicRateLimit(`events:ip:${clientIp(req)}`, IP_MAX_PER_HOUR, HOUR_SECONDS))) {
       throw new HttpError(429, "Too many event batches from this network — try again later.", "rate_limited");
     }
 

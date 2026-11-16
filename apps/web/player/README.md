@@ -3,7 +3,10 @@
 **Status: archived (2026-09-03), confirmed against the 24 September source.**
 Nothing in the production build or serving paths uses this directory. For the
 current browser creation product, see [Rendprop Studio](../../studio/README.md) and
-[its latest release](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md).
+the [6 October launch candidate](../../../docs/handoff/LAUNCH-READINESS-20261006.md),
+which keeps pending source changes separate from dated delivery receipts. The
+[24 September record](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md) remains
+historical evidence.
 
 This was the Phase-0 proof of the scroll-scrub idea (Master Build Prompt Parts 5,
 27, 37). It is kept as a runnable reference only. The product's real engines live

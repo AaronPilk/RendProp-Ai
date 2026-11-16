@@ -1,0 +1,30 @@
+{
+  "configurations" : [
+    {
+      "id" : "36B6EE4D-65F1-4F13-9584-E2D1092FA5FB",
+      "name" : "Local StoreKit",
+      "options" : {
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "storeKitConfiguration" : {
+      "identifier" : "Rendprop.storekit"
+    },
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Rendprop.xcodeproj",
+      "identifier" : "E6EC28A1E47FC62776E29A13",
+      "name" : "Rendprop"
+    }
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:Rendprop.xcodeproj",
+        "identifier" : "455DEBEECAB31D4F175AF6B6",
+        "name" : "RendpropUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Owned, disposable Unix-socket Postgres tests. Never uses a configured database.
-All cluster files/logs stay under this checkout's ignored build/ directory.
+Cluster files/logs stay under this checkout's ignored build/ directory.
 """
 import hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
+from fresh_schema_migrations import partition_fresh_migrations
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 SQL = ROOT / 'services/supabase'
 # Only an executable directory may be configured, never a DB URL/connection.
@@ -19,7 +20,7 @@ if not (PG/'initdb').is_file(): raise RuntimeError('Configured PostgreSQL binari
 ENV = {'PATH': '/usr/bin:/bin:/opt/homebrew/bin', 'LC_ALL': 'C'}
 (ROOT / 'build').mkdir(exist_ok=True)
 OUT = pathlib.Path(tempfile.mkdtemp(prefix='pr-', dir=ROOT / 'build'))
-SOCK = OUT / 's'; SOCK.mkdir()
+SOCK = pathlib.Path(tempfile.mkdtemp(prefix='rp-pr-s-', dir='/tmp'))
 if len(str(SOCK).encode())>85: raise RuntimeError('Checkout path is too long for a Unix socket; use a shorter isolated checkout')
 CONN = ['-h', str(SOCK), '-p', '55473', '-U', 'postgres', '-d', 'postgres']
 PSQL = [str(PG/'psql'), '-X', '--no-password', *CONN, '-v', 'ON_ERROR_STOP=1', '-Atq']
@@ -29,6 +30,31 @@ def run(args, text=None):
     if p.returncode: raise AssertionError(p.stderr[-6000:])
     return p.stdout.strip()
 def query(sql): return run(PSQL, sql)
+def deletion_inventory(actor):
+    # Complete rows in this isolated fixture, including custody and cleanup intent.
+    tables = ['orgs','memberships','listings','capture_assets','render_jobs','renders','media_provenance',
+              'studio_documents','studio_creative_results','studio_presenter_profiles','studio_presenter_drafts',
+              'studio_presenter_jobs','studio_presenter_quotes','studio_property_music_copies','video_erase_jobs',
+              'upload_operations','privacy_cleanup_jobs','deletion_requests',
+              'studio_production_reviews','studio_production_versions','studio_project_media','studio_property_music',
+              'studio_presenter_media_sources','studio_presenter_closed_submissions','voice_storage_reservations',
+              'upload_reservations','video_erase_batches','video_erase_stages','cost_ledger']
+    pairs = [f"'{table}',(select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb) from public.{table} r)" for table in tables]
+    pairs += [f"'actor',(select to_jsonb(u) from auth.users u where id='{actor}')",
+              f"'profile',(select to_jsonb(p) from public.profiles p where id='{actor}')"]
+    return json.loads(query('select jsonb_build_object('+','.join(pairs)+');'))
+def require_shared_deletion_refusal(actor, label):
+    before = deletion_inventory(actor)
+    assert any(m['user_id']==actor and m['org_id']==ORG for m in before['memberships']), label+' fixture actor/workspace'
+    assert len({m['user_id'] for m in before['memberships'] if m['org_id']==ORG})>1, label+' shared fixture'
+    error(f"set role service_role;select prepare_account_deletion('{actor}','fixture-uploads','fixture-renders');", 'RP409: This account has retained work or likeness records in a shared or former workspace.')
+    after = deletion_inventory(actor)
+    ok(label+' normal account deletion refuses retained shared work without changing complete records or scheduling cleanup',
+       after==before and not any(r['user_id']==actor for r in after['deletion_requests']))
+def operator_auth_delete(actor):
+    # Synthetic operator invalidator only, not a successful app-delete workflow.
+    heir = B if actor==A else A
+    return f"reset role;update public.listings set agent_id='{heir}' where org_id='{ORG}' and agent_id='{actor}';delete from auth.users where id='{actor}';"
 def ok(name, check=True):
     assert check, name
     passed.append(name)
@@ -55,12 +81,12 @@ try:
     run([PG/'initdb','-D',OUT/'data','-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
     run([PG/'pg_ctl','-D',OUT/'data','-l',OUT/'server.log','-w','-o',f"-k '{SOCK}' -p 55473 -c listen_addresses='' -c shared_buffers=16MB",'start']);started=True
     query((SQL/'tests/ci-bootstrap.sql').read_text())
-    for p in sorted((SQL/'migrations').glob('*.sql')): query(p.read_text())
+    for p in partition_fresh_migrations(sorted((SQL / 'migrations').glob('*.sql')))[0]: query(p.read_text())
     ok('all real migrations apply from empty schema')
     migration=SQL/'migrations/20260924153826_studio_production_reviews.sql'
     query(migration.read_text());ok('new migration replays safely')
     query('\n'.join(f"insert into auth.users(id,email) values('{u}','review-{i}@fixture.invalid');" for i,u in enumerate([A,B,C,M,X])))
-    query(f"insert into orgs(id,name) values('{ORG}','Review fixture'),('{OTHER}','Other fixture'); insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner'); insert into listings(id,org_id,agent_id,address) values('{LIST}','{ORG}','{A}','Synthetic review property'); insert into studio_documents(user_id,org_id,key,kind,listing_id,revision,payload) values('{A}','{ORG}','{KEY}','edit','{LIST}',1,jsonb_build_object('listingId','{LIST}','approved',true));")
+    query(f"insert into orgs(id,name,plan,plan_source) values('{ORG}','Review fixture','pro','manual'),('{OTHER}','Other fixture','pro','manual'); insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner'); insert into listings(id,org_id,agent_id,address) values('{LIST}','{ORG}','{A}','Synthetic review property'); insert into studio_documents(user_id,org_id,key,kind,listing_id,revision,payload) values('{A}','{ORG}','{KEY}','edit','{LIST}',1,jsonb_build_object('listingId','{LIST}','approved',true));")
     result=review();ok('virtual private draft has no forged approval', result['review']['status']=='draft' and result['review']['revision']==0)
     error(rpc(actor=B),'RP404');ok('admin cannot see never-submitted draft')
     error(rpc(actor=X),'RP403');ok('cross-org reviewer rejected')
@@ -209,9 +235,11 @@ try:
     ok('reciprocal agency handoffs use deterministic locks and preserve both targets',copies[0]['document']['revision']==7 and copies[1]['document']['revision']==5 and copies[0]['preserved_version']['document_revision']==6 and copies[1]['preserved_version']['document_revision']==4)
     ok('handoff invalidates any current recipient review approval',review(actor=A)['review']['status']=='draft' and review(actor=B,owner=B)['review']['status']=='draft')
     for departing,survivor,survivor_result in [(A,B,alias),(B,A,VOICE)]:
-        lines=query(f"begin;set role service_role;select prepare_account_deletion('{departing}','fixture-uploads','fixture-renders');reset role;delete from auth.users where id='{departing}';select exists(select 1 from studio_creative_results where id='{survivor_result}' and user_id='{survivor}' and storage_key='ai-voice/{ORG}/{VOICE}.mp3');rollback;").splitlines()
-        deletion=json.loads(lines[0])
-        ok('source deletion preserves recipient alias and shared audio' if departing==A else 'recipient deletion preserves original audio and result',lines[1]=='t' and ORG in deletion['scope']['shared_orgs'] and not any(item.get('key')==f'ai-voice/{ORG}/{VOICE}.mp3' for item in deletion['payload']['r2']))
+        require_shared_deletion_refusal(departing, 'source' if departing==A else 'recipient')
+        # Refusal above proves no destructive intent. Preserve the separate,
+        # low-level Auth FK/alias invariant without inventing a deletion payload.
+        lines=query('begin;'+operator_auth_delete(departing)+f"select exists(select 1 from studio_creative_results where id='{survivor_result}' and user_id='{survivor}' and storage_key='ai-voice/{ORG}/{VOICE}.mp3');rollback;").splitlines()
+        ok('synthetic operator source invalidation preserves recipient alias and shared audio' if departing==A else 'synthetic operator recipient invalidation preserves original audio and result',lines[-1]=='t')
     last=json.loads(query(f"begin;delete from memberships where org_id='{ORG}' and user_id<>'{A}';set role service_role;select prepare_account_deletion('{A}','fixture-uploads','fixture-renders');rollback;"))
     ok('final workspace deletion inventories aliased audio exactly once',sum(item.get('key')==f'ai-voice/{ORG}/{VOICE}.mp3' for item in last['payload']['r2'])==1)
     for n in range(10,61):
@@ -224,7 +252,11 @@ try:
     completed=True
 finally:
     failure=str(sys.exc_info()[1]) if sys.exc_info()[1] else None
-    if started: run([PG/'pg_ctl','-D',OUT/'data','-m','fast','-w','stop'])
+    try:
+        if started: run([PG/'pg_ctl','-D',OUT/'data','-m','fast','-w','stop'])
+    finally:
+        if not (OUT/'data'/'postmaster.pid').exists():
+            shutil.rmtree(SOCK, ignore_errors=True)
     receipt={'ok':completed,'passed':len(passed),'checks':passed,'productionCalls':0,'socketOnly':True,'clusterStopped':started,'output':str(OUT),'sourceSHA256':source_hashes,'error':failure}
     (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
     print(json.dumps(receipt,indent=2))

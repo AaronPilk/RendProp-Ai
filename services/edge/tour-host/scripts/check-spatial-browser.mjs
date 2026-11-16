@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 const { chromium } = await import(pathToFileURL(process.argv[2]).href);
-const browser = await chromium.launch({headless:true});
+const browser = await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});
 const base='http://127.0.0.1:8794', scene=base+'/s/11111111-1111-4111-8111-111111111111';
 let assertions=0;
 const check=(value,message)=>{assertions++;assert.ok(value,message);};
@@ -71,7 +71,7 @@ try {
   check(await page.evaluate(()=>!window.pc.Application.getApplication()),'close destroys actual PlayCanvas application');
 
   // Real HTML video, generated test-pattern MP4. No synthetic seek override.
-  await page.goto(base+'/synthetic-tour');
+  await page.goto(base+'/synthetic-tour?embed=1');
   await page.waitForFunction(()=>document.querySelector('#scrub')?.readyState>=2);
   await page.evaluate(()=>scrollTo(0,650));await page.waitForTimeout(500);
   const before=await page.evaluate(()=>({y:scrollY,time:document.querySelector('#scrub').currentTime}));

@@ -6,7 +6,7 @@ enum Config {
     /// Real-network regression tests use a disposable simulator and localhost.
     /// These switches do not exist in Release and cannot point at a remote host.
     static var isSessionNetworkTesting: Bool {
-#if DEBUG
+#if DEBUG && targetEnvironment(simulator)
         ProcessInfo.processInfo.arguments.contains("-sessionNetworkTesting")
 #else
         false
@@ -50,6 +50,13 @@ enum Config {
     /// nil only if `supabaseURL` is unset → LiveAPIClient.init? fails → Mock.
     static var apiBaseURL: URL? { supabaseURL?.appendingPathComponent("functions/v1") }
 
+    /// Where Supabase runs an edge function. Left alone it runs near the
+    /// caller, and every database call then crosses the country to Postgres.
+    /// Naming the database's own region keeps the function beside it.
+    /// Sent only to edge functions; never to storage upload links.
+    static let edgeFunctionRegion = "us-west-2"
+    static let edgeFunctionRegionHeader = "x-region"
+
     /// Supabase **anon** (publishable) key — sent as the `apikey` header on every
     /// request. Public by design; RLS enforces access. This is NOT the
     /// service-role key (that stays server-side only — architecture §4).
@@ -58,8 +65,8 @@ enum Config {
         if isSessionNetworkTesting { return "local-fixture-public-key" }
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_ANON_KEY") as? String,
            !s.isEmpty { return s }
-        // Supabase anon key (public by design; RLS enforces access).
-        return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltZ3FwYm5qcHp0d2pzeXZjZWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMzk5OTAsImV4cCI6MjEwMjgxNTk5MH0.oUknRmqxoRGWPaYJCaOudGaXwe5w4tfKqqZ9cAPbfW0"
+        // Independently revocable publishable key (public; RLS enforces access).
+        return "sb_publishable_ZAhq8ZAh5DXRTpuSussRbg_Nkbg1mwu"
     }()
 
     /// Master switch. false = MockAPIClient (fully offline dev — believable
@@ -76,7 +83,18 @@ enum Config {
     /// real customer, no real spend figure and no real share link can end up
     /// in a PNG the owner forwards to somebody. Read at launch only.
     static var isUITesting: Bool {
+#if targetEnvironment(simulator)
         ProcessInfo.processInfo.arguments.contains("-uiTesting")
+#else
+        false
+#endif
+    }
+
+    /// Account bypass exists only for explicit, offline simulator fixtures.
+    /// A physical Release launch always requires an identified account.
+    static var isOfflineAccountFixture: Bool {
+        isUITesting && !isSessionNetworkTesting
+            && !ProcessInfo.processInfo.arguments.contains("-ui.requiredAccountGate")
     }
 
     /// Store-screenshot seeding, UI walk only: `-ui.seedPhotosDir <dir>` names a

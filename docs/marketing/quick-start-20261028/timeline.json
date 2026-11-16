@@ -1,0 +1,518 @@
+{
+  "duration_seconds": 594.5963125000002,
+  "scenes": [
+    {
+      "id": "01",
+      "chapter": "Find your way",
+      "title": "Your first listing, from start to share",
+      "start": 0.0,
+      "audio_seconds": 12.747770833333334,
+      "end": 13.147770833333334,
+      "visuals": [
+        "toolbox-clean"
+      ],
+      "elevenlabs_source_sha256": "2398cb1a001d9a85b3e3dfd9f407293801cb2cd05ab83aeb34407c9ef48354d4"
+    },
+    {
+      "id": "02",
+      "chapter": "Find your way",
+      "title": "Five tabs keep work organized",
+      "start": 13.147770833333334,
+      "audio_seconds": 17.3191875,
+      "end": 30.866958333333336,
+      "visuals": [
+        "toolbox-clean"
+      ],
+      "elevenlabs_source_sha256": "d5429a21d83f75181c1550c965e97c3a92b3f1eacde8b676711c37c0238d9385"
+    },
+    {
+      "id": "03",
+      "chapter": "Find your way",
+      "title": "Sign in, then explore",
+      "start": 30.866958333333336,
+      "audio_seconds": 12.747770833333334,
+      "end": 44.01472916666667,
+      "visuals": [
+        "my-listings"
+      ],
+      "elevenlabs_source_sha256": "27b8b85b4733e8fe16311dc8d26dbf8f9fb19e0560c46ddcfd3bca11f00f0543"
+    },
+    {
+      "id": "04",
+      "chapter": "Find your way",
+      "title": "Start in Listings",
+      "start": 44.01472916666667,
+      "audio_seconds": 12.1991875,
+      "end": 56.61391666666667,
+      "visuals": [
+        "my-listings"
+      ],
+      "elevenlabs_source_sha256": "b24adca3068798bb37607ca52da7e76a72f16af8c6e633240b7eff8160842fb6"
+    },
+    {
+      "id": "05",
+      "chapter": "Build the home",
+      "title": "Enter the real address",
+      "start": 56.61391666666667,
+      "audio_seconds": 13.322458333333334,
+      "end": 70.336375,
+      "visuals": [
+        "listing-edit-address"
+      ],
+      "elevenlabs_source_sha256": "6d6938a5b07766cd0fd0832f3e741ccd666a3306c93feb2217c9efa3594ac809"
+    },
+    {
+      "id": "06",
+      "chapter": "Build the home",
+      "title": "Choose who buyers contact",
+      "start": 70.336375,
+      "audio_seconds": 13.6359375,
+      "end": 84.3723125,
+      "visuals": [
+        "sim-contact"
+      ],
+      "elevenlabs_source_sha256": "6d9473dd817ca8260b4297a45ee5f2a3b89831bba820547ba21d5b3ef349832f"
+    },
+    {
+      "id": "07",
+      "chapter": "Build the home",
+      "title": "Plan a simple photo route",
+      "start": 84.3723125,
+      "audio_seconds": 15.960833333333333,
+      "end": 100.73314583333334,
+      "visuals": [
+        "photos-original-grid"
+      ],
+      "elevenlabs_source_sha256": "02699b32e7a6121104b1b8eec37663ce33a1ee50523cfe5c18a975afa777db57"
+    },
+    {
+      "id": "08",
+      "chapter": "Build the home",
+      "title": "Record a walkthrough only if useful",
+      "start": 100.73314583333334,
+      "audio_seconds": 14.602458333333333,
+      "end": 115.73560416666668,
+      "visuals": [
+        "toolbox-clean"
+      ],
+      "elevenlabs_source_sha256": "77332bc16f89b423ff644f242e4be6ba764f3a1773db8184789e699a85ece786"
+    },
+    {
+      "id": "09",
+      "chapter": "Photos & AI",
+      "title": "Add the original photos",
+      "start": 115.73560416666668,
+      "audio_seconds": 12.930625,
+      "end": 129.0662291666667,
+      "visuals": [
+        "photos-original-grid"
+      ],
+      "elevenlabs_source_sha256": "f7e4725a1131fc60888b1fb98c5d0d8aa413b9ee7b158113cd11247e2b6dc643"
+    },
+    {
+      "id": "10",
+      "chapter": "Photos & AI",
+      "title": "Capture for a clean result",
+      "start": 129.0662291666667,
+      "audio_seconds": 12.3559375,
+      "end": 141.82216666666667,
+      "visuals": [
+        "photo-compare-original"
+      ],
+      "elevenlabs_source_sha256": "8471644394ac76291f1a935ffef7da830a80e2fc9a680d3455d90880e94f8d37"
+    },
+    {
+      "id": "11",
+      "chapter": "Photos & AI",
+      "title": "Open Photo versions",
+      "start": 141.82216666666667,
+      "audio_seconds": 14.8375625,
+      "end": 157.05972916666667,
+      "visuals": [
+        "photo-versions-original",
+        "photo-versions-decluttered"
+      ],
+      "elevenlabs_source_sha256": "a84e908259d4d782317e9c87e83b9e758adf36c7239913c107f191521f2e0fa7"
+    },
+    {
+      "id": "12",
+      "chapter": "Photos & AI",
+      "title": "Use AI Photo Studio selectively",
+      "start": 157.05972916666667,
+      "audio_seconds": 16.431020833333335,
+      "end": 173.89075,
+      "visuals": [
+        "sim-studio"
+      ],
+      "elevenlabs_source_sha256": "b204689d96bcd29b68d1e400a8dafc790eeeb41b2422d7e7c63657d48e75b927"
+    },
+    {
+      "id": "13",
+      "chapter": "Photos & AI",
+      "title": "Review edits for truthfulness",
+      "start": 173.89075,
+      "audio_seconds": 14.027770833333333,
+      "end": 188.31852083333334,
+      "visuals": [
+        "photo-compare-original",
+        "photo-compare-edited"
+      ],
+      "elevenlabs_source_sha256": "36fdf69cd090df08d958845e9c4023c9dc15052991a87ec8662de80a6dcba5c4"
+    },
+    {
+      "id": "14",
+      "chapter": "Photos & AI",
+      "title": "Set the gallery and cover",
+      "start": 188.31852083333334,
+      "audio_seconds": 12.826125,
+      "end": 201.54464583333333,
+      "visuals": [
+        "photos-original-grid",
+        "photos-decluttered-selection"
+      ],
+      "elevenlabs_source_sha256": "d34dde483aaa8cf8c2793c6598239280aac2a86483d5f6bb55767f2a089621d3"
+    },
+    {
+      "id": "15",
+      "chapter": "Photos & AI",
+      "title": "Export the right photo copies",
+      "start": 201.54464583333333,
+      "audio_seconds": 15.960833333333333,
+      "end": 217.90547916666668,
+      "visuals": [
+        "sim-share-zip"
+      ],
+      "elevenlabs_source_sha256": "b71a6d7e34aa0b6593b8100311fdfd592f17b23b9e1831a9c60d54e7d91192b6"
+    },
+    {
+      "id": "16",
+      "chapter": "Make a video",
+      "title": "Open Make a video",
+      "start": 217.90547916666668,
+      "audio_seconds": 14.210625,
+      "end": 232.51610416666668,
+      "visuals": [
+        "toolbox-clean"
+      ],
+      "elevenlabs_source_sha256": "bb8791686d91461b0bdf86efecfdf553b5d0309a77370c7b4285600bca06219e"
+    },
+    {
+      "id": "17",
+      "chapter": "Make a video",
+      "title": "Choose the photos in order",
+      "start": 232.51610416666668,
+      "audio_seconds": 14.027770833333333,
+      "end": 246.94387500000002,
+      "visuals": [
+        "video-choose-photos"
+      ],
+      "elevenlabs_source_sha256": "73547f939ef7c0d14a74a19b25077de30ef1f97e4a8cc6a64ee187309f0816e7"
+    },
+    {
+      "id": "18",
+      "chapter": "Make a video",
+      "title": "Set the screen shape",
+      "start": 246.94387500000002,
+      "audio_seconds": 13.087354166666668,
+      "end": 260.4312291666667,
+      "visuals": [
+        "video-look-automatic-build131"
+      ],
+      "elevenlabs_source_sha256": "e772d41222308b201a4735920c05adb87fa84c403dd08aa1843134bda1efb1c4"
+    },
+    {
+      "id": "19",
+      "chapter": "Make a video",
+      "title": "Tune motion and timing",
+      "start": 260.4312291666667,
+      "audio_seconds": 21.786125,
+      "end": 282.6173541666667,
+      "visuals": [
+        "video-look-automatic-build131"
+      ],
+      "elevenlabs_source_sha256": "b690e31c19a1375113f8066a094f09a80ccc252fbb2e3cc5920a008dcf63afd3"
+    },
+    {
+      "id": "20",
+      "chapter": "Make a video",
+      "title": "Check the framing review",
+      "start": 282.6173541666667,
+      "audio_seconds": 13.792666666666667,
+      "end": 296.8100208333334,
+      "visuals": [
+        "video-framing",
+        "video-framing-review"
+      ],
+      "elevenlabs_source_sha256": "229e9b7d58ab7cbc00911a2f92eec1305d28d07253bc30862bdbe3e88c6f8106"
+    },
+    {
+      "id": "21",
+      "chapter": "Make a video",
+      "title": "Add sound only when it helps",
+      "start": 296.8100208333334,
+      "audio_seconds": 14.445729166666666,
+      "end": 311.65575000000007,
+      "visuals": [
+        "video-review-audio-entry",
+        "video-voice-music"
+      ],
+      "elevenlabs_source_sha256": "7c0949aca47c0103c6e8adf0cf15460a3e53c5789a281f2b811ca11f8d7f4d01"
+    },
+    {
+      "id": "22",
+      "chapter": "Make a video",
+      "title": "Create, leave, and return",
+      "start": 311.65575000000007,
+      "audio_seconds": 13.322458333333334,
+      "end": 325.3782083333334,
+      "visuals": [
+        "video-review-audio-entry",
+        "activity-ready-clean"
+      ],
+      "elevenlabs_source_sha256": "58eae79e0bffb237e591bf77b7eff4268fba0cc1e52f9a8e65ed75f124cc1592"
+    },
+    {
+      "id": "23",
+      "chapter": "Make a video",
+      "title": "Watch before you use it",
+      "start": 325.3782083333334,
+      "audio_seconds": 16.0391875,
+      "end": 341.8173958333334,
+      "visuals": [
+        "activity-ready-clean",
+        "saved-video-clean"
+      ],
+      "elevenlabs_source_sha256": "a5274b8a49cf2a6d40705d998d8c71af1f55a96a5fa329299effd8a1e2ae21d0"
+    },
+    {
+      "id": "24",
+      "chapter": "Optional video tools",
+      "title": "Aerial intro starts outside",
+      "start": 341.8173958333334,
+      "audio_seconds": 14.210625,
+      "end": 356.42802083333345,
+      "visuals": [
+        "toolbox-clean",
+        "aerial-front-photo-selection"
+      ],
+      "elevenlabs_source_sha256": "d85f3430db9faa6a0ddbb1d4ca791552778430829452649e28984b114e48aaeb"
+    },
+    {
+      "id": "25",
+      "chapter": "Optional video tools",
+      "title": "Accept an opening only if it works",
+      "start": 356.42802083333345,
+      "audio_seconds": 13.792666666666667,
+      "end": 370.62068750000014,
+      "visuals": [
+        "activity-aerial-review-detail-clean"
+      ],
+      "elevenlabs_source_sha256": "ec674ed16646b278cb08581f775def63b85494525ccfebda921187712d9a08b0"
+    },
+    {
+      "id": "26",
+      "chapter": "Optional video tools",
+      "title": "Tag a recorded walkthrough",
+      "start": 370.62068750000014,
+      "audio_seconds": 14.027770833333333,
+      "end": 385.0484583333335,
+      "visuals": [
+        "toolbox-clean"
+      ],
+      "elevenlabs_source_sha256": "dec9503c84f418132536e1538e1738b5abd659cf296c9e41365fcae12dc0ff2a"
+    },
+    {
+      "id": "27",
+      "chapter": "Publish the website",
+      "title": "Choose the website design",
+      "start": 385.0484583333335,
+      "audio_seconds": 14.367354166666667,
+      "end": 399.81581250000016,
+      "visuals": [
+        "website-design-classic",
+        "website-design-signature",
+        "website-design-coastal"
+      ],
+      "elevenlabs_source_sha256": "2a6d7341c22301fed586343797495037138f663159311e9af4137395ab6cbc6a"
+    },
+    {
+      "id": "28",
+      "chapter": "Publish the website",
+      "title": "Review before publishing",
+      "start": 399.81581250000016,
+      "audio_seconds": 19.069395833333335,
+      "end": 419.2852083333335,
+      "visuals": [
+        "coastal-luxe-real-hero",
+        "live-property-site-hero",
+        "live-property-site-gallery"
+      ],
+      "elevenlabs_source_sha256": "75166def4e478d715ab2652520ef8743ccc2660e55b94c85745abe6e24650a38"
+    },
+    {
+      "id": "29",
+      "chapter": "Publish the website",
+      "title": "Publish, then share the link",
+      "start": 419.2852083333335,
+      "audio_seconds": 14.7591875,
+      "end": 434.4443958333335,
+      "visuals": [
+        "website-share-links"
+      ],
+      "elevenlabs_source_sha256": "18154315cf5494bc7456c88dbd6d6d906f1f24bd842767b41a1f5ba5635e4b6b"
+    },
+    {
+      "id": "30",
+      "chapter": "Publish the website",
+      "title": "Use the right MLS link",
+      "start": 434.4443958333335,
+      "audio_seconds": 14.106125,
+      "end": 448.9505208333335,
+      "visuals": [
+        "website-share-links"
+      ],
+      "elevenlabs_source_sha256": "37dd099340c57d48f47b0399865ca2b674c99bfa171e64ada1db70c404c96943"
+    },
+    {
+      "id": "31",
+      "chapter": "Follow up & manage",
+      "title": "Leads stay with the property",
+      "start": 448.9505208333335,
+      "audio_seconds": 12.930625,
+      "end": 462.2811458333335,
+      "visuals": [
+        "leads-qa-empty"
+      ],
+      "elevenlabs_source_sha256": "799a7d150f83faba59df8faf9845de8f3cc6f02fafd3697af7a65b6391913baf"
+    },
+    {
+      "id": "32",
+      "chapter": "Follow up & manage",
+      "title": "Activity is the job dashboard",
+      "start": 462.2811458333335,
+      "audio_seconds": 20.506125,
+      "end": 483.18727083333346,
+      "visuals": [
+        "activity-ready-clean",
+        "activity-needs-attention-clean"
+      ],
+      "elevenlabs_source_sha256": "597ebdcd5120ec4b42d2cac5baf700e5cf6a3bd77cfd5aab55dd2f10e4aaa277"
+    },
+    {
+      "id": "33",
+      "chapter": "Follow up & manage",
+      "title": "Recover without starting over",
+      "start": 483.18727083333346,
+      "audio_seconds": 15.882458333333334,
+      "end": 499.4697291666668,
+      "visuals": [
+        "activity-needs-attention-clean",
+        "activity-aerial-review-detail-clean"
+      ],
+      "elevenlabs_source_sha256": "10d92ddfb4ba8fa5f9645ef400eb63bed05a73c25f91160814ace3969c49924f"
+    },
+    {
+      "id": "34",
+      "chapter": "Account & usage",
+      "title": "Account holds your tools",
+      "start": 499.4697291666668,
+      "audio_seconds": 14.7591875,
+      "end": 514.6289166666668,
+      "visuals": [
+        "settings-clean"
+      ],
+      "elevenlabs_source_sha256": "7d9e6834564b406eb05f1c631b3cd3497ea9e1625d7ad2aac40cc361a658f952"
+    },
+    {
+      "id": "35",
+      "chapter": "Account & usage",
+      "title": "Understand the trial and plans",
+      "start": 514.6289166666668,
+      "audio_seconds": 25.547770833333335,
+      "end": 540.5766875000002,
+      "visuals": [
+        "paywall-public-four-plans-build132"
+      ],
+      "elevenlabs_source_sha256": "8a567a6598a84edd74602131666b566823ff5f9c129b7af45590fd50a6ff8c10"
+    },
+    {
+      "id": "36",
+      "chapter": "Account & usage",
+      "title": "Credits are separate from the plan",
+      "start": 540.5766875000002,
+      "audio_seconds": 18.991020833333334,
+      "end": 559.9677083333335,
+      "visuals": [
+        "credits-balance"
+      ],
+      "elevenlabs_source_sha256": "bfdaaacd676b374a81d0855813b31f24dfd4d569733fe65b65e45323684bb254"
+    },
+    {
+      "id": "37",
+      "chapter": "Account & usage",
+      "title": "Work with a team carefully",
+      "start": 559.9677083333335,
+      "audio_seconds": 17.240833333333335,
+      "end": 577.6085416666668,
+      "visuals": [
+        "sim-contact"
+      ],
+      "elevenlabs_source_sha256": "7ed2735dfc71895df76179b5f27f929b490fa65fc3db656bda1e287a27760ce6"
+    },
+    {
+      "id": "38",
+      "chapter": "Account & usage",
+      "title": "One last review, then share",
+      "start": 577.6085416666668,
+      "audio_seconds": 16.587770833333334,
+      "end": 594.5963125000002,
+      "visuals": [
+        "toolbox-clean",
+        "live-property-site-hero"
+      ],
+      "elevenlabs_source_sha256": "1c5edc36095fd51992159f083f9cebebec7413004d05432b16a1483ccc31e4cf"
+    }
+  ],
+  "chapters": [
+    {
+      "title": "Find your way",
+      "start": 0.0,
+      "end": 56.61391666666667
+    },
+    {
+      "title": "Build the home",
+      "start": 56.61391666666667,
+      "end": 115.73560416666668
+    },
+    {
+      "title": "Photos & AI",
+      "start": 115.73560416666668,
+      "end": 217.90547916666668
+    },
+    {
+      "title": "Make a video",
+      "start": 217.90547916666668,
+      "end": 341.8173958333334
+    },
+    {
+      "title": "Optional video tools",
+      "start": 341.8173958333334,
+      "end": 385.0484583333335
+    },
+    {
+      "title": "Publish the website",
+      "start": 385.0484583333335,
+      "end": 448.9505208333335
+    },
+    {
+      "title": "Follow up & manage",
+      "start": 448.9505208333335,
+      "end": 499.4697291666668
+    },
+    {
+      "title": "Account & usage",
+      "start": 499.4697291666668,
+      "end": 594.5963125000002
+    }
+  ]
+}

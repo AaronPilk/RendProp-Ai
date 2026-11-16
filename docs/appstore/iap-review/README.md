@@ -1,5 +1,16 @@
 # In-app purchase review screenshot — `paywall.png`
 
+**27 October launch blocker:** The committed `paywall.png` is an obsolete
+Starter/Pro capture showing $49.00/$99.00, a yearly picker, and old allowances.
+It remains only as historical evidence. `tools/asc/asc.py review plan/apply`
+rejects its exact fingerprint before any App Store review write, and
+`asc.py status` reports it as missing launch evidence. Replace it with a fresh
+capture of the Pro $29.99 / Max $49.00 / Ultra $99.99 / Team $249.99 monthly
+catalog. Inspect the PNG itself: the simulator must show those prices, not a
+dash, stale Ultra/Team price, or "temporarily unavailable" purchase state.
+The local StoreKit fixture is only test data; verify the same prices and
+purchase availability against App Store Connect and on a real TestFlight device.
+
 This is an owner-run capture/upload procedure, reviewed against repository code
 on 24 September 2026. The stored PNG is an existing release asset; it has not
 been recaptured or uploaded by this documentation refresh. Local StoreKit
@@ -12,8 +23,17 @@ product names, real prices. It is only ever seen by App Review; it is not a mark
 screenshot and must not join the nine-frame store screenshot plan in `docs/appstore/screenshots/`.
 
 The file is **`docs/appstore/iap-review/paywall.png`**. That exact path is what
-`tools/asc/asc.py` reads (`IAP_SCREENSHOT`), and the same PNG is attached to every sold
-subscription — Team Yearly is withdrawn at launch, hence the `--skip-product`:
+`tools/asc/asc.py` reads (`IAP_SCREENSHOT`), and it is offered to the four base
+monthly subscriptions. Existing approved Max, Ultra and Team subscriptions already
+have review images; the current four-plan release specifically needs a fresh
+image for new Pro. The six additional Team-seat products need their own
+review images if they are opened for sale; a base four-plan image would not
+show their selectable options. Save native TestFlight captures as `team4.png`
+through `team9.png` beside `paywall.png`, each with the matching More Team seats
+row selected, its Apple-localized price, purchase action and disclosure visible.
+`asc.py review plan/apply --include-team-seats` validates all seven images
+before any review write and uploads each file only to its matching product.
+Annual products remain excluded.
 
 ```bash
 python3 tools/asc/asc.py review apply --skip-product com.rendprop.app.team.annual
@@ -41,28 +61,27 @@ Review the image before committing it. Before any owner-run upload, reconcile
 
 ### Why this needed its own test
 
-`apps/ios/project.yml` attaches `Rendprop.storekit` to the scheme's **Run** action only, and
-xcodegen has no `storeKitConfiguration` for the **test** action at all. So a plain
-`xcodebuild test` launch has no StoreKit environment: `Product.products(for:)` returns an
-empty array and `PaywallView` correctly renders **"Plans aren't available right now."** That
-empty state is the app behaving properly for an empty product list — and it is exactly what
-must never be uploaded. `StoreShots.swift` still never opens the paywall for that reason.
+`apps/ios/project.yml` selects `Rendprop.storekit` for the Run action and
+`RendpropStoreKit.xctestplan` selects it for the Test action. The test plan must
+actually reach the launched app; merely constructing `SKTestSession` is not
+proof. A product-load failure correctly renders an unavailable state, which
+must never be uploaded. `StoreShots.swift` does not capture the paywall.
 
 `PaywallShot.swift` solves it the way Apple built for automation: it creates an
 `SKTestSession` from `Rendprop.storekit` (StoreKitTest framework) **before** launching the
-app. There is a single StoreKit test environment per simulator and every `SKTestSession`
-controls it, so the app under test sees the six products the moment `PurchaseManager` asks.
+app. The generated screenshot must prove the app saw the local products by
+showing Pro $29.99 and Max $49.00 together. It is local fixture evidence only;
+the real TestFlight capture below is the release image.
 The `.storekit` file is a resource of the **test bundle only** (never the app), the session
 has dialogs disabled and transactions cleared, and the storefront is pinned to `USA` /
-`en_US` so the prices read `$49.00/month`. The test never taps a purchase button. Details,
+`en_US`. The test never taps a purchase button. Details,
 identifiers and the by-hand recipe are in `apps/ios/RendpropUITests/README.md`
 (§ PaywallShot).
 
 ### The caveat you are accepting
 
 This is **StoreKit Testing in Xcode, not the App Store.** The prices come from
-`apps/ios/Rendprop.storekit` (49 / 490 / 99 / 990 / 249 for the five displayed products,
-consistent with the repository's current listing copy), the "Start 7-day free trial"
+`apps/ios/Rendprop.storekit` (29.99 / 49.00 / 99.99 / 249.99 for the monthly products), the "Start 7-day free trial"
 eligibility is synthetic, and nothing in the PNG proves the real products load. The capture shows the actual app purchase UI populated by a local fixture;
 the owner must confirm that its names, prices and offers match the intended release. It is not a substitute for checking the live products on a
 device before submission, and it is not a marketing asset.
@@ -91,12 +110,37 @@ produces a file that drops into the same place:
    products return empty on a device too.
 3. Follow the device's current sandbox sign-in flow; do not sign out the owner's main Apple account merely to take a screenshot.
 4. Install a Debug or TestFlight build of the version you are submitting.
-5. In the app: **Settings tab → Plan & usage → Upgrade plan**. Wait for the three plans to
-   draw with prices and the **Start 7-day free trial** button.
-6. Screenshot (side button + volume up), AirDrop the PNG to the Mac, and save it as
-   `docs/appstore/iap-review/paywall.png`. Check the current review-field image
-   requirements and confirm the selected file shows the intended product names,
-   prices and offers before the owner uploads it.
+5. Install the exact **1.0.5 (125) TestFlight build** and sign in to Rendprop.
+   Open **Account → Settings & plan → Plan & usage → View plans**. Wait for
+   StoreKit to load the four monthly cards: Pro, Max, Ultra and Team. Check
+   their localized prices, select Pro, and keep its price, trial/subscribe
+   action and pinned purchase disclosure visible. The action must accurately
+   reflect the current funding and trial state; do not capture a purchase
+   unavailable/error state as the review image.
+6. Capture the phone's native screenshot (side button + volume up). Transfer
+   the original PNG to the Mac and save it as
+   `docs/appstore/iap-review/paywall.png` in the **release checkout**. Do not
+   resize or compose it. `asc.py` accepts Apple's supported iPhone portrait
+   sizes; check the actual PNG, including the product name, live price, button
+   state and absence of a Yearly picker. A separate phone QA record should
+   confirm the other three prices even if they are below the visible fold.
+7. Repeat after the **30 October 2026** USA price schedule becomes effective;
+   until then, Max/Ultra/Team can still display their old whole-dollar prices.
+   Check the exact final amounts with StoreKit before using the image for
+   review. The new Pro product is already scheduled at $29.99.
+8. If Team 4–9 is sold in this build, stay on the monthly paywall and select
+   each **More Team seats** capsule. Confirm the seat count, credits, localized
+   price and purchase action for that selection, then capture the phone's
+   original PNG as `team4.png`, `team5.png`, …, `team9.png` in this directory.
+   Confirm $299.99, $349.99, $399.99, $449.99, $499.99 and $549.99 in the
+   U.S. storefront. A base Team screenshot does not prove those six choices.
+
+Apple requires a screenshot of the actual subscription purchase UI for its
+review field and accepts any screenshot size supported by this iPhone app.
+The image is private to App Review. [Apple's review-image rules](https://developer.apple.com/help/app-store-connect/reference/in-app-purchases-and-subscriptions/in-app-purchase-information/)
+and [iPhone size list](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/)
+are the controlling references. A screenshot is separate from a successful
+Sandbox purchase and from approval of the subscription localization.
 
 Nothing in this directory is uploaded automatically — `asc.py review apply` is the step that
 attaches it, and it says so in its plan before doing anything.

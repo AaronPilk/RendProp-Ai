@@ -2,7 +2,7 @@
 
 Owner-operated release tooling lives here:
 
-1. **`asc.py`** — creates Rendprop's six subscription products and fills in the
+1. **`asc.py`** — reconciles Rendprop's subscription products and fills in the
    App Store listing, using the App Store Connect REST API.
 2. **`bridge-600-archive-upload.sh`** — archives the iOS app and uploads the
    build to TestFlight.
@@ -12,22 +12,137 @@ Owner-operated release tooling lives here:
 The scripts run on a Mac with Python 3.9+ and `openssl` installed; archives also
 need Xcode and XcodeGen. The Python utility uses the standard library only.
 
-## Release target caution
+## Exact 1.0.9 release preparation (11 November 2026)
 
-Reviewed against repository source on 24 September 2026. `asc.py` still declares
-`VERSION_STRING = "1.0"` and has **no `--version` option**. It prefers an editable
-1.0 version, then falls back to another editable version; if none exists its
-creation path targets 1.0. `--build` selects a build, not an App Store version.
-The native source currently declares 1.0.3 (31). Reconcile version selection and
-the exact intended build before using any write command for a newer release.
-Do not run the broad apply bridge as routine maintenance of an already shipped app.
+The public US App Store currently serves **1.0.8 (141)**. Build **1.0.9 (143)**
+is VALID and attached to the unsubmitted 1.0.9 draft. Phone verification exposed
+an unavailable-trial checkout trap; the next candidate is **1.0.9 (144)** with
+separately confirmed, server-signed standard-price checkout and a bounded
+TestFlight verification route. Apple readback confirmed 144 is unoccupied on
+11 November 2026. Recheck before upload and replace the draft's attached build
+only after verifying the exact candidate. Reviewer access and physical-device
+acceptance remain release gates.
 
-The latest committed [phone delivery receipt](../../docs/handoff/CLAUDE-LIVE-DELIVERY-20260922.md)
-records internal TestFlight 1.0.3 (31) on 22 September. The
-[24 September Studio release](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-did not touch iOS or App Store Connect. This README refresh performed no store
-reads, uploads, metadata changes or submissions. Historical API observations
-below describe the launch run and do not establish current store state.
+The tracked `metadata/en-US` copy below was prepared for 1.0.5 and differs from
+the approved 1.0.8 listing. The narrow command below copies only the released
+1.0.8 en-US version text and uses a new What's New file. Its default action is
+read-only `plan`; `apply` requires the SHA-256 of the complete source, target
+state and What's New printed by a fresh plan. It does
+not touch App Privacy, review credentials, screenshots, subscriptions, app
+information, pricing or agreements.
+
+```bash
+python3 tools/asc/asc.py --version 1.0.9 version-copy \
+  --from-version 1.0.8 \
+  --whats-new-file tools/asc/release-notes-1.0.9.txt
+# After reviewing the exact candidate and current Apple state:
+python3 tools/asc/asc.py --version 1.0.9 version-copy apply \
+  --from-version 1.0.8 \
+  --whats-new-file tools/asc/release-notes-1.0.9.txt \
+  --plan-sha256 <digest printed by the fresh plan>
+python3 tools/asc/asc.py --version 1.0.9 status
+```
+
+Every `asc.py` write requires explicit `--version` before the subcommand.
+`build attach` also requires `--build 144` (or the exact Apple build ID), and
+checks that the selected processed build belongs to 1.0.9. The general
+`bridge-600-archive-upload.sh` uses `exportOptions.plist`, which permits Apple
+to renumber the build. For this bound release use the existing
+`exportOptions-appstore.plist` with
+`manageAppVersionAndBuildNumber=false` and
+`testFlightInternalTestingOnly=false`; verify the signed archive, exported IPA
+and Apple's uploaded build all say 1.0.9 (144) before attachment. The broad
+`bridge-610-asc-apply.sh` remains unsuitable for this exact-version release.
+
+The public 1.0.8 version has seven complete 6.9-inch screenshots, but their
+final PNG files are not in this checkout. After 1.0.9 creation, read back its
+screenshots and inspect them against the release device. If Apple does not
+carry them forward, provide exact approved capture files before upload. Check
+the 1.0.9 App Review detail and demo login in App Store Connect's private UI;
+never copy credentials into source or command arguments. Reconcile published
+privacy answers with the final provider/data paths, and inspect Agreements,
+Tax and Banking in the Apple UI before submission.
+
+## Current release target and catalog gate (28 October 2026)
+
+`asc.py` targets editable version **1.0.5**. The proposed monthly catalog is
+Pro $29.99 (`pro29.monthly`), Max $49.00 (the existing `starter.monthly`
+identifier), Ultra $99.99 (the existing `pro.monthly` identifier), and the
+three-seat Team $249.99 (`team.monthly`). Annual identifiers remain mapped for
+restores but withdrawn from sale. Max's existing $49.00 price is the intended
+price; Ultra and Team still charge $99.00 and $249.00 to new buyers at the
+28 October readback, with $99.99 and $249.99 scheduled for 30 October.
+`pro29.monthly` is absent. A monthly launch price must match exactly.
+`subscriptions plan` and `subscriptions apply` refuse before any Apple
+write while an existing monthly price differs. The
+[exact-price scheduling tool](SUBSCRIPTION-REPRICE.md) verifies Max read-only
+and handles only Ultra and Team future increases. The broad bridge remains
+blocked until the remaining prices and new Pro are verified.
+
+The 100-credit consumable and six Team extra-seat SKUs are not managed by
+the default `asc.py` run. The Team 4–9-seat subscriptions have an explicit,
+opt-in [source-only setup plan](TEAM-SEAT-SETUP.md); no Apple change has been
+made from that plan. These SKUs are separately gated and must not be inferred from a green
+subscription status. The monthly credit catalog and introductory trial funding
+also remain inactive; status cannot establish their activation. No App Review
+submission is authorized by a passing local check alone.
+
+The committed `docs/appstore/iap-review/paywall.png` is the old Starter/Pro
+purchase UI. `review plan/apply` rejects its fingerprint before any Apple
+review write; `status` reports it as a release gap. A fresh screenshot must
+visibly show the selected monthly names and exact prices and be checked against
+the TestFlight purchase flow before it replaces that file.
+
+## Historical release target caution
+
+On 10 October 2026, `asc.py` targeted **1.0.4** and selected only that exact
+editable version; it no longer falls back to another draft. `--build` selects a
+build, not an App Store version. Review the actual target version ID and build
+marketing version before writing. The broad apply bridge can change prices,
+territories, subscription screenshots and review state; use individual commands
+for this release. Historical examples below may refer to the original 1.0 launch.
+
+Current internal TestFlight **1.0.4 (46) is AVAILABLE**, verified by Apple at
+**2026-10-07 00:47:51 UTC** (6 October locally) from `7f5879e`. The
+[build-46 record](../../docs/releases/TESTFLIGHT-46-20261006.json) binds the actual
+signed distribution package, one upload and twelve CI jobs with original/rerun
+provenance. The [current rollout](../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+records the dormant trial backend and verified Studio files. Trial config/funding
+remain disabled; new paid checkout in build 46 is closed. Build 45 and the
+[earlier coordinated rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+remain historical. No public App Store/App Review submission was performed.
+
+Previous internal TestFlight **1.0.4 (44) was AVAILABLE** to the existing Rendprop team,
+verified **5 October 2026 at 01:32:22 UTC** (4 October locally). The
+[delivery receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) binds clean
+source `9d27fb5`, one successful upload, the retained actual IPA, exact Apple
+build/readback and verified English testing notes.
+All twelve jobs in [CI run 37248967678](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37248967678)
+passed on the exact archive source. The `RendpropSpatialTestFlight` archive uses
+explicit `MARKETING_VERSION=1.0.4` and `CURRENT_PROJECT_VERSION=44` overrides;
+its export policy is internal-only and preserves that version/build. The signed
+archive's source and dSYM binding passed independent local verification.
+
+Regular **App Store 1.0.3 (42)** now reports **READY_FOR_SALE** in Apple GET
+preflight at **01:18:40 UTC on 5 October 2026** (4 October locally), with its
+original build ID unchanged. The
+[public receipt](../../docs/releases/APPSTORE-42-20261002.json) preserves the
+2 October upload/submission and historical Waiting for Review snapshot; the
+[build-44 receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) records the
+new GET. Its regular `Rendprop` scheme and
+[exportOptions-appstore.plist](exportOptions-appstore.plist) explicitly set
+`testFlightInternalTestingOnly = false` and preserve build number 42.
+The lab scheme/options remain separate from public release tooling.
+
+This delivery uses privately reviewed exact-version helpers with clean-source,
+archive/dSYM binding, all twelve CI jobs, one-attempt journals and exact Apple
+build/version readback. Five sold subscriptions were previously read back as
+approved; Team Yearly remains withdrawn. The legacy examples below document
+the historical launch sequence. Build 44 adds no public App Store submission
+and does not certify camera, paid provider output or shared-team safety.
+Build 44 retains the ordinary listing full-row overwrite bug; build 45 and the
+6 October backend repair address it. See the dated
+[audit limits](../../docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md#delivery-and-remaining-limits).
 
 Offline inspection that does not load credentials or call Apple:
 
@@ -101,7 +216,7 @@ That runs, in order, stopping at the first failure:
 | 2 | `asc.py subscriptions apply --skip-product com.rendprop.app.team.annual` | Subscription group, six products (Team Yearly skipped, see below), en-US names and descriptions, then per product **availability → price → 1-week free trial** in that order, plus the App Store Server Notification URLs. A product Apple has no price point for is left unpriced and reported. |
 | 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, content rights (no third-party content), the app's own price (Free, base territory USA), US-only app availability, then the version's description, keywords, promotional text, support and marketing URLs. "What's New" is skipped until the app has a released version. |
 | 4 | `asc.py screenshots apply [--dir …] [--replace]` | Uploads the 6.9-inch set in filename order — `docs/appstore/screenshots/6.9-framed/*.png` (the composed set) when that directory has PNGs, else the raw `docs/appstore/screenshots/6.9/*.png`. `bash tools/asc/bridge-610-asc-apply.sh --replace-screenshots` passes `--replace`, which deletes every screenshot already in the set first — needed once after a re-frame, because a set holds at most 10 and the old images are still in it. |
-| 5 | `asc.py review apply --skip-product com.rendprop.app.team.annual` | App Review contact + notes, and the paywall screenshot on every subscription that is sold. |
+| 5 | `asc.py review apply --skip-product com.rendprop.app.team.annual` | App Review contact + notes, and the paywall screenshot on every subscription that is sold. First set and rehearse the private demo login in App Store Connect; this command refuses to sync notes while `demoAccountRequired` is false. |
 | 5b | `asc.py review stage --skip-product com.rendprop.app.team.annual` | Apple's "Add for Review" by API: one draft review submission with the selected editable version, the subscription group and the five sold subscriptions as items. Nothing is submitted. Needs App Privacy published and every subscription priced in all territories (which `subscriptions apply` now does). |
 | 6 | `asc.py status --skip-product com.rendprop.app.team.annual` | One page saying where everything stands and what is still missing. Team Yearly is deliberately withdrawn (see below), so it is shown but not counted. |
 
@@ -125,6 +240,8 @@ target before resuming a partial run.
 ```bash
 python3 tools/asc/asc.py app
 python3 tools/asc/asc.py subscriptions plan       # or: apply
+python3 tools/asc/subscription_reprice.py plan --effective-date YYYY-MM-DD
+python3 tools/asc/credit_pack_iap.py plan
 python3 tools/asc/asc.py metadata plan            # or: apply
 python3 tools/asc/asc.py screenshots apply
 python3 tools/asc/asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace
@@ -246,7 +363,20 @@ missing"), `2` bad arguments.
 | `docs/appstore/metadata/en-US/copyright.txt` | copyright line (optional) |
 | `docs/appstore/screenshots/6.9-framed/*.png` | the composed screenshots (`tools/screenshots/compose.py` from `docs/appstore/screenshots/plan.json`), uploaded in filename order; `--dir` picks another directory, `docs/appstore/screenshots/6.9/` is the raw fallback |
 | `docs/appstore/iap-review/paywall.png` | the review screenshot on each subscription |
-| `docs/appstore/metadata/en-US/review_notes.txt` | Uploaded App Review notes (≤4000); skipped if absent. The separate Markdown review guide is not read by this script. |
+| `docs/appstore/metadata/en-US/review_notes.txt` | Uploaded App Review notes (≤4000); skipped if absent. `review_notes_team_seats.txt` is selected only with `review --include-team-seats` or `catalog_copy.py --include-team-seats`. The separate Markdown review guide is not read by these scripts. |
+
+`description_team_seats.txt` is a conditional drafting variant; `asc.py metadata`
+always reads `description.txt`, while the narrow `catalog_copy.py` selects the
+Team variant only with `--include-team-seats`. `review apply` updates only contact fields and
+source notes on an existing App Review Information record. It never reads,
+prints, creates, or patches demo credentials or `demoAccountRequired`. Set the
+provisioned owner account and `demoAccountRequired` in App Store Connect's
+private UI first. The command refuses to upload notes while that flag is false
+and refuses to create the review record without the secure UI handoff. If the
+expired-subscription account must be entered in the private Notes field, append
+it in the UI **after the final `review apply`**; rerunning the command would
+replace the whole Notes field with the tracked source text. See
+`docs/appstore/submission-metadata-readiness-20261028.md` for the current gate.
 
 > **"What's New" is not written on a first release.** App Store Connect rejects
 > `whatsNew` on an app's first version with 409 `STATE_ERROR`, "Attribute

@@ -581,6 +581,13 @@ export interface DriftDecisionArgs {
    * "exactly once" survives a restart, two instances and a retried request.
    */
   retryGranted: boolean;
+  /**
+   * The property-video job path since 12 Nov 2026 (owner decision): the verdict
+   * is recorded and enforces nothing. The action and `publishable` stay the
+   * judge's own (never upgraded to a pass); only the sentence changes, because
+   * the clip IS used and no retry or still photo follows. Never a retry.
+   */
+  advisory?: boolean;
 }
 
 export interface DriftDecision {
@@ -625,7 +632,10 @@ export function decideDriftAction(args: DriftDecisionArgs): DriftDecision {
       action: "hold",
       status: "unavailable",
       publishable: false,
-      message:
+      message: args.advisory
+        ? "We couldn't check this clip against your photo just now. It is in your video unchecked — " +
+          "watch it before you post, and make it again if it isn't right."
+        :
         "We couldn't check this clip against your photo just now, so it hasn't been approved. " +
         "Try the check again in a moment — the clip is saved.",
     };
@@ -642,6 +652,17 @@ export function decideDriftAction(args: DriftDecisionArgs): DriftDecision {
 
   const failed = failedCategories(verdict);
   const what = describeFailure(failed, verdict);
+
+  if (args.advisory) {
+    return {
+      action: "refuse",
+      status: "fail",
+      publishable: false,
+      message:
+        `${what} This check is advisory, so the clip is still in your video. Watch it before you ` +
+        `post — you are responsible for what you publish — and make it again if it isn't right.`,
+    };
+  }
 
   if (args.attempt <= 0 && args.retryGranted) {
     return {

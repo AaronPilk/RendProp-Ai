@@ -1,7 +1,7 @@
 # Deploy — rendprop-tour-host (Cloudflare Worker)
 
-The Worker that serves the public share links: `/f/:slug` (scroll-scrub player) and
-`/a/:handle` (portfolio grid). Deploy from this directory.
+The Worker that serves the public share links: `/f/:slug` (listing plus optional fly-through), `/u/:slug` (unbranded variant)
+and `/a/:handle` (portfolio grid). Deploy from this directory.
 
 ## 0. Prereqs (once)
 
@@ -11,8 +11,10 @@ npm install                  # wrangler + typescript + workers-types (devDeps on
 npx wrangler login           # opens browser; authorizes your Cloudflare account
 ```
 
-Upstream must already be live: the Supabase functions `tours`, `leads`, `beacon`,
-`portfolio` deployed with `--no-verify-jwt` (done by `services/supabase/deploy-functions.sh`).
+Upstream must already be live. Preserve the checked-in per-function JWT settings
+in `services/supabase/function-jwt-policy.json` and the deployment script; do not apply a blanket
+`--no-verify-jwt` override. This page/player release needs no backend deployment
+or migration.
 
 ## 1. Set the two vars
 
@@ -61,14 +63,18 @@ curl -s https://rendprop-tour-host.<subdomain>.workers.dev/healthz          # �
 curl -sI https://rendprop-tour-host.<subdomain>.workers.dev/f/<slug>        # → 200, text/html
 curl -sI https://rendprop-tour-host.<subdomain>.workers.dev/u/<slug>        # → 200 + X-Robots-Tag: noindex
 curl -sI "https://rendprop-tour-host.<subdomain>.workers.dev/f/%"           # → 404 (NOT 500)
-open  https://rendprop-tour-host.<subdomain>.workers.dev/f/<slug>          # scroll-scrub plays
+open  https://rendprop-tour-host.<subdomain>.workers.dev/f/<slug>          # listing opens; Watch fly-through opens playback
 open  https://rendprop-tour-host.<subdomain>.workers.dev/a/<handle>        # portfolio grid
 ```
 
-Checklist on the player page: loader hits 100% and fades, scrolling scrubs the
-video frame-accurately (mp4 scrub source — no keyframe snapping), chapter dots
-jump on tap, the lead form submits (row appears in `leads`), and a `metering`
-row for today shows the view.
+Checklist: before Watch fly-through, the listing navigates normally and sends no
+video request. Opening decodes the actual published master, native playback and
+room seeking work, and closing stops loading/audio and restores position. Check
+small screens, Escape/focus return, missing/failed video and retry. Verify `/u/`
+contains no agent/contact/form data and preserves staging disclosures. Use a
+disposable fixture for lead/beacon writes; read-only production verification must
+not create fake customer leads or views. `?embed=1` retains the legacy scroll
+player and needs its separate compatibility check.
 
 ## 3. Production routes on rendprop.com
 
@@ -144,4 +150,6 @@ For `npm run dev`, secrets aren't pulled from Cloudflare — put the key in a lo
 SUPABASE_ANON_KEY=eyJ...
 ```
 
-Republished tours show up within `TOUR_CACHE_TTL` (default 60 s) — no purge needed.
+Customer HTML always checks upstream and uses `Cache-Control: no-store`.
+`TOUR_CACHE_TTL` applies only to synthetic demo HTML. Publishing a new render
+creates a new slug; an older sharing link continues serving its earlier render.

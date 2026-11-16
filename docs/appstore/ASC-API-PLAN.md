@@ -374,15 +374,25 @@ token — `asc.py` sends only the `requestHeaders` Apple returns.
 
 ### Review — `asc.py review apply`
 
-`POST`/`PATCH /v1/appStoreReviewDetails` with `contactFirstName`,
-`contactLastName`, `contactPhone`, `contactEmail`, `demoAccountRequired: false`
-and `notes` from `docs/appstore/review-notes.md`. Then the same
+`PATCH /v1/appStoreReviewDetails` with `contactFirstName`,
+`contactLastName`, `contactPhone`, `contactEmail` and `notes` from
+`docs/appstore/metadata/en-US/review_notes.txt` (or the conditional Team-seat
+variant when explicitly selected). The current helper preserves the private
+demo-account fields and requires App Store Connect's App Review Information
+record to be created with a provisioned reviewer login in the UI first. It
+refuses to upload notes while `demoAccountRequired` is false. Then the same
 reserve→upload→commit dance on `/v1/subscriptionAppStoreReviewScreenshots` to
-attach `docs/appstore/iap-review/paywall.png` to **each** of the six
-subscriptions — App Review routinely rejects subscriptions that lack one.
+attach `docs/appstore/iap-review/paywall.png` to each selected base monthly
+subscription. Team 4–9 requires its own product-specific captures when
+explicitly included; App Review routinely rejects subscriptions without a
+review image.
 
 Contact details come from `~/Rendprop AI/_bridge/.asc/review-contact.json`. If it
 is absent, the command says so plainly and sets everything else.
+Never put demo credentials in this repository or pass them to the helper.
+Add any second expired-subscription account in the private App Store Connect
+Notes field only after the last helper run; a subsequent run replaces that
+field from the source file.
 
 ### Build — `asc.py build attach`
 

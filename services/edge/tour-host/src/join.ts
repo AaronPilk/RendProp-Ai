@@ -43,7 +43,9 @@ import { APP_STORE_URL } from "./attribution";
 const CODE_RE = /^[A-Z0-9]{4}-?[A-Z0-9]{4}-?[A-Z0-9]{4}$/i;
 
 export function normalizeJoinCode(raw: string | null | undefined): string | null {
-  const s = decodeURIComponent(String(raw ?? "")).trim().toUpperCase();
+  let s: string;
+  try { s = decodeURIComponent(String(raw ?? "")).trim().toUpperCase(); }
+  catch { return null; }
   if (!CODE_RE.test(s)) return null;
   const bare = s.replace(/-/g, "");
   return `${bare.slice(0, 4)}-${bare.slice(4, 8)}-${bare.slice(8, 12)}`;

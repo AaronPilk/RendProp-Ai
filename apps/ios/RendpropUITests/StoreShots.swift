@@ -88,7 +88,7 @@ final class StoreShots: XCTestCase {
     /// the store's industry frame shows (docs/appstore/screenshots/plan.json).
     private let industries: [StoreIndustry] = [
         StoreIndustry(raw: "real_estate", displayName: "Real estate",
-                      heroLine1: "Win the listing.", shotName: nil),
+                      heroLine1: "List it. Launch it. Sell it.", shotName: nil),
         StoreIndustry(raw: "venue", displayName: "Event venue",
                       heroLine1: "Book the date before", shotName: "s09-venue-home"),
         StoreIndustry(raw: "restaurant", displayName: "Restaurant / Bar",
@@ -107,13 +107,13 @@ final class StoreShots: XCTestCase {
     /// `step09to11IndustryHomes` drops again. Keys verified against source:
     /// RendpropApp.swift @AppStorage("hasOnboarded"), RootTabView
     /// @AppStorage("space.type"), @AppStorage("appearance"), AIConsent
-    /// "ai.thirdPartyProcessing.consent.v2".
+    /// "ai.thirdPartyProcessing.consent.v3".
     private var baseLaunchArguments: [String] {
         var args = [
             "-uiTesting",
             "-hasOnboarded", "YES",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v2", "YES",
+            "-ai.thirdPartyProcessing.consent.v3", "YES",
             "-ui.sampleLeads",       // the mock's three invented leads (s14)
         ]
         // STORESHOT_PHOTOS (bridge-cmd-storeshots.sh passes it as
@@ -165,7 +165,7 @@ final class StoreShots: XCTestCase {
 
     // MARK: s01 — Home, scrolled to the showroom
 
-    /// The hero shot: "Make something" — every tool the app has, in one grid.
+    /// The hero shot: "Create Something Amazing" — every tool in one grid.
     ///
     /// Note for whoever reviews the PNG: the two seeded sample homes
     /// ("1247 Hillcrest Drive", "88 Marina Vista #501") are deliberately NOT in
@@ -239,9 +239,9 @@ final class StoreShots: XCTestCase {
                 note("SKIPPED: Home tab unavailable.")
                 return
             }
-            scrollToTop()       // s02 left Home scrolled past the "Add a home" button
-            guard let add = scrollTo(ids: ["home.addHome"], labels: ["Add a home"], swipes: 6) else {
-                note("SKIPPED: no `home.addHome` and no \"Add a home\" button on Home.")
+            guard openTab("Listings", ids: [], confirmedBy: ["Add a home"]),
+                  let add = scrollTo(ids: [], labels: ["Add a home"], swipes: 6) else {
+                note("SKIPPED: the Listings tab's Add a home action was unavailable.")
                 return
             }
             tap(add)
@@ -331,7 +331,7 @@ final class StoreShots: XCTestCase {
                 note("SKIPPED: the photo studio was never reached, so its reel card is unreachable.")
                 return
             }
-            guard let card = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout),
+            guard let card = find(ids: ["detail.reelStudio"], labels: ["Make a video"], timeout: shortTimeout),
                   card.isEnabled else {
                 note("SKIPPED: the \"Make a reel\" card is disabled — it needs 2 photos on this home "
                      + "and the simulator's photo library supplied fewer. Seed it with "
@@ -339,10 +339,15 @@ final class StoreShots: XCTestCase {
                 return
             }
             tap(card)
-            guard waitForAny(ids: [], labels: ["Reel Studio"], timeout: screenTimeout) else {
+            guard waitForAny(ids: [], labels: ["Make a video"], timeout: screenTimeout) else {
                 note("SKIPPED: Reel Studio did not open.")
                 return
             }
+            guard let social = find(ids: ["video.purpose.social_media"], labels: [], timeout: shortTimeout), social.isHittable else {
+                note("SKIPPED: Social media video destination did not open.")
+                return
+            }
+            tap(social)
             settle(1.5)
             shot("s05-reel-studio")
             dismissTopScreen()          // Close → back to the photo studio
@@ -470,7 +475,7 @@ final class StoreShots: XCTestCase {
                 return
             }
             scrollToTop()
-            guard let tile = scrollTo(ids: ["detail.reelStudio"], labels: ["Make a reel"], swipes: 8),
+            guard let tile = scrollTo(ids: ["detail.reelStudio"], labels: ["Make a video"], swipes: 8),
                   tile.isEnabled else {
                 note("SKIPPED: the \"Make a reel\" tool card is absent or disabled on this home.")
                 popToRoot()
@@ -488,7 +493,13 @@ final class StoreShots: XCTestCase {
             // counts: the toolbox tile underneath may still be in the tree.
             if let card = hittableElement(id: "detail.reelStudio"), card.isEnabled {
                 tap(card)
-                if waitForAny(ids: [], labels: ["Reel Studio"], timeout: screenTimeout) {
+                if waitForAny(ids: [], labels: ["Make a video"], timeout: screenTimeout) {
+                    guard let social = find(ids: ["video.purpose.social_media"], labels: [], timeout: shortTimeout), social.isHittable else {
+                        note("SKIPPED: Social media video destination did not open.")
+                        dismissTopScreen()
+                        return
+                    }
+                    tap(social)
                     settle(1.5)
                     shot("s12-reel-studio")
                     note("s12 is the Reel Studio itself — this home already had two photos.")
@@ -807,17 +818,14 @@ final class StoreShots: XCTestCase {
     // MARK: - Navigation helpers
 
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
-    /// CAREFUL with the confirming labels below: "Add a home" and "My Homes"
-    /// appear on BOTH the Home dashboard and the Homes tab (one as a section
-    /// title and a button, the other as a nav title and a button), so using
-    /// either would make `openTab` report success without switching tab. Only
-    /// `home.addHome` and "Make something" are unique to the dashboard.
+    /// Confirm the dashboard with its unique Get started action or tool heading,
+    /// never the collection tab's unchanged Add action.
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: ["home.addHome"], confirmedBy: ["Make something"])
+        openTab("Home", ids: ["home.getStarted"], confirmedBy: ["Create Something Amazing"])
     }
 
     @discardableResult
@@ -843,15 +851,15 @@ final class StoreShots: XCTestCase {
         return waitForAny(ids: ids, labels: labels, timeout: shortTimeout)
     }
 
-    /// The Homes tab lists BOTH the user's homes and the seeded samples; the
+    /// The Listings tab lists BOTH the user's homes and the seeded samples; the
     /// Home dashboard lists only real ones. This opens the first row on the
-    /// Homes tab, which on a fresh simulator is a sample.
+    /// Listings tab, which on a fresh simulator is a sample.
     ///
     /// The tab button is tapped directly rather than through `openTab`: every
     /// label this screen shows is also on the Home dashboard, so there is no
     /// text that could confirm the switch actually happened.
     private func openFirstSampleHome() -> Bool {
-        let tab = app.tabBars.buttons["Homes"]
+        let tab = app.tabBars.buttons["Listings"]
         guard tab.waitForExistence(timeout: shortTimeout) else { return false }
         tab.tap()
         settle(1.5)
@@ -1121,7 +1129,7 @@ final class StoreShots: XCTestCase {
     /// Scroll back to the top of the current screen.
     ///
     /// LOAD-BEARING: `scrollTo` only ever walks DOWN the page, so a step that
-    /// needs something ABOVE where the previous step left off — "Add a home"
+    /// needs something ABOVE where the previous step left off — the hero
     /// and the homes list both sit above the demo player on Home — will never
     /// find it without this first.
     private func scrollToTop(_ swipes: Int = 6) {

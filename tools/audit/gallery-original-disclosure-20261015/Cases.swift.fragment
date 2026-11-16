@@ -1,0 +1,112 @@
+        func replaceFields(_ version: PhotoVersionHistory.Version, _ fields: [String: Any]) throws -> PhotoVersionHistory.Version {
+            var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(version)) as! [String: Any]
+            for (key, value) in fields { json[key] = value }
+            return try JSONDecoder().decode(PhotoVersionHistory.Version.self, from: JSONSerialization.data(withJSONObject: json))
+        }
+        func writeIndex(_ index: PhotoVersionHistory.Index, _ directory: URL) throws {
+            try JSONEncoder().encode(index).write(to: directory.appendingPathComponent(".photo-history.json"), options: .atomic)
+        }
+        func originalFixture(_ label: String) throws -> (AppModel, UUID, UUID, URL, PhotoVersionHistory.Version) {
+            let (model, id, server, dir) = try fixture(label)
+            let index = try PhotoVersionHistory.ensureOriginalSources(directory: dir)
+            let original = index.versions["capture-original"]!
+            try PhotoVersionHistory.selectForPublication(id: original.id, directory: dir)
+            model.listings[0].mainPhotoRelPath = FileStore.relativePath(for: dir.appendingPathComponent(original.imageFile))
+            return (model, id, server, dir, original)
+        }
+        do {
+            let (model, id, server, dir, original) = try originalFixture("actual-original")
+            let url = dir.appendingPathComponent(original.imageFile), before = try files(dir)
+            let proof = try PhotoGalleryDisclosure.retainedOriginal(version: original, imageURL: url, sourceURL: url, maxBytes: 9_500_000)
+            check(proof?.sha256 == "__ORIGINAL_SHA__" && proof?.bytes == Int64(Data("actual-original-original".utf8).count), "Retained Original proof binds independently computed exact source bytes and SHA")
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.publications.count == 1 && model.api.publications[0].assetIDs == ["asset:orig-capture.jpg"], "Verified retained Original publishes without AI disclosure")
+            check(model.api.publications[0].main == "asset:orig-capture.jpg" && model.api.provenance.isEmpty, "Retained Original stays the exact selected cover with no fabricated provenance")
+            let after = try files(dir)
+            check(model.listings[0].lastError == nil && before == after, "Successful Original publication preserves every source/history byte and clears only its own error")
+        }
+        do {
+            let (model, id, server, dir, original) = try originalFixture("confirmed-gallery-receipt")
+            let actor = UUID(), library = WorkspaceContext.selectedOrgID!, confirmed = UUID()
+            AuthStore.shared.userID = actor.uuidString
+            UploadManager.shared.boundary = { _, _ in confirmed.uuidString }
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            let receipts = await CloudPhotoReferences.shared.galleryReceipts()
+            check(receipts.last?.assetID == confirmed && receipts.last?.ownerID == actor
+                && receipts.last?.orgID == library && receipts.last?.listingID == server,
+                "Confirmed upload receipt is bound to actor/library/listing before selection")
+            check(receipts.last?.fileURL == dir.appendingPathComponent(original.imageFile)
+                && model.api.publications.first?.assetIDs == [confirmed.uuidString],
+                "Actual selected Original file is linked to confirmed gallery asset identity")
+        }
+        // A label, source filename, or originalVerified flag cannot certify an
+        // altered descendant. Run each against the actual retained index too.
+        let originalSpoofs: [[String: Any]] = [
+            ["effects": ["stage"]], ["effects": ["declutter"]],
+            ["parentID": "capture"], ["sourceID": "capture"], ["stagingBaseID": "capture"],
+            ["originalVerified": false], ["sourceHistoryKnown": false],
+            ["id": "other-original"], ["familyID": "other"], ["style": "modern"],
+            ["imageFile": "enh-capture.jpg"], ["originalFile": "enh-capture.jpg"],
+            ["edit": "declutter"], ["stagingReferenceID": "capture"], ["stagingBrief": "stage it"],
+            ["customReviewed": false]
+        ]
+        for (offset, fields) in originalSpoofs.enumerated() {
+            let (_, _, _, dir, original) = try originalFixture("spoof-\(offset)")
+            let spoof = try replaceFields(original, fields)
+            var index = try PhotoVersionHistory.load(directory: dir)
+            if spoof.id == original.id && spoof.familyID == original.familyID {
+                index.versions[spoof.id] = spoof; try writeIndex(index, dir)
+            }
+            let url = dir.appendingPathComponent(original.imageFile)
+            let result = try PhotoGalleryDisclosure.retainedOriginal(version: spoof, imageURL: url, sourceURL: url, maxBytes: 9_500_000)
+            check(result == nil, "Altered metadata never earns a retained Original exemption: \(offset)")
+        }
+        for fields in [["originalVerified": false], ["effects": ["stage"]], ["parentID": "some-edit"]] as [[String: Any]] {
+            let (_, _, _, dir, original) = try originalFixture("spoof-capture")
+            var index = try PhotoVersionHistory.load(directory: dir)
+            index.versions["capture"] = try replaceFields(index.versions["capture"]!, fields)
+            try writeIndex(index, dir)
+            let url = dir.appendingPathComponent(original.imageFile)
+            check(try PhotoGalleryDisclosure.retainedOriginal(version: original, imageURL: url, sourceURL: url, maxBytes: 9_500_000) == nil, "An altered/unverified capture root cannot certify an Original")
+        }
+        do {
+            let (_, _, _, dir, original) = try originalFixture("file-boundaries")
+            let url = dir.appendingPathComponent(original.imageFile), other = dir.appendingPathComponent("enh-capture.jpg")
+            check(try PhotoGalleryDisclosure.retainedOriginal(version: original, imageURL: url, sourceURL: other, maxBytes: 9_500_000) == nil, "Original must resolve to its exact retained source URL")
+            check(try PhotoGalleryDisclosure.retainedOriginal(version: original, imageURL: other, sourceURL: url, maxBytes: 9_500_000) == nil, "An enhanced file cannot impersonate original bytes")
+            check(try PhotoGalleryDisclosure.retainedOriginal(version: original, imageURL: url, sourceURL: url, maxBytes: 1) == nil, "Original certification honors the real publication byte ceiling")
+            let originalBytes = try Data(contentsOf: url)
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.createSymbolicLink(at: url, withDestinationURL: other)
+            check(try PhotoGalleryDisclosure.retainedOriginal(version: original, imageURL: url, sourceURL: url, maxBytes: 9_500_000) == nil, "A symbolic link never certifies retained Original bytes")
+            try FileManager.default.removeItem(at: url); try originalBytes.write(to: url)
+        }
+        do {
+            let (model, id, server, dir, _) = try originalFixture("bytes-change")
+            UploadManager.shared.boundary = { url, _ in
+                var changed = try Data(contentsOf: url); changed[0] ^= 1; try changed.write(to: url)
+                return "asset:" + url.lastPathComponent
+            }
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.publications.isEmpty && model.api.provenance.isEmpty, "Same-size source mutation during upload cannot publish")
+            check(model.listings[0].lastError?.contains("retained original changed") == true, "Source SHA mismatch is an explicit sync failure, never a fake AI disclosure")
+            check(FileManager.default.fileExists(atPath: dir.appendingPathComponent("enh-capture.jpg").path), "Source mismatch keeps the earlier capture and selection files")
+        }
+        do {
+            let (model, id, server, dir, original) = try originalFixture("descendant-spoof")
+            var index = try PhotoVersionHistory.load(directory: dir)
+            index.versions[original.id] = try replaceFields(original, ["parentID": "capture", "sourceID": "capture", "effects": ["declutter"]])
+            try writeIndex(index, dir)
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.publications.isEmpty && model.api.provenance.isEmpty, "A descendant spoofing capture-original still requires recorded disclosure")
+            check(model.listings[0].lastError?.contains("disclosure hasn't been saved") == true, "Descendant spoof preserves the existing disclosure refusal")
+        }
+        do {
+            let (model, id, server, dir, _) = try originalFixture("other-edit")
+            try PhotoVersionHistory.saveCapture(original: Data("second-source".utf8), enhanced: Data("second-capture".utf8), id: "second", directory: dir)
+            _ = try PhotoVersionHistory.saveEdit(jpeg: Data("second-altered".utf8), id: "second-edit", parentID: "second", sourceID: "second", edit: "declutter", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: dir)
+            let before = try files(dir)
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.publications.isEmpty && model.listings[0].lastError?.contains("disclosure hasn't been saved") == true, "A genuine Original cannot bypass another selected edit's missing disclosure")
+            check(before == (try files(dir)), "Disclosure refusal never changes any selected version or source bytes")
+        }

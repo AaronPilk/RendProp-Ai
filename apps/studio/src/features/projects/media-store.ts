@@ -5,7 +5,7 @@ type Stored={key:string;scope:string;hash:string;file:Blob;name:string;lastModif
 function request<T>(value:IDBRequest<T>):Promise<T>{return new Promise((resolve,reject)=>{value.onsuccess=()=>resolve(value.result);value.onerror=()=>reject(value.error??new Error("Browser media storage is unavailable."));});}
 async function database():Promise<IDBDatabase>{if(typeof indexedDB==="undefined")throw new Error("This browser cannot keep original files between visits.");const open=indexedDB.open(DB,1);open.onupgradeneeded=()=>{const store=open.result.createObjectStore(STORE,{keyPath:"key"});store.createIndex("scope","scope");};return request(open);}
 function complete(tx:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(tx.error??new Error("Browser media storage is full or unavailable."));});}
-function key(scope:string,hash:string):string{if(!scope||scope.length>300||!/^[a-f0-9]{64}$/.test(hash))throw new Error("Invalid media backup identity.");return `${scope}:${hash}`;}
+function key(scope:string,hash:string):string{if(!scope||scope.length>300||!/^[a-f0-9]{64}$/.test(hash))throw new Error("The copy of a file kept in this browser could not be read. Choose the original file again.");return `${scope}:${hash}`;}
 export async function storeProjectFile(scope:string,hash:string,file:File,signal?:AbortSignal):Promise<void>{
  signal?.throwIfAborted();const id=key(scope,hash);if(file.size<1||file.size>128*1024*1024)throw new Error("This file exceeds browser backup limits.");
  const db=await database();

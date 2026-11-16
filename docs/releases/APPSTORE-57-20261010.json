@@ -1,0 +1,47 @@
+{
+  "authorized_by": "User instruction: submit to the app store",
+  "created_at": "2026-10-10T17:53:12.217795+00:00",
+  "app_id": "6808982413",
+  "version_id": "39ff74df-71d4-4bf1-92f4-9c709e7f4366",
+  "version": "1.0.4",
+  "build_id": "46e2df20-e688-4e14-afa7-88655f28e8ba",
+  "build_number": "57",
+  "review_id": "ecf0a17a-6fdd-40c9-8e0b-39f345b1b830",
+  "release_type": "MANUAL",
+  "screenshots": 7,
+  "review_items": [
+    [
+      "ZWNmMGExN2EtNmZkZC00MGM5LThlMGItMzlmMzQ1YjFiODMwfDE4fDJlMDUyNGU2LTQ5Y2EtNDQ3Yi04Mjg0LTA1ZWVlMWE2NDI2Yw",
+      "subscriptionVersion",
+      "2e0524e6-49ca-447b-8284-05eee1a6426c"
+    ],
+    [
+      "ZWNmMGExN2EtNmZkZC00MGM5LThlMGItMzlmMzQ1YjFiODMwfDE4fDlmMGIwZWFkLTdlODUtNGMzOC04NTJlLTI2MTdhMjc3ZDc4YQ",
+      "subscriptionVersion",
+      "9f0b0ead-7e85-4c38-852e-2617a277d78a"
+    ],
+    [
+      "ZWNmMGExN2EtNmZkZC00MGM5LThlMGItMzlmMzQ1YjFiODMwfDE4fDczYjZmZjNhLWUxNWMtNDQ1MS04YTg4LTk0YmZjNjk2Y2E1NA",
+      "subscriptionVersion",
+      "73b6ff3a-e15c-4451-8a88-94bfc696ca54"
+    ],
+    [
+      "ZWNmMGExN2EtNmZkZC00MGM5LThlMGItMzlmMzQ1YjFiODMwfDZ8ODkyODM4NTQz",
+      "appStoreVersion",
+      "39ff74df-71d4-4bf1-92f4-9c709e7f4366"
+    ]
+  ],
+  "known_open_items": [
+    "Intermittent Studio audio-export CI failure",
+    "Phone acceptance",
+    "Real provider quality and invoice evidence"
+  ],
+  "submission_attempts_planned": 1,
+  "read_at": "2026-10-10T17:53:57.968827+00:00",
+  "review_state": "WAITING_FOR_REVIEW",
+  "submitted_date": "2026-10-10T17:53:19.511Z",
+  "version_state": "WAITING_FOR_REVIEW",
+  "submission_accepted": true,
+  "one_submission_request": true,
+  "verification_note": "First GET verification incorrectly expected a submitted boolean; Apple exposes the accepted state and submittedDate, not that write-only field. Initial response retained. Fresh GETs verify state/date and exact build; no second PATCH."
+}

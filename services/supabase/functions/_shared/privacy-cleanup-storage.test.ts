@@ -1,0 +1,15 @@
+import {assert,assertEquals}from "https://deno.land/std@0.224.0/assert/mod.ts";
+const fixtureEnv={CLOUDFLARE_ACCOUNT_ID:"privacy-cleanup-fixture",R2_ACCESS_KEY_ID:"fixture-access",R2_SECRET_ACCESS_KEY:"fixture-secret",R2_BUCKET_UPLOADS:"fixture-physical-uploads",R2_BUCKET_RENDERS:"fixture-physical-renders"};
+const previous=new Map(Object.keys(fixtureEnv).map(key=>[key,Deno.env.get(key)]));
+let cleanup:typeof import("./privacy-cleanup.ts");
+try{for(const[key,value]of Object.entries(fixtureEnv))Deno.env.set(key,value);cleanup=await import("./privacy-cleanup.ts?physical-storage-proof");}
+finally{for(const[key,value]of previous)if(value===undefined)Deno.env.delete(key);else Deno.env.set(key,value);}
+const org="de770103-0000-4000-8000-000000000001",id="de770103-0000-4000-8000-000000000002",token="de770103-0000-4000-8000-000000000003";
+async function invoke(missingBucket=false){
+ const payload={r2:[{bucket:"uploads",key:`uploads/${org}/fixture/source.jpg`},{bucket:"renders",key:`ai-router/${org}/fixture/result.jpg`}],stream_uids:[],ghl_targets:[]};
+ let remaining:typeof payload|undefined;const admin={rpc(name:string,args:Record<string,unknown>){if(name==="privacy_cleanup_due")return Promise.resolve({data:[id],error:null});if(name==="privacy_cleanup_claim")return Promise.resolve({data:{id,token,org_id:org,payload},error:null});if(name==="privacy_cleanup_finish"){remaining=args.p_remaining as typeof payload;return Promise.resolve({data:{ok:true,id,cleanup_complete:remaining.r2.length===0},error:null});}throw new Error("Unknown private cleanup RPC");}};
+ const old=globalThis.fetch,calls:Request[]=[];globalThis.fetch=(input,init)=>{const req=new Request(input,init),url=new URL(req.url);calls.push(req);assertEquals(url.hostname,"privacy-cleanup-fixture.r2.cloudflarestorage.com");assertEquals(req.method,"DELETE");assertEquals(req.redirect,"error");assert(req.headers.get("authorization")?.startsWith("AWS4-HMAC-SHA256"));assert(["/fixture-physical-uploads/", "/fixture-physical-renders/"].some(prefix=>url.pathname.startsWith(prefix)));return Promise.resolve(missingBucket?new Response("<Error><Code>NoSuchBucket</Code></Error>",{status:404}):new Response(null,{status:204}));};
+ try{return{receipt:await cleanup.sweepPrivacyCleanup(admin),calls,remaining,payload};}finally{globalThis.fetch=old;}
+}
+Deno.test("actual default drainer maps logical SQL inventory to configured physical R2 buckets",async()=>{const out=await invoke();assertEquals(out.receipt.completed,1);assertEquals(out.remaining?.r2,[]);assertEquals(out.calls.length,2);assert(out.calls.some(call=>new URL(call.url).pathname.startsWith("/fixture-physical-uploads/uploads/")));assert(out.calls.some(call=>new URL(call.url).pathname.startsWith("/fixture-physical-renders/ai-router/")));});
+Deno.test("missing physical bucket404 retains exact logical inventory and never confirms cleanup",async()=>{const out=await invoke(true);assertEquals(out.receipt.completed,0);assertEquals(out.remaining,out.payload);assertEquals(out.calls.length,2);});

@@ -47,7 +47,7 @@ declare changed integer;
 begin
   -- Preserve three total rows and a paid tier, but destroy the first-seat
   -- identity. A count-only check would incorrectly pass this mutation.
-  update public.ai_routes set min_plan = 'pro', position = 17
+  update public.ai_routes set min_plan = 'ultra', position = 17
     where task = 'copy.agent_reel' and model = 'gpt-6-astra' and position = 1;
   get diagnostics changed = row_count;
   if changed <> 1 then raise exception 'Seat negative control changed % rows, expected 1', changed; end if;
@@ -57,7 +57,7 @@ do $$
 begin
   if (select count(*) from _inv) <> 2
      or (select pass from _inv where name = 'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates') is distinct from false
-     or (select pass from _inv where name = 'no gpt-6-astra row is reachable on the free or trial tier') is distinct from true then
+     or (select pass from _inv where name = 'no gpt-6-astra row is reachable on the free, trial or new Pro tier') is distinct from true then
     raise exception 'Wrong first-seat identity must fail while the no-free-tier assertion still passes';
   end if;
 end $$;

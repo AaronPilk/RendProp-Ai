@@ -1,3 +1,4 @@
+import {privateMediaUrl} from "../_shared/private-media.ts";
 import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
 import { projectMediaComplete, projectMediaManifest, type ProjectMediaRow } from "./project-media.ts";
 import type { StudioContext } from "./context.ts";
@@ -88,7 +89,7 @@ export async function handlePropertyMusic(req: Request, context: StudioContext, 
   const row = await propertyMusicRow(context, scope.listing, scope.sha256);
   await authorizeSelection(row);
   req.signal.throwIfAborted();
-  const media = await manifest(row);
+  const media = manifest===projectMediaManifest?await projectMediaManifest(row,(_bucket,key,seconds)=>privateMediaUrl({actor:context.userId,org:context.orgId,listing:scope.listing,bucket:"uploads",key,...(reviewing?{review:{owner,result:row.id,revision:Number(input.expected_document_revision)}}:{})},seconds)):await manifest(row);
   // No capabilities survive a withdrawal, revision change, binding deletion or
   // account deletion that occurs during signing.
   await context.authorizeListing(scope.listing);

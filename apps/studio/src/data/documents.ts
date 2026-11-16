@@ -2,13 +2,13 @@ import { StudioError } from "./config";
 import type { StudioServices } from "./services";
 export type CloudDocument = { key: string; kind: string; listing_id: string | null; revision: number; payload: Record<string, unknown>; updated_at: string };
 export function decodeDocument(raw: unknown, key: string): CloudDocument | null {
-  if (!raw || typeof raw !== "object" || !("document" in raw)) throw new Error("Saved work could not be read.");
+  if (!raw || typeof raw !== "object" || !("document" in raw)) throw new Error("We could not open your saved work. Refresh and try again.");
   const value = (raw as {document: unknown}).document;
   if (value === null) return null;
   const doc = value as CloudDocument;
   if (doc.key !== key || !Number.isSafeInteger(doc.revision) || doc.revision < 1 ||
     !doc.payload || typeof doc.payload !== "object" || Array.isArray(doc.payload) || !Number.isFinite(Date.parse(doc.updated_at)))
-    throw new Error("Saved work could not be read.");
+    throw new Error("We could not open your saved work. Refresh and try again.");
   return doc;
 }
 export type SyncState = "loading" | "saved" | "saving" | "offline" | "conflict";
@@ -31,6 +31,7 @@ export class DocumentSync {
   private running = false;
   private stopped = false;
   private uncertain: { payload: string; revision: number } | null = null;
+  private rejectedWrite: StudioError | null = null;
   private controller = new AbortController();
   state: SyncState = "loading";
   constructor(private services: StudioServices, readonly orgId: string, readonly key: string,
@@ -63,6 +64,7 @@ export class DocumentSync {
   async flush(): Promise<void> {
     if (this.stopped || this.running || !this.pending || this.state === "conflict" || this.state === "offline" || this.state === "loading") return;
     this.running = true;
+    this.rejectedWrite = null;
     const payload = this.pending;
     const attempt = { payload: canonicalDocument(payload), revision: this.revision };
     this.pending = null;
@@ -72,14 +74,19 @@ export class DocumentSync {
         orgId:this.orgId,method:"POST",signal:this.controller.signal,
         body:{key:this.key,kind,...(this.binding ? {listing_id:this.binding.listingId} : this.key.includes(":") ? {listing_id:this.key.split(":")[1]} : {}),expected_revision:this.revision,payload},
       }),this.key);
-      if (!doc) throw new Error("Save confirmation was missing.");
-      if (doc.revision !== attempt.revision + 1 || canonicalDocument(doc.payload) !== attempt.payload) throw new Error("Save confirmation did not match this draft.");
+      if (!doc) throw new Error("We could not confirm your work was saved. Refresh to check before saving again.");
+      if (doc.revision !== attempt.revision + 1 || canonicalDocument(doc.payload) !== attempt.payload) throw new Error("The save we got back was for a different draft. Refresh to check before saving again.");
       this.uncertain = null;
       this.revision = doc.revision; this.saved=canonicalDocument(doc.payload);
       if (this.pending && canonicalDocument(this.pending) === this.saved) this.pending = null;
       this.status(this.pending ? "saving" : "saved");
     } catch(error) {
       this.pending ??= payload;
+      // A caller creating a new identity may keep its previous editor when the
+      // server explicitly refused this write. Timeouts, bad receipts and 5xx
+      // remain uncertain and must retain the same key for reconciliation.
+      if (error instanceof StudioError && error.status !== undefined &&
+        [400, 401, 403, 404, 409, 413, 422].includes(error.status)) this.rejectedWrite = error;
       this.uncertain = error instanceof StudioError && error.status === 409 ? null : attempt;
       this.status(error instanceof StudioError && error.status===409 ? "conflict" : "offline");
     } finally {
@@ -107,6 +114,7 @@ export class DocumentSync {
   get hasUnsavedWork(): boolean { return this.running || this.pending !== null || this.uncertain !== null || this.state === "conflict"; }
   /** Last server-confirmed revision, used to bind review actions to saved work. */
   get confirmedRevision(): number { return this.revision; }
+  get writeRejection(): StudioError | null { return this.rejectedWrite; }
   /** When another device saves, ask to reload instead of silently replacing an open edit. */
   async checkRemote(): Promise<void> {
     if (this.stopped || this.state !== "saved" || this.hasUnsavedWork) return;

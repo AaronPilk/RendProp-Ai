@@ -1,0 +1,128 @@
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { StudioServices } from "../../data/services";
+import { uploadListingAsset } from "./uploads";
+import { clientContactPayload, clientForm, clientRecipientVerified, decodeClientContact, type ClientContact, type ClientForm } from "./client-contact";
+
+export type ContactNavigationGuard = { canLeave: () => boolean };
+type ContactDraft = { form: ClientForm; baseline: ClientForm; saved: ClientContact | null };
+// A forced identity change cannot ask before unmounting. Keep open-tab drafts
+// isolated by service instance, account, workspace and property for recovery.
+const pendingContacts = new WeakMap<StudioServices, Map<string, ContactDraft>>();
+type Props = { services: StudioServices; userId: string; orgId: string; listingId: string; canWrite: boolean; onBlocked: (blocked: boolean) => void; onChanged: () => void; onNavigationGuard?: (guard: ContactNavigationGuard | null) => void };
+const failure = (error: unknown) => error instanceof Error ? error.message : "The listing contact could not be saved. Please try again.";
+export default function ClientContactEditor({ services, userId, orgId, listingId, canWrite, onBlocked, onChanged, onNavigationGuard }: Props) {
+  const draftKey = `${userId}:${orgId}:${listingId}`;
+  const cached = useRef(pendingContacts.get(services)?.get(draftKey)).current;
+  const [saved, setSaved] = useState<ClientContact | null>(cached?.saved ?? null), [form, setForm] = useState<ClientForm>(() => cached ? structuredClone(cached.form) : clientForm(null));
+  const [loaded, setLoaded] = useState(false), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [conflict, setConflict] = useState(false), [notice, setNotice] = useState("");
+  const current = useRef(form), baseline = useRef(cached ? structuredClone(cached.baseline) : form), active = useRef<AbortController | null>(null), input = useRef<HTMLInputElement>(null), saving = useRef(false), savedValue = useRef(saved);
+  current.current = form;
+  savedValue.current = saved;
+  const forget = () => pendingContacts.get(services)?.delete(draftKey);
+  useLayoutEffect(() => {
+    onNavigationGuard?.({ canLeave: () => {
+      if (saving.current) { setNotice("Wait for the listing contact save or photo upload to finish before switching."); return false; }
+      if (JSON.stringify(current.current) === JSON.stringify(baseline.current)) return true;
+      if (!window.confirm("Discard unsaved listing contact changes?")) return false;
+      pendingContacts.get(services)?.delete(draftKey);
+      current.current = baseline.current; setForm(baseline.current); setNotice("");
+      return true;
+    } });
+    return () => onNavigationGuard?.(null);
+  }, [services, draftKey, onNavigationGuard]);
+  const dirty = JSON.stringify(form) !== JSON.stringify(baseline.current);
+  const path = `/functions/v1/listings/${listingId}/client-contact`;
+  useEffect(() => { onBlocked(!loaded || loading || busy || dirty || conflict || !!error); }, [loaded, loading, busy, dirty, conflict, error, onBlocked]);
+  const load = useCallback(async (discard = false) => {
+    if (active.current) return;
+    const controller = new AbortController(); active.current = controller; setLoading(true); setError("");
+    try {
+      const contact = decodeClientContact(await services.api(path, { orgId, signal: controller.signal }), listingId);
+      if (controller.signal.aborted) return;
+      const hasEdits = JSON.stringify(current.current) !== JSON.stringify(baseline.current);
+      if (hasEdits && !discard) {
+        if (contact?.revision !== saved?.revision) setConflict(true);
+      } else { const value = clientForm(contact); baseline.current = value; current.current = value; setForm(value); setSaved(contact); forget(); setConflict(false); setNotice(""); }
+      setLoaded(true);
+    } catch (error) { if (!controller.signal.aborted) setError(failure(error)); }
+    finally { if (active.current === controller) active.current = null; if (!controller.signal.aborted) setLoading(false); }
+  }, [services, path, orgId, listingId, saved?.revision]);
+  useEffect(() => { void load(); return () => { active.current?.abort(); active.current = null; }; }, [services, path, orgId, listingId]);
+  useEffect(() => { const refresh = () => { if (document.visibilityState === "visible") void load(); }; window.addEventListener("focus", refresh); return () => window.removeEventListener("focus", refresh); }, [load]);
+  useEffect(() => { if (!dirty) return; const protect = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", protect); return () => window.removeEventListener("beforeunload", protect); }, [dirty]);
+  const update = (next: Partial<ClientForm>) => {
+    const value = { ...current.current, ...next }; current.current = value;
+    let drafts = pendingContacts.get(services);
+    if (!drafts) { drafts = new Map(); pendingContacts.set(services, drafts); }
+    if (JSON.stringify(value) === JSON.stringify(baseline.current)) drafts.delete(draftKey);
+    else drafts.set(draftKey, { form: structuredClone(value), baseline: structuredClone(baseline.current), saved: structuredClone(savedValue.current) });
+    onBlocked(true); setForm(value); setNotice("");
+  };
+  const save = async () => {
+    if (active.current || !canWrite || !loaded || conflict) return;
+    const controller = new AbortController(); active.current = controller; saving.current = true; setBusy(true); setError(""); setNotice("");
+    try {
+      const body = clientContactPayload(form, saved?.revision ?? 0);
+      const contact = decodeClientContact(await services.api(path, { method: "PUT", orgId, body, signal: controller.signal }), listingId);
+      if (controller.signal.aborted) return;
+      if (!contact || contact.revision <= (saved?.revision ?? 0) || contact.enabled !== body.enabled || contact.recipient_email !== body.recipient_email || contact.hide_rendprop_branding !== body.hide_rendprop_branding || (contact.photo_asset_id ?? null) !== body.photo_asset_id || Object.entries(body.public_card).some(([key, value]) => contact.public_card[key as keyof typeof contact.public_card] !== value)) throw new Error("The saved contact could not be confirmed. Refresh and review it before publishing.");
+      const value = clientForm(contact); baseline.current = value; current.current = value; setSaved(contact); setForm(value); forget(); setConflict(false); setNotice(contact.enabled ? clientRecipientVerified(contact) ? `Client contact saved. New inquiries will be emailed to ${contact.recipient_email} and kept in your lead inbox.` : "Client contact saved. Verify their lead email to activate forwarding. Inquiries stay in your lead inbox." : "This listing uses your account’s contact card."); onChanged();
+    } catch (error) { if (!controller.signal.aborted) { setError(failure(error)); if (/changed|conflict|revision/i.test(failure(error))) setConflict(true); } }
+    finally { saving.current = false; if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
+  };
+  const verifyRecipient = async () => {
+    if (active.current || !canWrite || !saved?.enabled || dirty || conflict) return;
+    const controller = new AbortController(); active.current = controller; saving.current = true; setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await services.api("/functions/v1/leads/client-recipient-verification", { method: "POST", orgId, body: { listing_id: listingId }, signal: controller.signal }) as { ok?: unknown; state?: unknown };
+      if (controller.signal.aborted) return;
+      if (!result || result.ok !== true || !["queued", "verified"].includes(String(result.state))) throw new Error("The verification email could not be confirmed. Please retry.");
+      setNotice(result.state === "verified" ? "This lead email is already verified. Refresh its status below." : `Verification email requested for ${saved.recipient_email}. Ask your client to open it and confirm. Inquiries stay in your inbox while you wait.`);
+    } catch (error) { if (!controller.signal.aborted) setError(failure(error)); }
+    finally { saving.current = false; if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
+  };
+  const uploadPhoto = async (file: File) => {
+    if (active.current || !canWrite) return;
+    const controller = new AbortController(); active.current = controller; saving.current = true; setBusy(true); setError(""); setNotice("");
+    try {
+      const asset = await uploadListingAsset(services, { orgId, listingId, file, role: "contact_photo", signal: controller.signal });
+      if (!controller.signal.aborted) { update({ photo_asset_id: asset.assetId, avatar_url: null }); setNotice("Photo uploaded. Save the client contact to put it on the listing."); }
+    } catch (error) { if (!controller.signal.aborted) setError(failure(error)); }
+    finally { saving.current = false; if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
+  };
+  const fields: { key: keyof ClientForm["public_card"]; label: string; type?: string }[] = [
+    { key: "name", label: "Client name or business name" }, { key: "brokerage", label: "Brokerage or business" }, { key: "title", label: "Professional title" },
+    { key: "phone", label: "Client public phone", type: "tel" }, { key: "email", label: "Client public email", type: "email" },
+    { key: "website", label: "Client website", type: "url" }, { key: "instagram", label: "Client Instagram link", type: "url" }, { key: "linkedin", label: "Client LinkedIn link", type: "url" },
+  ];
+  const recipient = form.separate_recipient ? form.recipient_email : form.public_card.email;
+  return <section className="lw-card" aria-label="Listing contact"><h3>Who should buyers contact?</h3><p>Choose whose name and contact details appear at the bottom of this property’s marketing page.</p>
+    {loading && <p role="status">Loading listing contact…</p>}{error && <p className="lw-error" role="alert">{error}</p>}
+    {conflict && <p className="lw-notice" role="alert">This contact changed on another device. Your edits are kept. Reload the saved contact before trying again.</p>}
+    {(error || conflict) && <button type="button" disabled={busy || loading} onClick={() => { if (!dirty || window.confirm("Discard your unsaved contact changes and load the saved contact?")) void load(true); }}>Reload saved contact</button>}
+    <fieldset disabled={!canWrite || !loaded || loading || busy || conflict} className="lw-contact-fields"><legend className="business-sr-only">Listing contact choice</legend>
+      <label><input type="radio" name={`contact-${listingId}`} checked={!form.enabled} onChange={() => update({ enabled: false })} /> My account</label>
+      <label><input type="radio" name={`contact-${listingId}`} checked={form.enabled} onChange={() => update({ enabled: true })} /> My client</label>
+      {form.enabled && <><p className="lw-help">Your client does not need a Rendprop account. Your account keeps ownership of this property and its leads.</p>
+        <div className="lw-form-grid">{fields.filter(field => ["name", "brokerage", "phone", "email"].includes(field.key)).map(field => <label key={field.key}>{field.label}<input type={field.type ?? "text"} maxLength={field.key === "name" ? 120 : 300} value={form.public_card[field.key]} onChange={event => update({ public_card: { ...form.public_card, [field.key]: event.target.value } })} /></label>)}</div>
+        <details><summary>More contact details (optional)</summary><div className="lw-form-grid">{fields.filter(field => !["name", "brokerage", "phone", "email"].includes(field.key)).map(field => <label key={field.key}>{field.label}<input type={field.type ?? "text"} maxLength={300} value={form.public_card[field.key]} onChange={event => update({ public_card: { ...form.public_card, [field.key]: event.target.value } })} placeholder={field.type === "url" ? "https://" : undefined} /></label>)}</div></details>
+        <input ref={input} type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void uploadPhoto(file); }} />
+        <div className="lw-actions"><button type="button" onClick={() => input.current?.click()}>{form.photo_asset_id ? "Replace client photo" : "Upload client photo"}</button>{form.photo_asset_id && <button type="button" onClick={() => update({ photo_asset_id: null, avatar_url: null })}>Remove client photo</button>}</div>
+        <label><input type="checkbox" checked={form.separate_recipient} onChange={event => update({ separate_recipient: event.target.checked, recipient_email: form.recipient_email || form.public_card.email })} /> Send leads to a different email</label>
+        {form.separate_recipient && <label>Private lead delivery email<input aria-label="Private lead delivery email" type="email" maxLength={200} value={form.recipient_email} onChange={event => update({ recipient_email: event.target.value })} /><small>This delivery address is not shown on the public listing.</small></label>}
+        <label><input type="checkbox" checked={form.hide_rendprop_branding} onChange={event => update({ hide_rendprop_branding: event.target.checked })} /> Hide Rendprop logos and app promotions</label>
+        <p className="lw-help">The page still uses a rendprop.com address and identifies the service in its privacy disclosure. The MLS link keeps all contact details and forms hidden.</p>
+        <aside className="lw-contact-preview" aria-label="Client contact preview">{form.avatar_url && <img src={form.avatar_url} alt={form.public_card.name || "Client photo"} referrerPolicy="no-referrer" />}<strong>{form.public_card.name || "Your client’s name"}</strong><span>{[form.public_card.title, form.public_card.brokerage].filter(Boolean).join(" · ")}</span><span>{form.public_card.phone}</span><span>{form.public_card.email}</span>{form.photo_asset_id && !form.avatar_url && <small>New photo will appear after you save.</small>}<p>New inquiries → <strong>{recipient || "Add a lead delivery email"}</strong></p></aside>
+      </>}
+    </fieldset>
+    {form.enabled && <aside className="lw-notice" aria-label="Lead forwarding status">
+      <strong>{!dirty && saved?.enabled && clientRecipientVerified(saved) ? "Lead email verified" : "Verify your client’s lead email"}</strong>
+      <p>{!dirty && saved?.enabled && clientRecipientVerified(saved) ? `Inquiries are forwarded to ${saved.recipient_email} and stay in your lead inbox.` : "Your client confirms their email once. They do not need an account. You can save the contact and publish while inquiries stay in your inbox."}</p>
+      {dirty ? <p>Save these contact changes first.</p> : saved?.enabled && !clientRecipientVerified(saved) && <button type="button" disabled={!canWrite || busy || loading || conflict} onClick={() => void verifyRecipient()}>Send verification email</button>}
+      {!dirty && saved?.enabled && <button type="button" disabled={busy || loading} onClick={() => void load()}>Refresh email status</button>}
+    </aside>}
+    {notice && <p role="status" className="lw-notice">{notice}</p>}
+    <div className="lw-actions"><button type="button" className="primary" disabled={!canWrite || !loaded || !dirty || loading || busy || conflict} onClick={() => void save()}>{busy ? "Saving…" : "Save listing contact"}</button>{dirty && <p className="lw-help">Save this contact before publishing.</p>}</div>
+  </section>;
+}

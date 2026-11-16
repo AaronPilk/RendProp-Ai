@@ -1,6 +1,10 @@
-import { HttpError } from "../_shared/http.ts";
+import { HttpError, throwRpc } from "../_shared/http.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LISTING_PLAN_REFUSALS = new Set([
+  "RP402: Listing creation starts after the free week",
+  "RP402: Unpaid access includes one listing",
+]);
 
 /** Only the explicit per-draft contract opts in; older callers keep their
  * existing create behavior. The server, never the payload, chooses the ID. */
@@ -19,16 +23,26 @@ export async function draftListingID(key: string | null, userId: string, orgId: 
 
 /** Caller-scoped client preserves the existing insert/select RLS. A replay
  * reads the saved row; it cannot overwrite office edits or revive deletion. */
-export async function createListingRow(db: any, patch: Record<string, unknown>, userId: string, orgId: string, key: string | null) {
+export async function createListingRow(db: any, patch: Record<string, unknown>, userId: string, orgId: string, key: string | null, ownerId = userId) {
   const id = await draftListingID(key, userId, orgId);
-  const row = { ...patch, org_id: orgId, agent_id: userId, ...(id ? { id } : {}) };
-  const inserted = await db.from("listings").insert(row).select().single();
-  if (!inserted.error) return { data: inserted.data, replayed: false };
-  if (id && inserted.error.code === "23505") {
-    const replay = await db.from("listings").select("*").eq("id", id).eq("org_id", orgId).eq("agent_id", userId).is("deleted_at", null).maybeSingle();
-    if (replay.error) throw new HttpError(503, "The saved listing could not be checked. Refresh before trying again.");
-    if (!replay.data) throw new HttpError(409, "This listing was deleted or is no longer available. Create a new listing to start again.");
-    return { data: replay.data, replayed: true };
+  const target = id ?? crypto.randomUUID(); // Server-chosen identity for older callers too.
+  const row = { ...patch, org_id: orgId, agent_id: ownerId, id: target };
+  // STABLE listing SELECT policies re-read the row. INSERT RETURNING cannot
+  // see that new row in its statement snapshot; a fresh caller-RLS read can.
+  const inserted = await db.from("listings").insert(row);
+  if (inserted.error && !(id && inserted.error.code === "23505")) {
+    // Only the listing admission trigger's known plan refusals are safe to
+    // surface as typed purchase boundaries. Other SQL failures stay opaque.
+    if (inserted.error.code === "P0001" &&
+        typeof inserted.error.message === "string" &&
+        LISTING_PLAN_REFUSALS.has(inserted.error.message.trim()))
+      throwRpc(inserted.error.message);
+    throw new HttpError(400, "The listing could not be created. Check your workspace access and listing details.");
   }
-  throw new HttpError(400, "The listing could not be created. Check your workspace access and listing details.");
+  const saved = await db.from("listings").select("*").eq("id", target).eq("org_id", orgId).eq("agent_id", ownerId).is("deleted_at", null).maybeSingle();
+  if (saved.error) throw new HttpError(503, "The saved listing could not be checked. Refresh before trying again.");
+  if (!saved.data) throw new HttpError(409, "This listing was deleted or is no longer available. Create a new listing to start again.");
+  if (saved.data.id !== target || saved.data.org_id !== orgId || saved.data.agent_id !== ownerId)
+    throw new HttpError(503, "The saved listing identity could not be verified.");
+  return { data: saved.data, replayed: !!inserted.error };
 }

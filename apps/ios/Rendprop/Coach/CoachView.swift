@@ -8,6 +8,7 @@ import SwiftUI
 
 struct CoachView: View {
     @StateObject private var coachModel: CoachModel
+    private let photoState: CoachRequest.PhotoState?
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
     @FocusState private var inputFocused: Bool
@@ -16,10 +17,12 @@ struct CoachView: View {
     /// (never read from `@EnvironmentObject`) so `CoachModel` — a
     /// `@StateObject`, created exactly once — can be built right here with
     /// everything it needs from the very first frame.
-    init(model: AppModel, originScreen: String? = nil, starters: [String]? = nil) {
+    init(model: AppModel, originScreen: String? = nil, starters: [String]? = nil, listingID: UUID? = nil, photoState: CoachRequest.PhotoState? = nil) {
+        self.photoState = photoState
         _coachModel = StateObject(wrappedValue: CoachModel(model: model,
                                                           originScreen: originScreen,
-                                                          starters: starters))
+                                                          starters: starters,
+                                                          listingID: listingID, photoState: photoState))
     }
 
     var body: some View {
@@ -39,6 +42,7 @@ struct CoachView: View {
             }
         }
         .accessibilityIdentifier("coach.root")
+        .onChange(of: photoState) { coachModel.updatePhotoState($0) }
         // What the person types is answered by Anthropic or OpenAI on the
         // server, so the screen carries the same 5.1.2(i) consent sheet every
         // other AI tool carries. Unlike the studio, declining does not dismiss:

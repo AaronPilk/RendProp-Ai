@@ -27,6 +27,10 @@ enum Theme {
     static let accent = dynamic(light: rgb(124, 58, 237),   // #7C3AED
                                 dark:  rgb(155, 109, 255))  // #9B6DFF
 
+    /// The existing brand purple keeps a white primary label readable in both
+    /// appearances. The brighter dark accent remains for text and selections.
+    static let actionFill = Color(rgb(124, 58, 237))
+
     /// App background — near-white ↔ deep indigo-black.
     static let bg = dynamic(light: rgb(250, 250, 252),
                             dark:  rgb(14, 13, 20))         // #0E0D14

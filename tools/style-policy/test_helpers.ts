@@ -61,11 +61,7 @@ export function agentFixture() {
   const windows = planWindows(phrases, 60, photos.length);
   const answer = parseAgentReel(
     JSON.stringify({
-      windows: windows.map((w, i) => ({
-        window_id: w.window_id,
-        photo_id: photos[i].id,
-        on_screen_text: "Visible detail",
-      })),
+      w: windows.map((w, i) => [w.window_id, `p${i + 1}`, "Visible detail"]),
     }),
     windows,
     photos,

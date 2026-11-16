@@ -174,6 +174,46 @@ def run_enhancement(
             pl_ledger.CostLedger._rendprop_patched = True
 
         import enhance as pl_enhance  # noqa: WPS433 (lazy on purpose)
+        from providers.funding import ServingSession, serving_session
+        import db
+
+        def rpc(name, args):
+            response = db._request("POST", "rpc/" + name, headers=db._headers(), json=args)
+            db._check(response)
+            return db._json(response)
+
+        expected_attempt = None
+
+        def authorize():
+            nonlocal expected_attempt
+            if not job_id or not org_id:
+                raise RuntimeError("Paid worker enhancement requires a claimed job")
+            jobs = db.select("render_jobs", {"id": f"eq.{job_id}", "source": "eq.worker",
+                "status": "eq.processing", "worker_id": f"eq.{db.WORKER_ID}",
+                "lease_expires_at": f"gt.{db.now_iso()}", "select": "listing_id,attempts"}, limit=1)
+            if len(jobs) != 1:
+                raise RuntimeError("Worker no longer owns the paid request")
+            attempt = jobs[0].get("attempts")
+            if type(attempt) is not int or attempt < 1:
+                raise RuntimeError("Paid request attempt is unavailable")
+            if expected_attempt is None:
+                expected_attempt = attempt
+            elif attempt != expected_attempt:
+                raise RuntimeError("Paid request attempt changed")
+            listings = db.select("listings", {"id": f"eq.{jobs[0]['listing_id']}",
+                "org_id": f"eq.{org_id}", "deleted_at": "is.null", "select": "id"}, limit=1)
+            if len(listings) != 1:
+                raise RuntimeError("Paid request listing is unavailable")
+
+        # Legacy jobs predate a recorded requesting actor. Never charge a shared
+        # workspace's owner on another member's behalf by guessing that actor.
+        owners = db.select("memberships", {"org_id": f"eq.{org_id}",
+            "role": "eq.owner", "select": "user_id"}, limit=2) if org_id else []
+        members = db.select("memberships", {"org_id": f"eq.{org_id}",
+            "select": "user_id"}, limit=2) if org_id else []
+        if len(owners) != 1 or len(members) != 1:
+            return EnhanceResult(ran=False, reason="Use AI Photo Studio for shared-workspace enhancements")
+        session = ServingSession(owners[0]["user_id"], org_id, job_id, rpc, authorize)
     except Exception as e:  # noqa: BLE001 — import/config problems shouldn't kill the tour
         return EnhanceResult(ran=False, reason=f"pipeline import failed: {e}")
 
@@ -183,11 +223,12 @@ def run_enhancement(
 
     reason = "ok"
     try:
-        manifest = pl_enhance.enhance_video(
-            Path(input_video), declutter, style,
-            chapters=chapters, hero=hero, hero_seconds=SETTINGS.hero_seconds,
-            analyze=analyze, workdir=Path(enh_dir), job_id=job_id, org_id=org_id,
-        )
+        with serving_session(session):
+            manifest = pl_enhance.enhance_video(
+                Path(input_video), declutter, style,
+                chapters=chapters, hero=hero, hero_seconds=SETTINGS.hero_seconds,
+                analyze=analyze, workdir=Path(enh_dir), job_id=job_id, org_id=org_id,
+            )
     except Exception as e:  # noqa: BLE001 — provider/QC failure → ship base tour
         # The pipeline now isolates per-segment failures, so an exception here
         # is something outside the loop (context setup, disk, hero). Segments

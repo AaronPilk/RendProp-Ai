@@ -6,11 +6,18 @@ and its linked feature receipts. The foundation checker below deliberately remai
 an inventory checker; its zero browser-proof count does not describe the newer
 release's separately executed browser suites.
 
-Source baseline: `f14081d`. This is an inventory, **not verified parity**.
+Original planning baseline: `f14081d`. The machine-readable API inventory was
+refreshed against `27f5412` on October 5, including the photographer/client flow,
+the separate account-owned personal-card and workspace-logo contracts, and the
+source-only recipient-verification and lead-deletion API methods.
+This remains an inventory, **not verified parity**.
 Machine-readable truth: `packages/client-contracts/capabilities.json`. Its verifier
 compares every `APIClient` protocol method against the actual Swift file, detects missing,
 extra and duplicate mappings, and checks paths for capabilities outside that protocol.
-There are 41 distinct method names / 42 declarations (two `completeUpload` overloads).
+The current protocol has 72 distinct method names / 73 declarations (two
+`completeUpload` overloads), grouped into 21 capabilities, plus 24 capabilities
+outside that protocol. The foundation gate verifies this current source inventory
+and brand token policy; live and browser receipts remain separate.
 UI discovery remains a manual review obligation: a method inventory cannot prove every
 interactive behavior, accessibility path, business rule or hidden direct call is covered.
 
@@ -24,7 +31,11 @@ interactive behavior, accessibility path, business rule or hidden direct call is
 | Script/shotlist/agent reel | Shared server EDL with editable client timeline | Native agentreel method and phrase-timed offline-only integration missing; existing SpeechTranscriber permits server fallback |
 | Drone/aerial/reel/drift | Existing approved AI jobs, placement in editor | No disabled routes, no unapproved media sharing; live spend/cap fixtures |
 | Voices/TTS/chapters/coach | Same route-backed tools | Exact decoding, fairness, transient failure and replay fixtures |
-| Usage/brand/leads/lookup | Team dashboard, card, lead inbox, property form | Current org selected independently of user identity; server authority |
+| Photographer role and per-listing client | Shared nullable professional preference, revision-checked client card, separate private recipient and uploaded headshot | Preference never elevates permissions; headshot is excluded from property sources; actual phone and cross-device acceptance remain separate |
+| Client inquiry forwarding | Shared inbox with automatic client email and explicit first-send/resend using saved recipient | Writer roles, current recipient confirmation, immutable attempt history, bounded retries/rates and cancellation; provider acceptance does not prove inbox delivery |
+| Usage/workspace brand/leads/lookup | Team dashboard, org brand editor, lead inbox, property form | Current org selected independently of user identity; server authority. Studio's existing Agent card edits org branding, not the account-owned personal card |
+| Personal public card | Native source: account-only GET/PATCH `/me/card`, reviewed field changes and presence/value CAS | Studio has no reader/editor or pending-save recovery for this contract. Keep personal contact distinct from org branding and private login/notification email; native handoff, backend rollout and browser/device parity require separate receipts |
+| Workspace business logo | Native source: selected-org GET `/me`, POST `/me/brand/logo` and POST `/me/brand/logo/clear` | Studio has no bounded raster upload, clear or recovery implementation. Existing headshot/avatar URL fields are separate; owner/admin publication, exact URL CAS, immutable operations and cleanup must be preserved. Native handoff and compatible backend rollout are not verified by this inventory |
 | Admin read/write | Separate operations tooling | Admin ≠ brokerage owner. Provider activation restricted, not a product convenience |
 | Anonymous onboarding/session | No registration wall, recoverable anonymous workspace | Actual refresh race/adoption failure tests; same identity semantics as iOS |
 | Team seats/invites | Brokerage/office roster and join flows | Concurrent last seat, stale JWT, membership removal and personal-org preservation |

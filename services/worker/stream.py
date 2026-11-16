@@ -76,7 +76,7 @@ def _unwrap(resp: requests.Response) -> dict:
 
 def copy_from_url(source_url: str, name: str | None = None, meta: dict | None = None) -> str:
     """Register a video by URL (presigned R2 GET). Returns the Stream UID."""
-    payload: dict = {"url": source_url}
+    payload: dict = {"url": source_url, "requireSignedURLs": True}
     md = dict(meta or {})
     if name:
         md["name"] = name
@@ -121,7 +121,7 @@ def direct_upload(file_path: str, name: str | None = None) -> str:
     except OSError as e:
         raise StreamError(f"Stream fallback file unavailable ({type(e).__name__}); continuing with R2 playback") from e
     files = {"file": (name or "tour.mp4", payload, "video/mp4")}
-    r = _request("POST", _base(), headers=_headers(), files=files, timeout=SETTINGS.stream_timeout_s)
+    r = _request("POST", _base(), headers=_headers(), files=files, data={"requireSignedURLs": "true"}, timeout=SETTINGS.stream_timeout_s)
     result = _unwrap(r)
     uid = result.get("uid")
     if not uid:

@@ -21,11 +21,9 @@
 // (POST /beacon/:slug) — both deployed with --no-verify-jwt.
 //
 // Routing (wrangler.toml): the Worker owns the whole apex, `rendprop.com/*`.
-// Requests that exactly match a file under ./public (the marketing site,
-// /assets/*, robots.txt, llms.txt) are answered by Static Assets before this
-// script runs; everything else lands in fetch() below. That precedence is why
-// public/sitemap.xml had to be deleted when /sitemap.xml became a route: a
-// file under ./public wins, and the handler would never have been reached.
+// The Worker runs first so HTTPS/apex canonicalization applies to static files
+// too. Dynamic routes run before the ASSETS binding; other known static files
+// retain their normal delivery headers, ranges and MIME types.
 //
 // Every response is branded: malformed paths (`/f/%`) 404, and any exception
 // the handler throws is caught and answered with errorPage() + no-store — a
@@ -39,9 +37,16 @@ import { joinPage, normalizeJoinCode } from "./join";
 import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
-import { sitemapXml } from "./sitemap";
+import { sitemapXml, sitemapCursor, propertySitemapCursors, sitemapIndexXml, propertySitemapXml } from "./sitemap";
 import { fetchUpstreamJSON } from "./upstream";
 import { spatialData, spatialModule, spatialPage } from "./spatial";
+import { handleMediaDelivery } from "./media-delivery";
+import { handleRecipientConfirmation } from "./recipient-confirmation";
+import { propertyPage } from "./property-site";
+import { propertyAddressOnlyPath, propertyAddressPath, propertyAddressSlug } from "./property-seo";
+import { previewWebsiteTheme } from "./property-design";
+import { isPublicLocation, lookupNearbyPlaces, peekNearbyPlaces, type NearbyPlacesResult } from "./nearby-places";
+import { renderNearbyMap } from "./nearby-map";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
@@ -52,6 +57,51 @@ function ttl(env: Env): number {
 
 function functionsBase(env: Env): string {
   return String(env.SUPABASE_FUNCTIONS_URL || "").replace(/\/+$/, "");
+}
+
+/** Keep absence/collision separate from an unavailable authority: a direct
+ * address route must never turn a resolver outage into a false 404. */
+type AddressLookup = { kind: "unique"; slug: string; claimed: boolean } | { kind: "missing" } | { kind: "unavailable" };
+async function uniqueAddressSlug(descriptor: string, env: Env): Promise<AddressLookup> {
+  if (env.ADDRESS_ONLY_CANONICAL !== "enabled" || !/^[a-z0-9][a-z0-9-]{0,119}$/.test(descriptor)) return { kind: "missing" };
+  const answer = await fetchUpstreamJSON(`/tours/address-lookup/${encodeURIComponent(descriptor)}`, env, false, undefined, true);
+  if (answer.kind === "not-found") return { kind: "missing" };
+  if (answer.kind !== "ok" || !answer.value || typeof answer.value !== "object" || Array.isArray(answer.value)) return { kind: "unavailable" };
+  const value = answer.value as Record<string, unknown>;
+  if (Object.keys(value).length === 1 && value.status === "ambiguous") return { kind: "missing" };
+  const keys = Object.keys(value).sort().join(",");
+  if ((keys !== "slug,status" && keys !== "claimed,slug,status") || value.status !== "unique"
+      || (keys === "claimed,slug,status" && value.claimed !== true)
+      || typeof value.slug !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value.slug)) return { kind: "unavailable" };
+  return { kind: "unique", slug: value.slug, claimed: value.claimed === true };
+}
+
+type AddressState = { state: "unique" | "not-unique" | "unavailable"; descriptor: string | null; lookup?: AddressLookup };
+async function hasUniqueAddress(tour: Tour, env: Env): Promise<AddressState> {
+  // Noindex remains private-by-address unless a previously exposed bare URL
+  // was reserved for this exact listing before the dated-link migration.
+  const descriptor = propertyAddressSlug(tour.listing?.address);
+  if (!descriptor) return { state: "not-unique", descriptor: null };
+  const lookup = await uniqueAddressSlug(descriptor, env);
+  const snapshot = { descriptor, lookup };
+  if (lookup.kind === "unavailable") return { state: "unavailable", ...snapshot };
+  if (lookup.kind !== "unique" || lookup.slug !== tour.slug) return { state: "not-unique", ...snapshot };
+  // After dated URLs are enabled, only already-reserved bare addresses keep
+  // their single-segment identity. Every new publication gets a collision-
+  // proof address+date+slug link, so a later duplicate cannot break its link.
+  if (env.PROPERTY_DATE_SUFFIX === "enabled" && !lookup.claimed) return { state: "not-unique", ...snapshot };
+  if (!allowsIndexing(tour) && !lookup.claimed) return { state: "not-unique", ...snapshot };
+  // A one-segment legacy publication slug must continue to name its existing
+  // property, even if it happens to equal another listing's address spelling.
+  if (/^[A-Za-z0-9_-]{1,64}$/.test(descriptor) && descriptor !== tour.slug) {
+    const alias = await fetchUpstreamJSON(`/tours/${encodeURIComponent(descriptor)}`, env);
+    if (alias.kind === "error") return { state: "unavailable", ...snapshot };
+    if (alias.kind === "ok") {
+      if (!isTour(alias.value)) return { state: "unavailable", ...snapshot };
+      if (alias.value.slug !== tour.slug) return { state: "not-unique", ...snapshot };
+    }
+  }
+  return { state: "unique", ...snapshot };
 }
 
 function htmlResponse(
@@ -116,6 +166,9 @@ function htmlResponse(
       "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
       "Content-Security-Policy": csp.join("; "),
       ...extraHeaders,
+      ...(extraHeaders["Cache-Control"]?.startsWith("no-store") ? {
+        "CDN-Cache-Control": "no-store", "Cloudflare-CDN-Cache-Control": "no-store",
+      } : {}),
     },
   });
 }
@@ -160,46 +213,21 @@ const APEX_HOST = "rendprop.com";
  * ("Always Use HTTPS" + a www→apex Redirect Rule) are still required; this is
  * the Worker's half of the fix and a safety net if a setting is ever toggled off.
  */
-/**
- * apple-app-site-association — what makes a rendprop.com link open the iOS app
- * instead of Safari.
- *
- * Apple fetches this over HTTPS PER HOST in the app's entitlement, does NOT
- * follow redirects, and requires `application/json`. Both of those shape the
- * routing below: it is answered before `canonicalRedirect`, so the www host
- * serves its own copy rather than 301-ing to the apex, and it is served at the
- * legacy root path as well as `/.well-known/` because older iOS versions only
- * look at the root.
- *
- * `components` rather than the deprecated `paths` array (TN3155). `/u/*` is in
- * here on purpose: the MLS-unbranded twin is the same tour, and a buyer who
- * taps one inside the app is not in an MLS context - the page it loads is
- * still the unbranded one, so the gate does not move.
- *
- * The appID is <TeamID>.<bundle id>. If either ever changes, this and
- * apps/ios/Rendprop/Rendprop.entitlements change together or links silently
- * stop opening the app - silently, because a failed AASA fetch looks exactly
- * like a link that was never meant for an app.
- */
+/** Buyer-facing property pages stay in the browser, including when Rendprop
+ * is installed. Only team invites use HTTPS app routing. Apple fetches AASA
+ * per entitled host without redirects, so serve both hosts before canonical
+ * normalization. Devices may cache the previous rules; the native incoming
+ * URL handler also hands public pages back to the browser. */
 const AASA = JSON.stringify({
   applinks: {
     details: [
       {
         appIDs: ["5F5C5G25Y6.com.rendprop.app"],
         components: [
-          { "/": "/f/*", comment: "a published tour" },
-          { "/": "/a/*", comment: "an agent's portfolio" },
-          // /join/* opens the app straight onto the Join sheet with the code
-          // already filled in. Without this entry the invite link only ever
-          // reaches Safari, and the agent is back to copying a code by hand —
-          // which is the exact complaint this whole path exists to answer.
+          { "/": "/f/*", exclude: true, comment: "published property website — open in browser" },
+          { "/": "/u/*", exclude: true, comment: "MLS-unbranded property website — open in browser" },
+          { "/": "/a/*", exclude: true, comment: "public agent portfolio — open in browser" },
           { "/": "/join/*", comment: "a team invite" },
-          // /u/* is EXCLUDED, deliberately. It is the URL an agent puts in an
-          // MLS field because the MLS forbids agent branding and contact
-          // capture on it; opening it in the app wrapped a compliant page in
-          // branded chrome. An unbranded link stays a plain web page.
-          { "/": "/u/*", exclude: true,
-            comment: "MLS-unbranded — never open in the app" },
         ],
       },
     ],
@@ -273,19 +301,27 @@ async function handleTour(
   env: Env,
   ctx: ExecutionContext,
   unbranded = false,
+  addressLookupOn404 = false,
+  expectedAddress?: string,
 ): Promise<Response> {
   const base = unbranded ? UNBRANDED_HEADERS : {};
   const notFound = () =>
     unbranded
       ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
       : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
-  const upstreamError = (status: 502 | 503 = 502) =>
+  const upstreamError = (status: 429 | 502 | 503 = 502) =>
     unbranded
       ? htmlResponse(unbrandedFallback("error"), status, { ...base, "Cache-Control": "no-store" }, { unbranded })
       : htmlResponse(errorPage(), status, { "Cache-Control": "no-store" });
 
-  // Slugs are nanoid (base64url) — reject anything else fast.
+  // Slugs are nanoid (base64url) — reject anything else fast. The dated
+  // browser alias has already been parsed to its full publication slug.
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) {
+    if (addressLookupOn404 && !expectedAddress) {
+      const resolved = await uniqueAddressSlug(slug, env);
+      if (resolved.kind === "unique") return handleTour(resolved.slug, req, url, env, ctx, false, false, slug);
+      if (resolved.kind === "unavailable") return upstreamError(503);
+    }
     return unbranded
       ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
       : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
@@ -300,28 +336,47 @@ async function handleTour(
   // Only the demo slug honours it, only in embed mode, and only for a known
   // business type; it is part of the cache key so the two renders never mix.
   const demoAs = embed && demo ? demoSpaceFrom(url.searchParams.get("space")) : undefined;
+  const page = !embed && !unbranded ? propertyPage(url.searchParams.get("page")) : "home";
+  const previewTheme = !embed && !unbranded ? previewWebsiteTheme(url.searchParams.get("preview_theme")) : null;
 
   // WH-05: changing only the response TTL leaves old cache hits reachable.
   // Customer HTML must bypass both reads AND writes, including entries from a
   // previous deployment. The explicit demo slugs have no revocable user data.
-  const cache = demo ? caches.default : null;
-  const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : ""}${demoAs ? `&space=${demoAs}` : ""}`);
+  const cache = demo && !previewTheme ? caches.default : null;
+  const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : page === "home" ? "" : `?page=${page}`}${demoAs ? `&space=${demoAs}` : ""}`);
   if (cache) {
     const hit = await cache.match(key);
     if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
   }
 
-  const renderOpts = { embed, unbranded, origin: url.origin };
+  const publicBase: "/f" | "/property" = url.pathname.startsWith("/property/") ? "/property" : "/f";
+  const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase, previewTheme,
+    addressUrls: !demo, datedAddressCanonical: env.PROPERTY_DATE_SUFFIX === "enabled" };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
-  const finish = (tour: Tour): Response => {
-    const t = demo ? ttl(env) : 0;
+  const finish = (tour: Tour, nearby: NearbyPlacesResult | null = null, addressOnly = false): Response => {
+    if (previewTheme && (tour.space_type || "real_estate") !== "real_estate") return notFound();
+    // Resolve the address only after the normal current-publication/hosting
+    // authority has admitted this tour. Old short links keep working; an old
+    // address spelling redirects to today's actual property without leaking a
+    // private/unpublished address or treating the descriptor as identity.
+    if (!demo && (tour.space_type || "real_estate") === "real_estate"
+        && (unbranded ? /^\/u\/[^/]+\/[^/]+$/ : /^\/property\/[^/]+\/[^/]+$/).test(url.pathname)) {
+      const canonicalPath = addressOnly ? propertyAddressOnlyPath(tour.listing?.address)!
+        : propertyAddressPath(tour.slug, tour.listing?.address, unbranded ? "/u" : "/property",
+          !unbranded && env.PROPERTY_DATE_SUFFIX === "enabled" ? tour.published_at : undefined);
+      if (url.pathname !== canonicalPath) {
+        const target = new URL(canonicalPath, url.origin); target.search = url.search;
+        return new Response(null, { status: 308, headers: { ...(unbranded ? UNBRANDED_HEADERS : {}), Location: target.href, "Cache-Control": "no-store" } });
+      }
+    }
+    const t = demo && !previewTheme ? ttl(env) : 0;
     const html = renderTourPage(
       tour,
       functionsBase(env),
       env.SUPABASE_ANON_KEY || "",
       env.TURNSTILE_SITE_KEY || "",
-      renderOpts,
+      nearby ? { ...renderOpts, nearby, addressOnlyCanonical: addressOnly } : { ...renderOpts, addressOnlyCanonical: addressOnly },
     );
     if (unbranded) {
       // Fail CLOSED. An MLS unbranded field must never receive a page with
@@ -329,7 +384,7 @@ async function handleTour(
       // "temporarily unavailable" page is the safe failure, a leak is not.
       const violations = unbrandedSelfCheck(html, tour);
       if (violations.length) {
-        console.error(`tour-host UNBRANDED SELF-CHECK FAILED slug=${slug} violations=${violations.join(",")}`);
+        console.error(JSON.stringify({ event: "unbranded_self_check_failed", count: violations.length }));
         return htmlResponse(unbrandedFallback("blocked"), 503, { ...base, "Cache-Control": "no-store" }, { unbranded });
       }
     }
@@ -337,11 +392,11 @@ async function handleTour(
     // so a crawler that never parses the body (and anything reading the cached
     // response) gets the same answer. `/u/` has its own noindex in `base`.
     const robots: Record<string, string> =
-      unbranded || allowsIndexing(tour) ? {} : { "X-Robots-Tag": "noindex, nofollow" };
+      !previewTheme && (unbranded || allowsIndexing(tour)) ? {} : { "X-Robots-Tag": "noindex, nofollow" };
     const resp = htmlResponse(
       html,
       200,
-      { ...base, ...robots, "Cache-Control": demo ? `public, max-age=${t}, s-maxage=${t}` : "no-store" },
+      { ...base, ...robots, "Cache-Control": demo && !previewTheme ? `public, max-age=${t}, s-maxage=${t}` : "no-store" },
       { unbranded },
     );
     if (cache && req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
@@ -354,11 +409,46 @@ async function handleTour(
   if (demo) return finish(buildDemoTour(demoAs));
 
   const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}`, env);
-  if (upstream.kind === "not-found") return notFound();
+  if (upstream.kind === "not-found") {
+    if (addressLookupOn404 && !expectedAddress) {
+      const resolved = await uniqueAddressSlug(slug, env);
+      if (resolved.kind === "unique") return handleTour(resolved.slug, req, url, env, ctx, false, false, slug);
+      if (resolved.kind === "unavailable") return upstreamError(503);
+    }
+    return notFound();
+  }
   if (upstream.kind === "error") return upstreamError(upstream.status);
   if (!isTour(upstream.value)) return upstreamError();
   try {
-    return finish(upstream.value);
+    const addressEligible = !unbranded && !embed && !previewTheme
+      && (upstream.value.space_type || "real_estate") === "real_estate"
+    const addressState = addressEligible ? await hasUniqueAddress(upstream.value, env) : null;
+    if (expectedAddress && addressState?.state === "unavailable") return upstreamError(503);
+    const addressOnly = addressState?.state === "unique";
+    // A resolver result is never publication authority by itself: re-read the
+    // actual tour and require a fresh proof for this exact requested alias.
+    // A reserved, previously shared bare address can outlive a text address
+    // correction, but may never point to another listing's publication.
+    if (expectedAddress) {
+      // The current-tour address proof above is already a fresh resolver read
+      // after the tour response. For a matching bare alias, reusing this exact
+      // proof avoids a third identical gateway/DB round trip. A historical
+      // reserved spelling still gets its separate current proof.
+      const expected = addressState?.descriptor === expectedAddress && addressState.lookup
+        ? addressState.lookup : await uniqueAddressSlug(expectedAddress, env);
+      if (expected.kind === "unavailable") return upstreamError(503);
+      if (expected.kind !== "unique" || expected.slug !== upstream.value.slug
+          || (env.PROPERTY_DATE_SUFFIX === "enabled" && !expected.claimed)
+          || (!expected.claimed && propertyAddressSlug(upstream.value.listing?.address) !== expectedAddress)
+          || (!allowsIndexing(upstream.value) && !expected.claimed)) return notFound();
+    }
+    // Already-cached neighbourhood places become static markup on the Location
+    // page (map + list, no script needed). Cache-only: never a provider call,
+    // lease or budget charge, and bounded so storage cannot delay the HTML.
+    const nearby = page === "location" && !embed && !unbranded && (upstream.value.space_type || "real_estate") === "real_estate"
+      ? await peekNearbyPlaces({ space_type: "real_estate", published_at: String(upstream.value.published_at || ""), listing: { lat: typeof upstream.value.listing?.lat === "number" ? upstream.value.listing.lat : null, lng: typeof upstream.value.listing?.lng === "number" ? upstream.value.listing.lng : null } }, env)
+      : null;
+    return finish(upstream.value, nearby, addressOnly);
   } catch {
     // A malformed nested field is an invalid upstream response, not a missing
     // published tour. Never render its raw JSON/error text into the public page.
@@ -367,7 +457,7 @@ async function handleTour(
 }
 
 async function handlePortfolio(handle: string, req: Request, url: URL, env: Env): Promise<Response> {
-  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
 
   // The canonical and the structured data are absolute-URL affordances, so the
   // renderer needs the handle this page was served at and the request origin.
@@ -378,7 +468,7 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env)
   // lookup so it never depends on an upstream that cannot know about it.
   if (isDemoHandle(handle)) {
     const resp = htmlResponse(renderPortfolioPage(buildDemoPortfolio(), renderOpts), 200, {
-      "Cache-Control": "public, max-age=300",
+      "Cache-Control": "public, max-age=300", "X-Robots-Tag": "noindex, nofollow",
     });
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
@@ -388,54 +478,114 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env)
 
   const upstream = await fetchUpstreamJSON(`/portfolio/${encodeURIComponent(handle)}`, env);
   if (upstream.kind === "not-found") {
-    return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
+    return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
   }
-  const upstreamError = (status: 502 | 503) => htmlResponse(errorPage("page"), status, { "Cache-Control": "no-store" });
+  const upstreamError = (status: 429 | 502 | 503) => htmlResponse(errorPage("page"), status, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
   if (upstream.kind === "error") return upstreamError(upstream.status);
   if (!isPortfolio(upstream.value)) return upstreamError(502);
   try {
-    const resp = htmlResponse(renderPortfolioPage(upstream.value, renderOpts), 200, { "Cache-Control": "no-store" });
+    const resp = htmlResponse(renderPortfolioPage(upstream.value, renderOpts), 200, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   } catch {
     return upstreamError(502);
   }
 }
 
-/**
- * GET /sitemap.xml — served by the Worker, not by Static Assets.
- *
- * `public/sitemap.xml` (a hand-maintained eight-URL file that never once named
- * a real tour) was DELETED as part of this route: an exact file match under
- * ./public is answered by Static Assets before this script runs, so leaving it
- * in place would have made this handler unreachable.
- *
- * What it can and cannot enumerate today, and the upstream endpoint that would
- * let it list real tours, are documented in src/sitemap.ts. Both of that file's
- * hard rules — no `/u/` URL, and no tour that is not opted into indexing — are
- * enforced by construction: this handler passes no tours at all, because there
- * is no endpoint that can tell it which ones qualify.
- *
- * Cached for an hour at the edge and in the browser. A sitemap is polled by
- * crawlers, not by people, and an hour is short enough that a newly published
- * tour appears the same day once the upstream index exists.
- */
-function sitemapResponse(url: URL): Response {
-  return new Response(sitemapXml(url.origin), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/xml; charset=utf-8",
-      "Cache-Control": "public, max-age=3600, s-maxage=3600",
-      "X-Content-Type-Options": "nosniff",
-    },
+// Location data is requested separately so a best-effort map provider cannot
+// delay the listing HTML. Every request rechecks current publication; neither
+// a client coordinate nor an old cached listing can select the query location.
+async function handleNearbyPlaces(slug: string, req: Request, url: URL, env: Env): Promise<Response> {
+  const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), {
+    status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Robots-Tag": "noindex, nofollow" },
   });
+  if (req.method !== "GET") return reply(405, { status: "unavailable", places: [] });
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug) || isDemoSlug(slug) || url.searchParams.has("embed")) return reply(404, { status: "unavailable", places: [] });
+  const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}/location`, env);
+  if (upstream.kind === "not-found") return reply(404, { status: "unavailable", places: [] });
+  if (upstream.kind === "error") return reply(upstream.status, { status: "unavailable", places: [] });
+  if (!isPublicLocation(upstream.value) || upstream.value.slug !== slug) return reply(404, { status: "unavailable", places: [] });
+  const result = await lookupNearbyPlaces(upstream.value, env);
+  // The map is drawn here, from the same places and the same coarsened origin,
+  // so the page never needs coordinates, tiles or a map script of its own.
+  const map = renderNearbyMap(result, upstream.value.listing);
+  return reply(200, { ...result, ...(map ? { map_html: map } : {}), license_url: "https://www.openstreetmap.org/copyright" });
+}
+
+/** A share control starts with an already-public publication slug. This read
+ * checks the current hosted tour and returns the same branded canonical path
+ * that the page renderer would use. It never accepts an address as input. */
+async function handleShareLink(slug: string, req: Request, url: URL, env: Env): Promise<Response> {
+  const headers = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
+    "X-Content-Type-Options": "nosniff", "Content-Type": "application/json; charset=utf-8",
+    // Studio reads this already-public publication link across subdomains.
+    // Keep the fixed origin on this endpoint only; no credentials or wildcard.
+    "Access-Control-Allow-Origin": "https://studio.rendprop.com" };
+  const reply = (status: number, body: unknown) => {
+    const response = new Response(JSON.stringify(body), { status, headers });
+    return req.method === "HEAD" ? new Response(null, response) : response;
+  };
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug) || isDemoSlug(slug) || url.search) {
+    return reply(404, { error: "not_found" });
+  }
+  const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}`, env);
+  if (upstream.kind === "not-found") return reply(404, { error: "not_found" });
+  if (upstream.kind === "error") return reply(upstream.status, { error: "unavailable" });
+  if (!isTour(upstream.value) || upstream.value.slug !== slug) return reply(502, { error: "unavailable" });
+  try {
+    const tour = upstream.value;
+    const realEstate = (tour.space_type || "real_estate") === "real_estate";
+    const unique = realEstate && (await hasUniqueAddress(tour, env)).state === "unique";
+    const path = realEstate
+      ? unique ? propertyAddressOnlyPath(tour.listing.address)! : propertyAddressPath(slug, tour.listing.address,
+          "/property", env.PROPERTY_DATE_SUFFIX === "enabled" ? tour.published_at : undefined)
+      : `/f/${encodeURIComponent(slug)}`;
+    return reply(200, { url: new URL(path, url.origin).href, address_only: unique });
+  } catch {
+    return reply(502, { error: "unavailable" });
+  }
+}
+
+/** Static marketing and fresh, opt-in customer child sitemaps. Customer
+ * enumeration is bounded by the same public authority as the property page. */
+async function sitemapResponse(url: URL, env: Env): Promise<Response> {
+  const siteOnly = url.pathname === "/sitemap-site.xml";
+  const headers = { "Content-Type": "application/xml; charset=utf-8",
+    "Cache-Control": siteOnly ? "public, max-age=3600, s-maxage=3600" : "no-store",
+    "X-Content-Type-Options": "nosniff" };
+  if (siteOnly) return new Response(sitemapXml(url.origin), {headers});
+  const page = url.pathname === "/sitemap-properties.xml";
+  const keys = [...url.searchParams.keys()], cursor = url.searchParams.get("cursor");
+  if (keys.length > (page ? 1 : 0) || keys.some(key => key !== "cursor")
+      || (page && keys.length > 0 && !sitemapCursor(cursor))) {
+    return new Response("Invalid sitemap page.", {status:400, headers:{"Cache-Control":"no-store","X-Robots-Tag":"noindex"}});
+  }
+  const query = page ? "?limit=200" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : "") : "?pages=1";
+  const upstream = await fetchUpstreamJSON("/tours/index" + query, env);
+  let body: string | null = null;
+  if (upstream.kind === "ok") {
+    if (page) body = propertySitemapXml(url.origin, upstream.value, env.PROPERTY_DATE_SUFFIX === "enabled");
+    else {
+      const cursors = propertySitemapCursors(upstream.value);
+      if (cursors) body = sitemapIndexXml(url.origin, cursors);
+    }
+  }
+  return body === null
+    ? new Response("Sitemap temporarily unavailable.", {status:503,headers:{"Cache-Control":"no-store","X-Robots-Tag":"noindex","Retry-After":"60"}})
+    : new Response(body, {headers});
 }
 
 async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const url = new URL(req.url);
+  if (url.pathname === "/verify-client-email") {
+    const canonical = canonicalRedirect(url);
+    if (canonical) return canonical;
+    return handleRecipientConfirmation(req, env);
+  }
   if (req.method !== "GET" && req.method !== "HEAD") {
     return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
   }
 
-  const url = new URL(req.url);
   // BEFORE the canonical redirect: Apple does not follow redirects when it
   // fetches the association file, and it fetches one per host, so www must
   // answer for itself.
@@ -450,6 +600,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (canonical) return canonical;
 
   const path = rawPath;
+  if (path.startsWith("/media/") || path.startsWith("/media-brand/") || path.startsWith("/private-media/") || path.startsWith("/private-media-download/")) return handleMediaDelivery(req,env);
 
   // Keep the discoverable apex entry pointed at the deployed browser app.
   // The destination is fixed; query strings do not cross into the app.
@@ -477,17 +628,34 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return req.method === "HEAD" ? new Response(null, response) : response;
   }
 
-  const fMatch = path.match(/^\/f\/([^/]+)$/);
+  const nearbyMatch = path.match(/^\/f\/([^/]+)\/nearby$/);
+  if (nearbyMatch) {
+    const slug = safeDecode(nearbyMatch[1]);
+    return handleNearbyPlaces(slug || "", req, url, env);
+  }
+  const shareLinkMatch = path.match(/^\/f\/([^/]+)\/share-link$/);
+  if (shareLinkMatch) {
+    const slug = safeDecode(shareLinkMatch[1]);
+    return handleShareLink(slug || "", req, url, env);
+  }
+  // A browser-only alias avoids previously cached app-link rules. This is
+  // the same validated published slug/read path, never a redirect to /f/.
+  // The dot separates dated aliases from all legacy publication slugs, whose
+  // alphabet has never included a dot. A shared old token cannot be hijacked.
+  const datedAddressMatch = path.match(/^\/property\/([a-z0-9][a-z0-9-]{0,119})\/\d{8}\.([A-Za-z0-9_-]{1,64})$/);
+  const addressMatch = path.match(/^\/property\/([a-z0-9][a-z0-9-]{0,119})\/([^/]+)$/);
+  const fMatch = datedAddressMatch || addressMatch || path.match(/^\/(?:f|property)\/([^/]+)$/);
   if (fMatch) {
-    const slug = safeDecode(fMatch[1]);
+    const slug = safeDecode(fMatch[datedAddressMatch || addressMatch ? 2 : 1]);
     if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
-    return handleTour(slug, req, url, env, ctx);
+    return handleTour(slug, req, url, env, ctx, false, !datedAddressMatch && !addressMatch && path.startsWith("/property/"));
   }
 
   // The MLS-safe twin of /f/. Same slug, same payload, same renderer.
-  const uMatch = path.match(/^\/u\/([^/]+)$/);
+  const uAddressMatch = path.match(/^\/u\/([a-z0-9][a-z0-9-]{0,119})\/([^/]+)$/);
+  const uMatch = uAddressMatch || path.match(/^\/u\/([^/]+)$/);
   if (uMatch) {
-    const slug = safeDecode(uMatch[1]);
+    const slug = safeDecode(uMatch[uAddressMatch ? 2 : 1]);
     if (slug === null) {
       return htmlResponse(
         unbrandedFallback("notfound"),
@@ -521,8 +689,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
 
-  if (path === "/sitemap.xml") {
-    const resp = sitemapResponse(url);
+  if (["/sitemap.xml", "/sitemap-site.xml", "/sitemap-properties.xml"].includes(path)) {
+    const resp = await sitemapResponse(url, env);
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
 
@@ -541,8 +709,14 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return Response.redirect(`${url.origin}/`, 302);
   }
 
-  // Root: normally served by the static assets (public/index.html) before the
-  // Worker ever runs. This branch is a safety net in case assets are missing.
+  // Static files pass through the same canonical-origin checks as tours.
+  // The binding preserves asset MIME types, ranges, ETags and _headers.
+  if (env.ASSETS) {
+    const asset = await env.ASSETS.fetch(req);
+    if (asset.status !== 404) return asset;
+  }
+
+  // Safety net for local tests or a deployment without the asset binding.
   if (path === "/") {
     const resp = htmlResponse(landingPage(), 200, {
       "Cache-Control": "public, max-age=300",
@@ -556,26 +730,38 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await route(req, env, ctx);
+      return withSafetyHeaders(await route(req, env, ctx), req);
     } catch (err) {
       // Last line of defence: never let an exception escape as an unbranded
       // Cloudflare error page. no-store so a transient bug isn't cached.
-      console.error("tour-host unhandled error", err instanceof Error ? err.stack || err.message : String(err));
+      // Exceptions may contain upstream URLs, signed capabilities or headers.
+      console.error(JSON.stringify({ event: "tour_host_unhandled_error", kind: err instanceof Error ? "error" : "unknown" }));
       let kind: "tour" | "page" = "page";
       let unbranded = false;
       try {
         const p = new URL(req.url).pathname;
-        kind = /^\/f\//.test(p) ? "tour" : "page";
+        kind = /^\/(?:f|property)\//.test(p) ? "tour" : "page";
         // A crash on /u/ must not answer with the branded error page.
         unbranded = /^\/u\//.test(p);
       } catch { /* keep "page" */ }
       const resp = unbranded
         ? htmlResponse(unbrandedFallback("error"), 500, { ...UNBRANDED_HEADERS, "Cache-Control": "no-store" }, { unbranded: true })
         : htmlResponse(errorPage(kind), 500, { "Cache-Control": "no-store" });
-      return req.method === "HEAD" ? new Response(null, resp) : resp;
+      return withSafetyHeaders(req.method === "HEAD" ? new Response(null, resp) : resp, req);
     }
   },
 } satisfies ExportedHandler<Env>;
+
+function withSafetyHeaders(response: Response, req: Request): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  // MLS embeds are an intentional public, unbranded delivery surface.
+  if (!/^\/u(?:\/|$)/.test(new URL(req.url).pathname) && !headers.has("X-Frame-Options")) headers.set("X-Frame-Options", "SAMEORIGIN");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
 /** Minimal branded landing for the apex domain until the marketing site ships. */
 function landingPage(): string {
@@ -584,8 +770,8 @@ function landingPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Rendprop — drone-style tours from a phone walkthrough</title>
-<meta name="description" content="Film a walkthrough on your phone. Rendprop turns it into a smooth, drone-style tour buyers scroll through — with AI photos, reels, and floor plans.">
+<title>Rendprop — Property Photos, Videos &amp; Websites for iPhone</title>
+<meta name="description" content="Create listing and social videos from property photos, then publish a property website. An optional paid AI Aerial opening uses a reviewed original front exterior photo, subject to allowance, capacity and processor permission.">
 <meta name="theme-color" content="#0e0d14">
 <style>
   :root { --accent:#7c3aed; --accent2:#9b6dff; --bg:#faf9fc; --ink:#1c192d; --dim:rgba(28,25,45,.6); --card:#fff; }
@@ -615,8 +801,11 @@ function landingPage(): string {
 <body>
   <div class="mark">RENDPROP</div>
   <h1>Win the listing.<br>Skip the film crew.</h1>
-  <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
-  photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
+  <p class="sub">Start with landscape property photos, review optional AI edits, create a listing video or a
+  vertical social video, then review and publish your property website. Recorded walkthroughs are optional
+  and separate. An optional paid AI Aerial opening starts from a reviewed original front exterior photo.
+  Creation requires an eligible Aerial allowance, available processing capacity and separate permission for
+  the listed processors. Results vary; review the clip before use. The older free-form Aerial generator remains closed.</p>
   <div>
     <a class="pill" href="${appStoreUrl("site")}">Download on the App Store</a>
     <a class="soon" href="https://studio.rendprop.com/">Open Studio</a>

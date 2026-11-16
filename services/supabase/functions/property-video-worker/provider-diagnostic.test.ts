@@ -1,0 +1,85 @@
+import{assertEquals,assertRejects}from'https://deno.land/std@0.224.0/assert/mod.ts';
+import{providerDiagnostic,falProviderDiagnostic,kieProviderDiagnostic}from'./provider-diagnostic.ts';
+import{handler}from'./index.ts';
+import{falSubmitDiagnostic,falRetainedResultDiagnostic}from'../_shared/providers/fal.ts';
+import{kieAdapter}from'../_shared/providers/kie.ts';
+import{ProviderError}from'../_shared/providers/common.ts';
+const job='a1100000-0000-4000-8000-000000000001',attempt='a1100000-0000-4000-8000-000000000002';
+const token={p:'fal',m:'fal-ai/kling-video/v3/4k/image-to-video',i:'paid-request',u:'https://queue.fal.run/fal-ai/kling-video/requests/paid-request/status',t:new Date().toISOString(),k:'video.reel_clip',o:'owned-org',usr:'owned-actor',l:'owned-listing',a:'same-request-key',exp:1};
+function fixture(){const calls:string[]=[];let receipt:any={attempt_id:attempt,provider:'fal',model:token.m,request_id:token.i,request_key:token.a,receipt:{status_url:'https://functions.invalid/ai-video/status?job=signed'}};const d={rpc:async(name:string)=>{calls.push(name);return name==='property_video_job_scope'?{org_id:token.o,actor_id:token.usr,listing_id:token.l}:receipt;},decode:async()=>({...token}),poll:async()=>{calls.push('GET-same-retained-provider-receipt');return{status:'running',delivery_issue:{phase:'result_read',provider:'fal',provider_state:'completed',provider_status:403,reason:'balance_exhausted'}}as any;}};return{calls,d,remove:()=>{receipt=null;}};}
+Deno.test('service diagnostic reads only exact signed owned paid receipt and returns closed cause without URLs/media',async()=>{const f=fixture(),r=await providerDiagnostic(job,attempt,f.d);assertEquals(r,{job_id:job,attempt_id:attempt,provider:'fal',state:'processing',provider_status:403,phase:'result_read',reason:'balance_exhausted',read_only:true});assertEquals(f.calls,['property_video_job_scope','property_video_delivery_receipt','GET-same-retained-provider-receipt']);assertEquals(JSON.stringify(r).includes('https:'),false);});
+Deno.test('missing paid receipt and altered signed identity refuse before provider read',async()=>{const f=fixture();f.remove();await assertRejects(()=>providerDiagnostic(job,attempt,f.d));assertEquals(f.calls.includes('GET-same-retained-provider-receipt'),false);for(const key of['p','m','i','o','usr','l','a','k']){const g=fixture();g.d.decode=async()=>({...token,[key]:'foreign'});await assertRejects(()=>providerDiagnostic(job,attempt,g.d));assertEquals(g.calls.includes('GET-same-retained-provider-receipt'),false);}});
+Deno.test('diagnostic never returns provider media URL or arbitrary error text',async()=>{const f=fixture();f.d.poll=async()=>({status:'done',result_url:'https://private.invalid/secret',mime:'video/mp4'}as any);assertEquals(await providerDiagnostic(job,attempt,f.d),{job_id:job,attempt_id:attempt,provider:'fal',state:'completed',read_only:true});f.d.poll=async()=>{throw Error('secret-body-and-key');};const r=await providerDiagnostic(job,attempt,f.d);assertEquals(r.state,'unavailable');assertEquals(JSON.stringify(r).includes('secret'),false);});
+Deno.test('new diagnostic route still requires exact existing service authentication before parsing or reading',async()=>{const old=fetch;let calls=0;globalThis.fetch=async()=>{calls++;throw Error('No HTTP allowed');};try{const r=await handler(new Request('https://functions.invalid/property-video-worker/provider-diagnostic?job_id='+job+'&attempt_id='+attempt));assertEquals(r.status,403);assertEquals(calls,0);}finally{globalThis.fetch=old;}});
+Deno.test('submit403 diagnostic uses closed reason and preserves receipt-shaped ambiguity',()=>{for(const[body,reason]of[[{detail:'User balance exhausted'},'balance_exhausted'],[{error:{type:'authorization_error',message:'Access denied'}},'permission'],[{detail:'Account locked'},'account_locked'],[{detail:'opaque private URL https://secret.invalid/key'},'unknown']]){const r=falSubmitDiagnostic(403,body);assertEquals(r.reason,reason);assertEquals(r.dispatch_rejected,true);assertEquals(JSON.stringify(r).includes('https:'),false);}assertEquals(falSubmitDiagnostic(403,{detail:'Access denied',request_id:'accepted'}).dispatch_rejected,false);});
+
+Deno.test('exact retained result endpoint is read once without first polling status or exposing media URLs',async()=>{const old=fetch,key=Deno.env.get('FAL_KEY');Deno.env.set('FAL_KEY','synthetic-inert-key');let calls=0;globalThis.fetch=async(raw,init)=>{const request=new Request(raw,init);calls++;assertEquals(request.method,'GET');assertEquals(request.url,'https://queue.fal.run/fal-ai/kling-video/requests/paid-request');return Response.json({video:{url:'https://private.invalid/secret-master',content_type:'video/mp4'}});};try{const r=await falRetainedResultDiagnostic({provider:'fal',model:token.m,id:token.i,poll_url:token.u,submitted_at:token.t});assertEquals(r,{state:'completed',provider_status:200,has_media:true});assertEquals(calls,1);assertEquals(JSON.stringify(r).includes('secret'),false);}finally{globalThis.fetch=old;if(key===undefined)Deno.env.delete('FAL_KEY');else Deno.env.set('FAL_KEY',key);}});
+Deno.test('result-only reader preserves closed403/404 failures and rejects mismatched endpoint before HTTP',async()=>{const old=fetch,key=Deno.env.get('FAL_KEY');Deno.env.set('FAL_KEY','synthetic-inert-key');let calls=0;globalThis.fetch=async()=>{calls++;return Response.json({detail:'Access denied https://private.invalid/secret'},{status:403});};const ref={provider:'fal',model:token.m,id:token.i,poll_url:token.u,submitted_at:token.t};try{assertEquals(await falRetainedResultDiagnostic(ref),{state:'unavailable',provider_status:403,reason:'permission',error_class:'upstream'});globalThis.fetch=async()=>{calls++;return Response.json({detail:'Request not found'},{status:404});};assertEquals(await falRetainedResultDiagnostic(ref),{state:'unavailable',provider_status:404,reason:'unknown',error_class:'other'});const before=calls;for(const poll_url of['https://foreign.invalid/fal-ai/kling-video/requests/paid-request/status',token.u.replace('paid-request','foreign-request'),token.u.replace('kling-video','different-model'),token.u+'?arbitrary=1'])await assertRejects(()=>falRetainedResultDiagnostic({...ref,poll_url}));assertEquals(calls,before);}finally{globalThis.fetch=old;if(key===undefined)Deno.env.delete('FAL_KEY');else Deno.env.set('FAL_KEY',key);}});
+Deno.test('result mode keeps the same private paid/signed checks and never invokes status polling',async()=>{const f=fixture();let reads=0;const d={...f.d,poll:async()=>{throw Error('status reader forbidden');},result:async()=>{reads++;return{state:'completed',provider_status:200,has_media:true,result_url:'https://private.invalid/never-return'}as any;}};assertEquals(await providerDiagnostic(job,attempt,d,true),{job_id:job,attempt_id:attempt,provider:'fal',state:'completed',provider_status:200,phase:'result_read',has_media:true,read_only:true});assertEquals(reads,1);d.decode=async()=>({...token,i:'wrong-request'});await assertRejects(()=>providerDiagnostic(job,attempt,d,true));assertEquals(reads,1);});
+// ---- K1: the Kie branch. Closed doubles for the record read; nothing reaches api.kie.ai. ----
+const KIE_TASK='kie-task-retained',KIE_POLL='https://api.kie.ai/api/v1/jobs/recordInfo?taskId='+KIE_TASK;
+const kieToken={p:'kie',m:'kling-3.0/video',i:KIE_TASK,u:KIE_POLL,t:new Date().toISOString(),k:'video.reel_clip',o:'owned-org',usr:'owned-actor',l:'owned-listing',a:'same-request-key',exp:1};
+function kieFixture(){const calls:string[]=[];let receipt:any={attempt_id:attempt,provider:'kie',model:kieToken.m,request_id:kieToken.i,request_key:kieToken.a,receipt:{status_url:'https://functions.invalid/ai-video/status?job=signed-kie'}};
+ const d={rpc:async(name:string)=>{calls.push(name);return name==='property_video_job_scope'?{org_id:kieToken.o,actor_id:kieToken.usr,listing_id:kieToken.l}:receipt;},decode:async()=>({...kieToken}),
+  poll:async()=>{calls.push('FAL-poll-forbidden');throw Error('FAL poll must never read a Kie receipt');},result:async()=>{calls.push('FAL-result-forbidden');throw Error('FAL result reader must never read a Kie receipt');},
+  kiePoll:async(ref:any)=>{calls.push('GET-same-retained-kie-record');assertEquals([ref.provider,ref.model,ref.id,ref.poll_url],['kie',kieToken.m,KIE_TASK,KIE_POLL]);
+   return{status:'done',result_url:'https://tempfile.aiquickdraw.com/kie/private-secret-path/clip.mp4?sig=secret',mime:'video/mp4',meta:{task_id:KIE_TASK,expires_in_days:14,kie_state:'success',credits_consumed:335,substituted:true,requested:{duration:'5',resolution:'4K'},returned:{duration:'5',resolution:'1080p'}}}as any;}};
+ return{calls,d,remove:()=>{receipt=null;},fal:()=>{receipt={...receipt,provider:'fal'};}};}
+const kieBase={job_id:job,attempt_id:attempt,provider:'kie',read_only:true};
+Deno.test('Kie diagnostic reads only the exact signed owned paid receipt through the adapter poll and reports closed task facts without URLs, media or the request echo',async()=>{
+ const f=kieFixture(),r=await providerDiagnostic(job,attempt,f.d);
+ assertEquals(r,{...kieBase,state:'completed',kie_state:'success',credits_consumed:335,result_host:'tempfile.aiquickdraw.com',result_mime:'video/mp4',echo_trusted:false});
+ assertEquals(f.calls,['property_video_job_scope','property_video_delivery_receipt','GET-same-retained-kie-record']);
+ const text=JSON.stringify(r);for(const leak of['https:','secret','sig=','substituted','1080p','4K','requested','returned'])assertEquals(text.includes(leak),false,leak);
+});
+Deno.test('Kie diagnostic: a failed task and a running/queued task map to the same closed states as FAL',async()=>{
+ const f=kieFixture();f.d.kiePoll=async()=>({status:'failed',error_class:'upstream',message:'Kie fail with https://private.invalid/secret'}as any);
+ assertEquals(await providerDiagnostic(job,attempt,f.d),{...kieBase,state:'failed',error_class:'upstream'});
+ f.d.kiePoll=async()=>({status:'running'}as any);assertEquals(await providerDiagnostic(job,attempt,f.d),{...kieBase,state:'processing'});
+ f.d.kiePoll=async()=>({status:'queued'}as any);assertEquals(await providerDiagnostic(job,attempt,f.d),{...kieBase,state:'queued'});
+ f.d.kiePoll=async()=>({status:'failed',error_class:'nsfw',message:'content policy'}as any);assertEquals((await providerDiagnostic(job,attempt,f.d)).error_class,'nsfw');
+});
+Deno.test('Kie diagnostic: a 404/403 record read or a transport error is unavailable with closed status/class and no error text',async()=>{
+ const f=kieFixture();f.d.kiePoll=async()=>{throw new ProviderError('kie','upstream','Kie 404: record not found https://private.invalid/secret',404);};
+ assertEquals(await providerDiagnostic(job,attempt,f.d),{...kieBase,state:'unavailable',provider_status:404,error_class:'upstream',reason:'unknown'});
+ f.d.kiePoll=async()=>{throw new ProviderError('kie','upstream','Kie 403: secret-key',403);};
+ assertEquals(await providerDiagnostic(job,attempt,f.d),{...kieBase,state:'unavailable',provider_status:403,error_class:'upstream',reason:'unknown'});
+ f.d.kiePoll=async()=>{throw Error('secret-body-and-key');};const r=await providerDiagnostic(job,attempt,f.d);
+ assertEquals(r,{...kieBase,state:'unavailable',provider_status:null,error_class:'other',reason:'unknown'});assertEquals(JSON.stringify(r).includes('secret'),false);
+});
+Deno.test('Kie diagnostic through the REAL adapter poll against a closed recordInfo double: success, fail and a 404 envelope',async()=>{
+ const old=fetch,key=Deno.env.get('KIE_API_KEY');Deno.env.set('KIE_API_KEY','synthetic-inert-kie-key');let calls=0;let record:unknown;
+ globalThis.fetch=async(raw,init)=>{const request=new Request(raw,init);calls++;assertEquals(request.method,'GET');assertEquals(request.url,KIE_POLL);assertEquals(request.headers.get('authorization'),'Bearer synthetic-inert-kie-key');return Response.json(record);};
+ const f=kieFixture();const d={...f.d,kiePoll:(ref:any)=>kieAdapter.poll(ref)};
+ try{
+  record={code:200,msg:'success',data:{taskId:KIE_TASK,model:'kling-3.0/video',state:'success',param:JSON.stringify({model:'kling-3.0/video',input:{duration:'5',mode:'4K'}}),resultJson:JSON.stringify({resultUrls:['https://tempfile.aiquickdraw.com/kie/private/clip.mp4']}),creditsConsumed:335}};
+  assertEquals(await providerDiagnostic(job,attempt,d),{...kieBase,state:'completed',kie_state:'success',credits_consumed:335,result_host:'tempfile.aiquickdraw.com',result_mime:'video/mp4',echo_trusted:false});
+  record={code:200,msg:'success',data:{taskId:KIE_TASK,state:'fail',failCode:500,failMsg:'generation failed https://private.invalid/secret'}};
+  const failed=await providerDiagnostic(job,attempt,d);assertEquals(failed,{...kieBase,state:'failed',error_class:'upstream'});assertEquals(JSON.stringify(failed).includes('secret'),false);
+  record={code:404,msg:'record not found',data:null};
+  assertEquals(await providerDiagnostic(job,attempt,d),{...kieBase,state:'unavailable',provider_status:404,error_class:'upstream',reason:'unknown'});
+  record={code:200,msg:'success',data:{taskId:KIE_TASK,state:'generating'}};
+  assertEquals(await providerDiagnostic(job,attempt,d),{...kieBase,state:'processing'});
+  assertEquals(calls,4);
+ }finally{globalThis.fetch=old;if(key===undefined)Deno.env.delete('KIE_API_KEY');else Deno.env.set('KIE_API_KEY',key);}
+});
+Deno.test('Kie diagnostic refuses a missing receipt, an altered signed identity, a foreign model and the result-only mode before any provider read',async()=>{
+ const f=kieFixture();f.remove();await assertRejects(()=>providerDiagnostic(job,attempt,f.d));assertEquals(f.calls.includes('GET-same-retained-kie-record'),false);
+ for(const key of['p','m','i','o','usr','l','a','k']){const g=kieFixture();g.d.decode=async()=>({...kieToken,[key]:'foreign'});await assertRejects(()=>providerDiagnostic(job,attempt,g.d));assertEquals(g.calls.includes('GET-same-retained-kie-record'),false);}
+ const model=kieFixture();model.d.decode=async()=>({...kieToken,m:'bytedance/v1-pro-fast-image-to-video'});model.d.rpc=async(name:string)=>name==='property_video_job_scope'?{org_id:kieToken.o,actor_id:kieToken.usr,listing_id:kieToken.l}:{attempt_id:attempt,provider:'kie',model:'bytedance/v1-pro-fast-image-to-video',request_id:kieToken.i,request_key:kieToken.a,receipt:{status_url:'https://functions.invalid/ai-video/status?job=signed-kie'}};
+ await assertRejects(()=>providerDiagnostic(job,attempt,model.d));assertEquals(model.calls.includes('GET-same-retained-kie-record'),false);
+ const only=kieFixture();await assertRejects(()=>providerDiagnostic(job,attempt,only.d,true));assertEquals(only.calls.includes('GET-same-retained-kie-record'),false);assertEquals(only.calls.includes('FAL-result-forbidden'),false);
+});
+Deno.test('control: a Kie receipt fed to the FAL branch still refuses before any provider read, and a FAL receipt fed to the Kie branch refuses too',async()=>{
+ const f=kieFixture();const j=await f.d.rpc('property_video_job_scope'),proof=await f.d.rpc('property_video_delivery_receipt');
+ await assertRejects(()=>falProviderDiagnostic(job,attempt,j,proof,f.d),Error,'An exact retained paid FAL receipt is required.');
+ await assertRejects(()=>falProviderDiagnostic(job,attempt,j,proof,f.d,true),Error,'An exact retained paid FAL receipt is required.');
+ assertEquals(f.calls.filter(c=>c.startsWith('GET')||c.includes('forbidden')),[]);
+ const g=fixture();const fj=await g.d.rpc('property_video_job_scope'),fproof=await g.d.rpc('property_video_delivery_receipt');
+ await assertRejects(()=>kieProviderDiagnostic(job,attempt,fj,fproof,{...g.d,kiePoll:async()=>{g.calls.push('GET-kie-forbidden');throw Error('no');}}),Error,'An exact retained paid Kie receipt is required.');
+ assertEquals(g.calls.includes('GET-kie-forbidden'),false);assertEquals(g.calls.includes('GET-same-retained-provider-receipt'),false);
+ // The dispatcher sends a FAL receipt to the FAL branch exactly as before.
+ const h=fixture();assertEquals(await providerDiagnostic(job,attempt,{...h.d,kiePoll:async()=>{throw Error('Kie poll must never read a FAL receipt');}}),{job_id:job,attempt_id:attempt,provider:'fal',state:'processing',provider_status:403,phase:'result_read',reason:'balance_exhausted',read_only:true});
+});
+
+Deno.test('result-only diagnostic refuses oversized declared and streamed JSON without following redirects',async()=>{const old=fetch,key=Deno.env.get('FAL_KEY');Deno.env.set('FAL_KEY','synthetic-inert-key');let calls=0;const ref={provider:'fal',model:token.m,id:token.i,poll_url:token.u,submitted_at:token.t};try{for(const declared of[true,false]){globalThis.fetch=async(raw,init)=>{calls++;assertEquals(new Request(raw,init).redirect,'error');const headers=new Headers(declared?{'content-length':'16385'}:undefined);return new Response(new Uint8Array(16385),{status:200,headers});};const result=await falRetainedResultDiagnostic(ref);assertEquals(result.state,'unavailable');assertEquals(result.has_media,undefined);assertEquals(result.error_class,'upstream');}assertEquals(calls,2);}finally{globalThis.fetch=old;if(key===undefined)Deno.env.delete('FAL_KEY');else Deno.env.set('FAL_KEY',key);}});

@@ -316,7 +316,7 @@ export function validateDraft(value: unknown): EditDraft {
     const sha256 = boundedText(source.sha256, 64, "content hash");
     if (!/^[a-f0-9]{64}$/.test(sha256))
       throw new Error(
-        "A SHA-256 content hash is required for safe file reselection.",
+        "This saved edit cannot be matched to its files. Open it again from where it was saved.",
       );
     const width = safeInteger(source.width, 1, 12_000, "source width");
     const height = safeInteger(source.height, 1, 12_000, "source height");
@@ -439,7 +439,7 @@ export function assertSourceMatch(
     Math.abs(expected.duration - actual.duration) > 0.05
   ) {
     throw new Error(
-      "This is a different file. Reselect the original media; its complete SHA-256 hash must match the saved edit.",
+      "This is a different file. Choose the original file; it must be the exact one used in the saved edit.",
     );
   }
 }

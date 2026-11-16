@@ -66,7 +66,7 @@ export default function PresenterPanel({ services, workspace, listing, onChanged
     if (candidateKey) {
       const ids = candidateKey.split(",");
       void api("/media", { asset_ids: ids }).then(raw => {
-        const found = decodePreviews(raw, org, listingId, { ids });
+        const found = decodePreviews(raw, org, listingId, { ids, actor:user });
         if (active && scopeCurrent()) setPreviews(found);
       }).catch(e => { if (active && scopeCurrent()) setPreviewError(message(e)); });
     }
@@ -77,7 +77,7 @@ export default function PresenterPanel({ services, workspace, listing, onChanged
     if (selectedProfile && !selectedProfile.invalid_reason) {
       const profile = selectedProfile;
       void api("/media", { profile_id: profile.id, expected_profile_revision: profile.revision }).then(raw => {
-        const found = decodePreviews(raw, org, listingId, { profile });
+        const found = decodePreviews(raw, org, listingId, { profile, actor:user });
         if (active && scopeCurrent()) setProfilePreviews(found);
       }).catch(e => { if (active && scopeCurrent()) setPreviewError(message(e)); });
     }
@@ -90,7 +90,7 @@ export default function PresenterPanel({ services, workspace, listing, onChanged
     if (source) {
       const asset = source.asset_id;
       void api("/media", { source_asset_id: asset }).then(raw => {
-        const found = decodePreviews(raw, org, listingId, { source: asset });
+        const found = decodePreviews(raw, org, listingId, { source: asset, actor:user });
         if (found[0].duration_s !== source.duration_s) throw new Error("Video details changed. Refresh saved status before continuing.");
         if (active && scopeCurrent()) setSourcePreview(found[0]);
       }).catch(e => { if (active && scopeCurrent()) setPreviewError(message(e)); });
@@ -133,7 +133,7 @@ export default function PresenterPanel({ services, workspace, listing, onChanged
         } catch { setUncertain(action); setError("The save could not be confirmed. Your edits are still here. Check saved status before continuing."); return; }
       }
       if (!scopeCurrent()) return;
-      if (!confirmsAction(next, action, user)) throw new Error("The saved revision changed unexpectedly. Reload before continuing.");
+      if (!confirmsAction(next, action, user)) throw new Error("Your saved draft was changed somewhere else. Reload before continuing.");
       accept(next, action);
     } catch (e) { if (scopeCurrent()) { setUncertain(action); setError(message(e)); } }
     finally { running.current = false; if (scopeCurrent()) setBusy(false); }
@@ -190,7 +190,7 @@ export default function PresenterPanel({ services, workspace, listing, onChanged
           <p>Choose 1–8 photos of yourself: JPEG, PNG or WebP, under 12 MB each. Updating references clears approval.</p>
           {own && own.source_listing_id !== listingId && <p>Choose replacement photos here, or keep your profile’s existing references.</p>}
           <div className="presenter-gallery">{previews.map((p, index) => <label key={p.asset_id}><img src={p.url} alt={`Available reference ${page * 8 + index + 1}`} loading="lazy" /><span><input type="checkbox" aria-label={`Use reference photo ${page * 8 + index + 1}`} checked={referenceIds.includes(p.asset_id)} disabled={!referenceIds.includes(p.asset_id) && referenceIds.length >= 8} onChange={e => { setReferenceIds(ids => e.target.checked ? [...ids, p.asset_id] : ids.filter(id => id !== p.asset_id)); setProfileDirty(true); }} /> Photo {page * 8 + index + 1}</span></label>)}</div>
-          {!data.reference_candidates.length && <p>Upload original photos of yourself to this property’s media library first, then refresh Presenter.</p>}
+          {!data.reference_candidates.length && <p>Upload original photos of yourself to this property first, then refresh Presenter.</p>}
           <div className="creative-actions"><button disabled={page === 0} onClick={() => setPage(p => p - 1)}>Previous photos</button><span>{referenceIds.length} of 8 selected</span><button disabled={(page + 1) * 8 >= data.reference_candidates.length} onClick={() => setPage(p => p + 1)}>More photos</button></div>
           <button className="creative-primary" disabled={!name.trim() || referenceIds.length < 1 || !profileDirty} onClick={() => void mutate({ action: "save_profile", expected_revision: own?.revision ?? 0, display_name: name.trim(), reference_asset_ids: referenceIds })}>Save my profile</button>
         </fieldset>}

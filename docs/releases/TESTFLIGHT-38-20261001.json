@@ -1,0 +1,173 @@
+{
+  "kind": "Internal TestFlight handheld room-tour delivery receipt",
+  "verifiedAt": "2026-10-01T22:19:11.296573+00:00",
+  "source": {
+    "branch": "fix/room-tour-usability-20261001",
+    "nativeCommit": "ba5c52c0f55f66af76af33cfa07d5b95db881ded",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/15",
+    "pullRequestBase": "fix/listing-first-tour-20261001",
+    "draftAtDelivery": true,
+    "note": "The final delivery documentation commit is separate from the archived native source. Shared branches were not force-pushed."
+  },
+  "ci": {
+    "sourceCommit": "ba5c52c0f55f66af76af33cfa07d5b95db881ded",
+    "passedJobs": 12,
+    "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36932858049",
+    "requiredJobNames": [
+      "Cloudflare Worker (tour-host)",
+      "Cloudflare Worker (upload-gateway, deno check + tests)",
+      "Disposable PostgreSQL publication, invariant and deletion regression",
+      "Offline audit evidence, consent and adoption source gates",
+      "Offline reel-style preservation and blind-evaluation contracts",
+      "Python workers (render, spatial, training adapter)",
+      "Secret scan",
+      "Studio contracts, build and property workflows (offline)",
+      "Supabase edge functions (deno check + tests)",
+      "Supabase migrations (fresh replay + invariants)",
+      "Web parity inventory and design-token contracts (offline)",
+      "iOS static gates"
+    ],
+    "pullRequestMergeTreeMatchesArchivedSource": true,
+    "historicalFullHistoryRun": {
+      "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36932544065",
+      "conclusion": "failure",
+      "findings": 8,
+      "classification": "Seven old test/document non-credential matches and one intentionally public anon key, independently inspected; no room-capture finding or credential needing rotation. No ignore rule was changed. This run remains failed and is not the passing release gate."
+    }
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "38",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "createdAt": "2026-10-01T22:02:50+00:00",
+    "scheme": "RendpropSpatialTestFlight",
+    "explicitArchiveBuildOverride": "38",
+    "sourceInputs": 197,
+    "compiledTrackedSwiftInputs": 133,
+    "compiledGeneratedSwiftInputs": 1,
+    "signatureVerified": true,
+    "executableSHA256": "5706472e0035a58e36bcc8c520af3d583a6fb4da7c1e49633dbe0fd4ca302232",
+    "arm64UUID": "D36CCF3C-F184-3AF2-B3F1-2EF1BB50AC77",
+    "allUUIDsMatch": true,
+    "derivedDataAndArchiveDSYMBytesMatch": true,
+    "sourceManifestSHA256": "a043f96678087d82a5352abbae2ed24dfddb60aac666aa316d256de845e73831",
+    "note": "The separate DerivedData app product is absent after archive creation. Binding uses frozen inputs, compiler records, signed archive and surviving byte-identical dSYMs; no separate executable byte-match claim."
+  },
+  "upload": {
+    "attempts": 1,
+    "internalOnly": true,
+    "startedAt": "2026-10-01T22:14:13.576469+00:00",
+    "finishedAt": "2026-10-01T22:15:34.296838+00:00",
+    "exitCode": 0
+  },
+  "appleReadback": {
+    "checkedAt": "2026-10-01T22:17:40.144906+00:00",
+    "available": true,
+    "buildID": "d8511b18-a836-4d0e-825f-66444524f3ec",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "internalBuildState": "IN_BETA_TESTING",
+    "expired": false,
+    "uploadedDate": "2026-10-01T15:16:36-07:00",
+    "existingGroup": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    },
+    "note": "Apple does not expose the local archive binary hash; immutable source/archive/upload receipts bind the single attempted artifact."
+  },
+  "production": {
+    "publicAppStoreReviewSubmitted": false,
+    "publicAppStoreVersionAttached": false,
+    "subscriptionPricesChanged": false,
+    "testersOrGroupsChanged": false,
+    "webOrBackendDeployed": false,
+    "migrationsApplied": false,
+    "spatialActivated": false,
+    "providerCalls": 0
+  },
+  "capturePolicy": {
+    "schemaVersion": 2,
+    "capturePolicy": "station-handheld-20cm-span-v2-provisional",
+    "targetPlan": "station-spherical-38-v2-handheld-provisional",
+    "firstAnchor": "First fully admitted still photo after frame validation",
+    "maximumOriginRadiusMetres": 0.2,
+    "maximumPairwiseCameraSpanMetres": 0.2,
+    "maximumDwellPositionSpanMetres": 0.025,
+    "aimToleranceDegrees": 5,
+    "dwellSeconds": 0.35,
+    "maximumAngularSpeedDegreesPerSecond": 3,
+    "maximumPredictedSmearPixels": 2,
+    "ceilingPitchDegrees": 80,
+    "floorPitchDegrees": -80,
+    "poleImageEdgeMarginFraction": 0.08,
+    "requiredSavedPhotos": 38,
+    "floorMarkerArrivalRequired": false,
+    "legacyV1DefinitionsUnchanged": true
+  },
+  "softwareVerification": {
+    "stationAssertions": 422,
+    "nativePanoramaAssertions": 63,
+    "previewStoreAssertions": 71,
+    "roomGuidanceChecks": 78,
+    "labIPhoneTargetCompile": "passed",
+    "normalIPhoneTargetCompile": "passed",
+    "navigationOnlyUITests": 3,
+    "navigationFailures": 0,
+    "cameraStartedByUITests": false,
+    "offlineReleaseHelperNegativeControls": 15,
+    "legacyGoldenArchiveByteIdentical": true,
+    "legacyGoldenPNGByteIdentical": true,
+    "legacyGoldenPNGSHA256": "ce22f75edd510604f1b8b9611522e921c4edbebc78da33bedd49c63cd31b07cb"
+  },
+  "ownerRoom4ReadOnlyEvidence": {
+    "viewpoints": 1,
+    "savedPhotos": 36,
+    "requiredPhotos": 38,
+    "status": "partial",
+    "missingTargets": [
+      "ceiling",
+      "floor"
+    ],
+    "declaredFilesValidatedAndPreserved": 145,
+    "originalBytesPreserved": 27978098,
+    "nativePreviewDimensions": [
+      4096,
+      2048
+    ],
+    "sphericalCoverageFraction": 0.997774444436042,
+    "pixelCoverageFraction": 0.9581931829452515,
+    "visualAcceptance": "Pending; visible seams/exposure boundaries and nearby-object misalignment",
+    "customerMediaOrPosesCommitted": false,
+    "approximateDurationSeconds": 448
+  },
+  "testingInstructions": {
+    "locale": "en-US",
+    "verifiedAt": "2026-10-01T22:18:01.595543+00:00",
+    "readbackVerified": true,
+    "buildID": "d8511b18-a836-4d0e-825f-66444524f3ec",
+    "text": "Build 38 \u2014 easier handheld room-tour capture.\n\nHome \u2192 Guided room tour. Start from one comfortable, clear spot with the phone facing straight ahead; purple floor markers are optional. Follow the YELLOW CAMERA TARGET by turning or tilting the phone while keeping your feet in place. Do not walk toward that target.\n\nThe first still photo sets the viewpoint. Natural hand adjustment has more room, while saved camera positions remain bounded for stitching. Keep your elbows tucked in, tilt the phone with your back upright for the ceiling/floor, and feel the short haptic tap after each photo saves. All 38 photos are still required for a complete viewpoint.\n\nComplete one viewpoint, preview it, and compare total time, high/low-shot comfort and recovery prompts with your earlier test. Check ceiling/floor gaps and seams around nearby furniture. Export the result. If stuck returning to the starting place, use Help me start this view again to preserve the partial viewpoint and try a new one.\n\nReopen and export an older saved room tour too. Room tours remain saved locally until exported; this build does not publish them, provide measurements or enable 3D reconstruction. Simulator/software checks cannot certify physical capture quality. Existing photo exports, HD fly-through rendering, plans, accounts and workspace features are retained.\n"
+  },
+  "privateEvidenceHashes": {
+    "source-manifest.json": "a043f96678087d82a5352abbae2ed24dfddb60aac666aa316d256de845e73831",
+    "archive-source-binding.json": "bc8f1f4c8a3985e01b69579aa6d15d0f380a67ed98ca2da3bb6b51acb5ca68be",
+    "archive-independent-preflight.json": "4f4b2e27f9a654c5c5645b997cc9089a93effb8c8da4eb72822ad12603de9770",
+    "archive-review.json": "45df4f912896ac7fd1592c3db510018c584f7f879eec20b9aaa8c52288848ca4",
+    "independent-source-review.json": "b9e49f2eb3edb9bcf65f3e3c8120ad4e9c6fd21107a422dbacc0a0460ca2cc76",
+    "independent-helper-review.json": "54c94e774a1f89979f3a528109cd5d530cbe5f85676e81fdee999795563e1c07",
+    "owner-release-gate.json": "ea23919cc0062e74e91ebcd9e38ed7ad2a5a1e3364411baafdf29a3f41ef368e",
+    "upload-attempt.json": "6371fdee881f14f127ddd0abd704ae7df52c05319cd0226e4a1693b7afb433ef",
+    "upload-result.json": "43ffa486db840b6782a82dd2358ae0ab5c05ecd558b6a6e3bf2038598820ee2b",
+    "testflight-ready.json": "206792ca59a0f947bfa5b4020d9ab5151de83a63b9d75c4701304a976575daad",
+    "test-notes-receipt.json": "230dba532be27f8898871aa3d22ec439e98d2b19c4d84b56eb953c4ecd11e634"
+  },
+  "limitations": [
+    "Physical phone comfort, capture time, coverage, tracking and seams require owner acceptance.",
+    "Rotation-only panorama does not correct parallax, blend exposure, reconstruct a mesh or certify dimensions.",
+    "All 38 actual saved photos remain required; partial coverage is not completion.",
+    "Guided room tours remain local until exported; this does not publish or sync them or activate 3D reconstruction."
+  ]
+}

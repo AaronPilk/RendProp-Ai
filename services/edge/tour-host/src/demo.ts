@@ -225,27 +225,25 @@ function buildEstateDemoTour(): Tour {
     // before/after pairs already ship in public/assets, so /f/estate-demo and
     // /u/estate-demo both render the AI disclosure block with working
     // "View original" links (CA AB 723) and side-by-side Before/After images
-    // (NorthstarMLS). The disclosure text mirrors STAGED_DISCLOSURE in
-    // services/supabase/functions/tours/index.ts.
+    // (NorthstarMLS). Disclosures describe the edits and invite comparison;
+    // they do not guarantee that an AI edit preserved every property detail.
     staged: true,
     staged_disclosure:
       "Some imagery in this tour has been virtually staged or digitally decluttered. " +
-      "Furniture and decor may be digitally added, removed, or restyled; the architecture, " +
-      "layout, dimensions, and views are unchanged.",
+      "Furniture and decor may be digitally added, removed, or restyled. " +
+      "AI may alter property details; compare the edited images with the originals.",
     disclosure_chip: "✦ Virtually staged",
-    // Labels, model families and sentences are copied VERBATIM from the demo
-    // branch of services/supabase/functions/tours/index.ts, whose sentences in
-    // turn come from public.provenance_disclosure() in migration 0012 — the one
-    // source of truth for disclosure copy. Keep the two demos in step: this one
-    // is what rendprop.com/f/estate-demo and /u/estate-demo actually serve
-    // (the Worker short-circuits the demo slug and never calls Supabase).
+    // Keep these disclosures in step with the current public presentation in
+    // services/supabase/functions/_shared/provenance.ts, rather than the legacy
+    // guarantee stored in older audit rows. This is what rendprop.com/f/estate-demo
+    // and /u/estate-demo serve: the Worker short-circuits the demo slug.
     altered_media: [
       {
         label: "Great room — virtually staged",
         kind: "virtual_stage",
         disclosure:
           "This photo was virtually staged with AI: furniture and decor were digitally added or restyled. " +
-          "The architecture, dimensions, and views are unchanged.",
+          "Compare with the original to check fixed features, layout and access before publication.",
         model: "AI image edit",
         original_url: "/assets/example-staging-before.webp",
         altered_url: "/assets/example-staging-after.webp",
@@ -255,7 +253,7 @@ function buildEstateDemoTour(): Tour {
         kind: "photo_edit",
         disclosure:
           "This photo was digitally altered with AI: the sky and lighting were changed to simulate dusk. " +
-          "The property itself is unchanged.",
+          "Compare with the original to check property features before publication.",
         model: "AI image edit",
         original_url: "/assets/example-twilight-before.webp",
         altered_url: "/assets/example-twilight-after.webp",

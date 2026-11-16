@@ -22,7 +22,7 @@ try{
   }
   const snapshot=tab=>tab.evaluate(()=>window.cloudFixture.snapshot());
   const title=tab=>tab.getByLabel("Title overlay",{exact:true});
-  const openEditor=async tab=>{await tab.getByRole("button",{name:"Pro view",exact:true}).click();await expect(title(tab)).toBeVisible();};
+  const openEditor=async tab=>{await tab.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();await tab.getByRole("button",{name:"Pro view",exact:true}).click();await expect(title(tab)).toBeVisible();};
   const savedTitle=async(tab,id,text)=>expect.poll(async()=>(await snapshot(tab)).documents[`edit:${id}`]?.payload.draft.title).toBe(text);
   page=await device();await openEditor(page);await expect(title(page)).toBeVisible();
   const png=await page.evaluate(()=>{const c=document.createElement("canvas");c.width=800;c.height=450;const g=c.getContext("2d");g.fillStyle="#77509c";g.fillRect(0,0,800,450);return c.toDataURL().split(",")[1];});
@@ -54,6 +54,7 @@ try{
   const key=await page.evaluate(({user,org})=>Object.keys(localStorage).find(key=>key.includes(user)&&key.includes(org)&&key.endsWith(":edit:20000000-0000-4000-8000-000000000002")),{user,org});
   assert.ok(key,"Exact current-account editor backup key must exist");const oldKey=key.slice(0,-37),backupText=JSON.stringify(backup);
   const recovered=await device(legacy,{[`${oldKey}:cloud-backup`]:backupText});page=recovered;
+  await recovered.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(recovered.getByRole("region",{name:"Earlier reel recovery",exact:true})).toBeVisible();assert.equal((await snapshot(recovered)).documents[`edit:${a}`],undefined);
   await recovered.getByRole("button",{name:"Use earlier browser backup",exact:true}).click();await openEditor(recovered);await expect(title(recovered)).toHaveValue("Unsaved browser correction");await savedTitle(recovered,a,"Unsaved browser correction");
   assert.deepEqual((await snapshot(recovered)).documents.edit,legacy.documents.edit);assert.equal(await recovered.evaluate(key=>localStorage.getItem(key),`${oldKey}:cloud-backup`),backupText);

@@ -1,0 +1,213 @@
+import Foundation
+
+// Only unrelated Listing photo lookup and SwiftUI-owned state are replaced.
+// The editor calculation, initialization and save bodies are inserted verbatim.
+enum FileStore {
+    static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/\(path)") }
+}
+
+__UI_ERROR__
+__WALL_DRAFT__
+__WALL_ORIGINAL__
+__WALL_DIRECTION__
+
+private final class OutlineEditorHarness {
+    let outline: FloorMeasurementOutline
+    let unit: FloorMeasurementUnit
+    let otherOutlines: [FloorMeasurementOutline]
+    let isNew: Bool
+    let onSave: (FloorMeasurementOutline) throws -> Void
+    let onDelete: () throws -> Void
+    __STATE_FIELDS__
+
+    init(_ outline: FloorMeasurementOutline, unit: FloorMeasurementUnit, isNew: Bool = false,
+         onSave: @escaping (FloorMeasurementOutline) throws -> Void = { _ in }) {
+        self.outline = outline; self.unit = unit; self.isNew = isNew
+        otherOutlines = []; self.onSave = onSave; onDelete = {}
+    }
+    func open() { initialize() }
+    func result() throws -> FloorMeasurementOutline { try candidate() }
+    func points() throws -> [FloorMeasurementPoint] { try makePoints() }
+    func position(_ text: String) throws -> Double { try coordinate(text) }
+    func submit() { save() }
+    func pending() -> Bool { hasPendingWall }
+__INITIALIZE__
+__COORDINATE_FIELD__
+__DIMENSION_FIELDS__
+__COORDINATE__
+__MAKE_POINTS__
+__CANDIDATE__
+__SAVE__
+__HAS_PENDING__
+}
+
+@main private struct Checks {
+    static var assertions = 0, scenarios = 0
+    static func check(_ value: Bool, _ message: String) {
+        assertions += 1
+        guard value else { print("FAIL: \(message)"); exit(1) }
+    }
+    static func near(_ actual: Double, _ expected: Double, _ message: String) {
+        check(abs(actual - expected) < 0.000000001, message)
+    }
+    static func rejects(_ message: String, _ work: () throws -> Void) {
+        do { try work(); check(false, "accepted invalid \(message)") }
+        catch { check(true, "rejected \(message)") }
+    }
+    static func bits(_ points: [FloorMeasurementPoint]) -> [[UInt64]] {
+        points.map { [$0.x.bitPattern, $0.y.bitPattern] }
+    }
+    static func shape(_ name: String = "Precision", calculated: Bool = false,
+                      height: Double? = 100) -> FloorMeasurementOutline {
+        .init(name: name, floor: 2,
+              vertices: [.init(x: 50.00000000000001, y: -0.0), .init(x: 0.1, y: -0.0),
+                         .init(x: 0.1, y: 4.000000000000001), .init(x: 50.00000000000001, y: 4.000000000000001)],
+              category: .garage, heightMeters: height, closingWallCalculated: calculated, source: .phoneEstimate)
+    }
+
+    static func main() throws {
+        for unit in FloorMeasurementUnit.allCases {
+            for calculated in [false, true] {
+                scenarios += 1
+                let original = shape(calculated: calculated)
+                try original.validate()
+                let editor = OutlineEditorHarness(original, unit: unit); editor.open()
+                check(editor.walls.count == original.vertices.count - (calculated ? 1 : 0), "original entered wall count")
+                for wall in editor.walls {
+                    let vector = try wall.vector(unit: unit), saved = wall.original!
+                    check(vector.0.bitPattern == saved.dx.bitPattern && vector.1.bitPattern == saved.dy.bitPattern,
+                          "unchanged wall vector preserves exact component bits")
+                }
+                editor.name = "  Renamed footprint  "; editor.selectedFloor = -1; editor.category = .unfinished
+                let result = try editor.result()
+                check(bits(result.vertices) == bits(original.vertices), "metadata-only edit preserves exact vertex bits")
+                check(result.id == original.id && result.name == "Renamed footprint" && result.floor == -1 && result.category == .unfinished,
+                      "metadata edits persist without replacing identity")
+                check(result.heightMeters?.bitPattern == original.heightMeters?.bitPattern, "untouched boundary height preserves exact meters")
+                check(result.source == .phoneEstimate && result.closingWallCalculated == calculated, "provenance and calculated closing flag preserved")
+                near(result.areaMeters2, original.areaMeters2, "metadata-only area unchanged")
+                editor.open()
+                check(editor.name == "  Renamed footprint  ", "repeated appear does not reset edits")
+                editor.height = ""; editor.heightInches = ""
+                check(try editor.result().heightMeters == nil, "explicitly blank height clears optional height")
+            }
+
+            scenarios += 1
+            var opening = shape("Void", calculated: true, height: 0.1)
+            opening.category = .openBelow; opening.deductionFromID = UUID()
+            let editor = OutlineEditorHarness(opening, unit: unit); editor.open(); editor.name = "Opening renamed"
+            let result = try editor.result()
+            check(result.deductionFromID == opening.deductionFromID && result.category == .openBelow,
+                  "metadata-only opening keeps explicit parent")
+            check(bits(result.vertices) == bits(opening.vertices) && result.heightMeters?.bitPattern == 0.1.bitPattern,
+                  "opening geometry and minimum boundary height stay exact")
+            editor.height = unit == .feet ? "8" : "2,5"; editor.heightInches = unit == .feet ? "2" : ""
+            let heightened = try editor.result(); try heightened.validate()
+            near(heightened.heightMeters!, unit == .feet ? 2.4892 : 2.5, "edited height uses entered dimensions")
+            check(bits(heightened.vertices) == bits(opening.vertices), "height-only edit leaves planar geometry exact")
+
+            scenarios += 1
+            let triangle = FloorMeasurementOutline(name: "Angled", vertices: [.init(x: 0, y: 0), .init(x: 3, y: 0), .init(x: 3, y: 4)], closingWallCalculated: true)
+            let changed = OutlineEditorHarness(triangle, unit: unit); changed.open()
+            if unit == .meters { changed.walls[0].primary = "4" }
+            else { changed.walls[0].primary = "13"; changed.walls[0].inches = "1.4803149606" }
+            let altered = try changed.result(); try altered.validate()
+            check(bits(altered.vertices) != bits(triangle.vertices), "genuine wall edit rebuilds geometry")
+            near(altered.vertices[1].x, 4, "wall dimension change uses entered measurement")
+            near(altered.areaMeters2, 8, "edited triangle analytical area")
+            check(altered.closingWallCalculated, "edited open chain retains calculated closing disclosure")
+
+            scenarios += 1
+            let moved = OutlineEditorHarness(triangle, unit: unit); moved.open()
+            moved.startX = "-2,5"; moved.startY = "1,25"
+            let movedResult = try moved.result(); try movedResult.validate()
+            let factor = unit == .feet ? 0.3048 : 1
+            near(movedResult.vertices[0].x, -2.5 * factor, "signed comma X offset")
+            near(movedResult.vertices[0].y, 1.25 * factor, "comma Y offset")
+            near(movedResult.areaMeters2, triangle.areaMeters2, "translation leaves analytical area unchanged")
+        }
+
+        scenarios += 1
+        let roundoff = OutlineEditorHarness(shape(), unit: .meters); roundoff.open()
+        check(bits(Array(try roundoff.points().prefix(4))) != bits(shape().vertices),
+              "precision fixture exposes subtract/add drift before original-geometry fence")
+
+        scenarios += 1
+        let preciseTriangle = FloorMeasurementOutline(name: "Precise angled wall", vertices: [.init(x: 0, y: 0),
+            .init(x: 3.000000000000001, y: 0), .init(x: 3.25, y: 4.1234567890123)], closingWallCalculated: true)
+        let oneChanged = OutlineEditorHarness(preciseTriangle, unit: .meters); oneChanged.open()
+        oneChanged.walls[0].primary = "4"
+        let oneChangedResult = try oneChanged.result(); try oneChangedResult.validate()
+        check(oneChangedResult.vertices[2].y.bitPattern == preciseTriangle.vertices[2].y.bitPattern,
+              "changing one wall does not round another unchanged angled wall")
+
+        scenarios += 1
+        let fresh = FloorMeasurementOutline(name: "New diagonal", vertices: [])
+        let newEditor = OutlineEditorHarness(fresh, unit: .meters, isNew: true); newEditor.open()
+        newEditor.walls = [.init(primary: "3", inches: "", direction: .right, bearing: ""),
+                           .init(primary: "4", inches: "", direction: .down, bearing: "")]
+        let calculated = try newEditor.result(); try calculated.validate()
+        near(calculated.areaMeters2, 6, "fresh 3-4-5 outline analytic area")
+        near(calculated.edgeLengthsMeters.last!, 5, "fresh calculated final wall length")
+        check(calculated.closingWallCalculated, "fresh calculated final wall flagged")
+        newEditor.walls.append(.init(primary: "5", inches: "", direction: .custom, bearing: "233.13010235415598"))
+        let entered = try newEditor.result(); try entered.validate()
+        check(!entered.closingWallCalculated && entered.vertices.count == 3, "entered closing wall removes duplicated endpoint and clears calculated flag")
+        near(entered.areaMeters2, 6, "entered final wall preserves triangle area")
+
+        scenarios += 1
+        let diagonal = MeasurementWallDraft(primary: "5", inches: "", direction: .downRight, bearing: "")
+        let diagonalVector = try diagonal.vector(unit: .meters)
+        near(diagonalVector.0, 5 / sqrt(2), "preset diagonal x component")
+        near(diagonalVector.1, 5 / sqrt(2), "preset diagonal y component")
+        let custom = MeasurementWallDraft(primary: "2,5", inches: "", direction: .custom, bearing: "30,5")
+        let customVector = try custom.vector(unit: .meters)
+        near(customVector.0, 2.5 * cos(30.5 * .pi / 180), "comma custom bearing x component")
+        near(customVector.1, 2.5 * sin(30.5 * .pi / 180), "comma custom bearing y component")
+        let feetVector = try MeasurementWallDraft(primary: "12", inches: "6", direction: .up, bearing: "").vector(unit: .feet)
+        check(feetVector.0 == 0, "cardinal direction suppresses trig-roundoff x")
+        near(feetVector.1, -3.81, "feet/inches cardinal y conversion")
+        for text in ["", "NaN", "Infinity", "-1", "360.1", "1e2", "1,2,3", "30 deg"] {
+            rejects("custom bearing \(text)") { _ = try MeasurementWallDraft(primary: "2", inches: "", direction: .custom, bearing: text).vector(unit: .meters) }
+        }
+
+        scenarios += 1
+        let positions = OutlineEditorHarness(shape(), unit: .meters)
+        for text in ["NaN", "Infinity", "1e2", "1,2,3", "1 m", "201", "-201", ""] {
+            rejects("starting coordinate \(text)") { _ = try positions.position(text) }
+        }
+        near(try positions.position("-200"), -200, "negative coordinate boundary")
+        near(try positions.position("200"), 200, "positive coordinate boundary")
+
+        scenarios += 1
+        var saved = 0
+        let pending = OutlineEditorHarness(shape(), unit: .meters) { _ in saved += 1 }
+        pending.open(); pending.wallLength = "2"
+        check(pending.pending(), "pending dimension detected")
+        pending.submit()
+        check(saved == 0 && pending.error != nil, "pending wall fields prevent save callback")
+        pending.wallLength = ""; pending.wallInches = "6"; pending.error = nil; pending.submit()
+        check(saved == 0 && pending.error != nil, "pending inches prevent save callback")
+        pending.wallInches = ""; pending.wallBearing = "45"; pending.error = nil; pending.submit()
+        check(saved == 0 && pending.error != nil, "pending angle prevents save callback")
+        pending.wallBearing = ""; pending.editingWallID = pending.walls[0].id; pending.error = nil; pending.submit()
+        check(saved == 0 && pending.error != nil, "active wall edit prevents save callback")
+        pending.editingWallID = nil; pending.closingReviewed = false; pending.error = nil; pending.submit()
+        check(saved == 0 && pending.error != nil, "unreviewed closure prevents save callback")
+        pending.closingReviewed = true; pending.error = nil; pending.submit()
+        check(saved == 1 && pending.error == nil, "reviewed clean candidate invokes save exactly once")
+
+        scenarios += 1
+        var invalidSaved = 0
+        let invalid = OutlineEditorHarness(fresh, unit: .meters, isNew: true) { _ in invalidSaved += 1 }
+        invalid.open(); invalid.name = "Invalid line"
+        invalid.walls = [.init(primary: "1", inches: "", direction: .right, bearing: ""),
+                         .init(primary: "1", inches: "", direction: .right, bearing: "")]
+        invalid.closingReviewed = true
+        check(invalidSaved == 0, "editing draft alone never invokes persistence callback")
+        invalid.submit()
+        check(invalidSaved == 0 && invalid.error != nil, "invalid outline geometry never invokes save callback")
+
+        print("PASS: \(scenarios) scenarios, \(assertions) assertions")
+    }
+}

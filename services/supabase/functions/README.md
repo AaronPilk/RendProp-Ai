@@ -7,6 +7,144 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+## Current rollout and dormant trial — 6 October 2026
+
+The [launch-readiness handoff](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
+records the current candidate: account-owned JSON export, deliberate member
+portfolios, protected media admission, funded provider attempts, finite App Review
+authority and prospective hosting retention. No retail, trial or review funding
+allocation is seeded. The [5 October audit](../../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+retains the preceding source dispositions for photo mutation, billing chronology,
+verified recipients, cleanup journals and bounded uploads. The
+[actual rollout checkpoint](../../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+records the delivered core stack, additive terminal conflict repair and final
+photo-permission contraction. Twelve exact-source CI jobs, 39 owned API requests
+and the final 77-RPC catalog readback passed. The [later dormant trial rollout](../../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+applied three canonical migrations once and source-verified me v50,
+apple-subscriptions v25 and renders v44. Its final 92-RPC catalog readback passed:
+77 retained identities/ACLs and 15 new service-only RPCs. Five new tables have
+deny-all RLS and four admission triggers are present. Trial config remains OFF
+and all new funding/trial rows remain zero. Native build 46 and Studio source/served
+files are delivered. These checks do not prove realized margins or real
+phone/provider acceptance.
+Prior-stack schema dependencies, timestamp aliases, Apple bridge ordering, photo
+expand/function/contract ordering and legacy media delivery require a coordinated
+rollout. Never infer deployment from a passing local suite or apply all migrations
+with a bulk push. The delivery snapshots below describe earlier releases; the
+6 October rollout checkpoint and trial handoff distinguish delivered work from
+remaining candidate gates.
+
+**7 October verified follow-up:** `fe0a59c` adds a bounded internal
+agent-reel answer format: complete JSON, at most 500 UTF-8 bytes, all offered
+windows exactly once and request-local photo aliases. The server expands the
+answer to the existing client UUID/time/motion/caption shape. The configured
+provider ceiling stays at 700 tokens and its funded quote is unchanged.
+All twelve hosted CI jobs passed; fresh and replay checks each passed all 270
+invariants with no known-red waiver. One `ai-copy` deployment is **v21 ACTIVE**,
+JWT enabled; all 21 runtime files matched, all 24 other function records and
+all four agent-reel route rows stayed unchanged across the operation.
+See the [actual rollout](../../../docs/handoff/AGENT-REEL-ROLLOUT-20261007.md).
+Native build 46 remains its own immutable checkpoint. Fresh live readback confirms
+trial configuration OFF and no sponsor pools, serving schedules, bounded grants
+or purchase reservations. Funding, phone and protected-media gates remain open.
+
+## Delivered direct Bria internal beta
+
+The subsequent [audit rollout](../../../docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)
+is live: **ai-video v49**, fourteen other affected functions, strict durable
+limits, verified paid identity, compatible required request keys and ordinary
+video reservations. All 12 CI jobs pass on deployed runtime source; 196 returned
+files match, with three compiler-only type files omitted by bundling. Live
+catalog checks verify 117 assertions. Its migration is recorded once as
+`20261003024724_app_video_cost_reservations`, from source
+`20261003020955_app_video_cost_reservations.sql`. See the
+[receipt](../../../docs/releases/AUDIT-COST-GUARDS-20261002.json).
+Bria configuration and native build 43 are unchanged; the following paragraph
+describes the earlier build-43 delivery snapshot.
+
+The [build-43 handoff](../../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
+is delivered as internal **TestFlight 1.0.3 (43)**, verified available at
+**2026-10-03 00:55:46 UTC**. At that delivery, **ai-video v47** was ACTIVE with JWT verification;
+all 30 API-listed files match runtime `8de8fd0`. The migration is recorded live
+as `20261003003531`, from source `20261002225458_video_erase_direct_bria.sql`;
+do not apply it twice. All twelve SQL function bodies and expected grants match;
+job/stage RLS denies client access and service CRUD remains. The membership-scoped
+held-cents authenticated read is preserved. Security readback adds no ERROR/WARN
+over the existing 26 WARN entries. Quote and status probes return 401.
+Six private configuration values were digest-confirmed for one trusted owner.
+The [delivery receipt](../../../docs/releases/TESTFLIGHT-43-20261002.json) records
+the exact-source twelve passing CI jobs and Apple availability. Direct Bria requires
+the internal client's
+consent-v3 acknowledgement, `BRIA_BETA_ENABLED=true`, a server-configured
+`BRIA_BETA_USER_IDS` list containing the authenticated user, confirmed rates and
+exact output hosts. A saved API token does not switch providers. Other users and
+normal App Store clients retain fal; eligible unconfigured beta requests fail
+before paid dispatch.
+
+The confirmed catalog rates are **2¢/second masking + 4.5¢/second erasing**, used
+for pinned stage reservations/accounting, not invoice reconciliation. Rendprop's
+AI clip allowance, workspace ceiling and existing **240¢ batch fence** remain.
+Each paid stage has durable admission and an immutable receipt; no automatic paid
+retry or fallback exists. The narrow starting host
+`d1ei2xrl63k822.cloudfront.net` has historical Bria-owned video-output evidence,
+without a guarantee for current mask/erase outputs. Unknown hosts fail closed and
+can strand paid output while references and cost accounting remain. Environment
+changes cannot repair a job's pinned allowlist through normal polling.
+
+See the [adapter tests](ai-video/bria_test.ts), [handler tests](ai-video/erase_test.ts),
+[migration](../migrations/20261002225458_video_erase_direct_bria.sql),
+[SQL contracts](../tests/video_erase_direct_bria.sql) and
+[disposable PostgreSQL runner](../tests/video_erase_direct_bria_pg.py).
+Schema was applied before the dependent handler; source, grants and configuration
+were read back before enablement. No paid provider jobs were submitted for delivery
+verification. Tester IDs, credentials and customer evidence stay outside Git.
+
+## Delivered release checkpoints
+
+The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
+deployed **listings v38, tours v45 and ai-photo v49**, all ACTIVE with JWT
+verification enabled. Gallery selection validates ordered ready/visible listing
+photos; a service-only atomic append preserves concurrent cloud additions. The
+gallery migration is recorded live as `20261002171338`, from source filename
+`20261002160344`; do not apply it twice. All eight catalog/permission checks and
+three exact database function bodies match. Deployed extraction returns 12/13/24
+files, all byte-matching the source; tours submitted 14, with only `spatial/contract.ts`
+omitted because its sole incoming edge is an erased Row type import. That module's
+unused runtime exports are unreachable through that edge. All 12 CI jobs passed
+on runtime `3615a23`; three unauthenticated GET probes return 401. No paid generation
+or synthetic customer write was used. See the
+[delivery receipt](../../../docs/releases/TESTFLIGHT-41-20261002.json).
+
+The [build 40 crash audit](../../../docs/handoff/IOS-CRASH-HARDENING-20261002.md)
+deployed **events v26 ACTIVE**, with JWT verification enabled. A narrow,
+whitelisted diagnostic `app_version` exemption preserves `marketing.version (build)`
+for future crash attribution; arbitrary strings still pass through scrubbing.
+All six downloaded source files match runtime `4580f76`; downloaded-source tests
+pass 30/30 and the entrypoint type-check passes. No migration or production
+test-event ingestion was required. Already redacted historical builds cannot
+be recovered, and accepted telemetry summaries are not a complete crash census.
+
+[Photographer client delivery](../../../docs/studio/photographer-client-delivery.md)
+adds a nullable, explicit real estate work preference, service-only per-listing
+client contacts, verified contact-photo uploads and transactional client inquiry
+emails. Recipients and delivery history remain private; public tours expose only
+the client card and display flags. The migration is applied under live ledger
+`20261001233128` (source filename stamp `20261001222809`; do not apply it twice).
+At that delivery, selected versions were **me43, listings37, uploads45, leads36, notify11,
+studio15, tours44 and ai-video45**; all downloaded runtime source files match
+the release. The adopt handler is unchanged; its existing RPC preserves role
+preference. All 19 migration function contracts and six triggers pass live
+metadata readback. See the
+[release handoff](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
+for exact evidence and real inbox acceptance still required.
+
+The [1 October core release](../../../docs/handoff/CORE-READINESS-20261001.md)
+deployed **team v16, me v42, coach v19 and listings v36**, all ACTIVE with JWT
+verification on. The three trial/invitation/workspace migrations are applied;
+45/45 runtime source copies and migration payload hashes match the reviewed
+source. Existing grants are preserved. The report maps source filenames to
+live migration timestamps; do not apply these migrations twice.
+
 The [27 September release checkpoint](../../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 records Studio API **v12 ACTIVE**, JWT verification enabled, and all **44 runtime
 source files** matching the release source. The four new project/media/music/text
@@ -35,7 +173,7 @@ contract and must be preserved per function.
 | `listings` | Authenticated workspace listing CRUD, soft deletion and unpublication. |
 | `uploads` | Authorized single/multipart/batch upload tickets, completion and abort; media goes directly to storage. |
 | `renders` | Authorized native publication, worker jobs/status, publish and chapter updates; source visibility checks. |
-| `me` | Current user/workspace/entitlements, brand and notification settings, device tokens, Apple exchange, account deletion and service-only cleanup. |
+| `me` | Current user/workspace/entitlements, personal card and deliberate portfolio controls, brand/notification settings, device tokens, Apple exchange, account deletion and service-only cleanup. Candidate `GET /me/export` returns authenticated account-owned bounded JSON independently of the selected-workspace header, with explicit omissions and no binary-media export. |
 | `adopt` | Authenticated anonymous-to-connected workspace recovery with verified source/target authority. |
 | `team` | Workspace members, seat limits, single/bulk invitations, atomic acceptance and management. |
 | `property` | Authenticated property-data lookup/import. |
@@ -46,10 +184,10 @@ contract and must be preserved per function.
 | `ai-voice` | Authenticated voice catalog and narration with timing/alignment. |
 | `ai-chapters` | Authenticated room/chapter assistance. |
 | `coach` | Authenticated Ask Rendprop guidance. [Details](coach/README.md). |
-| `ai-enhance` | Validates and queues worker enhancement requests; acceptance is not proof the worker produced output. |
+| `ai-enhance` | Legacy worker enhancement queue is closed: authenticated POST returns 503 without changing a render job. Use the active photo/video tools. |
 | `spatial` | Capture/job lifecycle, gated provider execution and permission-checked scene/artifact access. [Details](spatial/README.md). |
-| `tours` | Published, non-sensitive tour payload by slug, including current source permission checks. |
-| `portfolio` | Published portfolio by handle; filters unavailable/revoked sources. |
+| `tours` | Published, non-sensitive tour payload by slug; candidate delivery contracts recheck exact selected objects, publication/deletion and hosting authority for the protected byte proxy. |
+| `portfolio` | Deliberately selected member-owned published listings with current membership, source and hosting checks; legacy org handles return an empty grid in the candidate. |
 | `leads` | Public protected lead submission; authenticated scoped inbox/status actions. [Details](leads/README.md). |
 | `beacon` | Public tour engagement/metering events. |
 | `events` | Authenticated product-event ingestion. |
@@ -91,6 +229,70 @@ Typical codes include `validation`, `unauthorized`, `forbidden`, `not_found`,
 `conflict`, `plan_required`, `quota_exceeded`, `rate_limited`, `upstream` and
 `internal`. RPC `RPnnn:` errors are mapped in `_shared/http.ts`; unknown server
 errors should not expose credentials or internal records.
+
+## Subscription and team readiness (deployed 1 October)
+
+New workspaces start on `free`, with no trial expiry or trial source. An eligible
+7-day App Store introductory trial begins after the customer confirms a
+subscription in Apple's purchase sheet; the selected plan's allowances and
+Apple's expiry then apply. Existing trial, manual and Apple grants retain their
+current values. This change is prospective and requires migration
+`20261001143615_subscription_confirmed_trial_start.sql`.
+
+`GET /me` includes `billing` for the same resolved workspace as its entitlement:
+`org_id`, `org_name`, `role`, `can_manage_subscription` and `source`. Native clients
+show that workspace before a purchase and send `expected_org_id` to
+`POST /me/entitlement`; a changed workspace fails with 409 instead of binding the
+receipt elsewhere. A verified Apple transaction whose account token belongs to
+an adopted guest is accepted only with the exact, still-authorized adoption
+receipt. Membership in someone else's team is not purchase-ownership proof.
+
+Team invitation responses distinguish creating a valid code from queuing its
+email. `email_queued` and legacy `emailed` mean the outbox accepted the message,
+not inbox delivery; bulk `emails_queued` counts successful acknowledgements.
+Migration `20261001142823_team_invite_delivery_confirmation.sql` fixes the queue
+function's profile-name column reference. It does not resend existing codes.
+Standard Team includes two seats; separately provisioned brokerage contracts use
+their contracted seat count. A disposable 100-seat contract is covered by the
+regression below; this does not prove a live email provider or phone workflow.
+
+Explicit workspace selection is available through `GET /me/workspaces`
+(`active_org_id`, `workspaces: [{id,name,role}]`) and `POST /me/workspace`
+(`{org_id}` → `{ok,org_id,org_name,role}`). `GET /me` also includes `workspaces`.
+Migration `20261001145730_workspace_selection.sql` verifies live membership and
+account/deletion state in service-only functions; selection changes only the
+session default, never existing listing ownership or roles.
+
+Clients capture `X-Org-Id` before starting workspace work and preserve it through
+refresh/retry. Explicit IDs fail closed if membership disappears. A legacy
+`GET /listings` without that header deliberately remains a complete snapshot of
+all authorized memberships; native cloud reconciliation depends on this. A
+request with the header is filtered to the verified workspace, and explicit
+listing edits cannot target another workspace. Draft creation must retain its
+original workspace and idempotency key, even when another device switches the
+active default. Native selection and stale-response handling require the
+corresponding app build.
+
+For authorized purchasers, `billing.original_transaction_ids` lists the selected
+Apple-paid workspace's active/grace subscription bindings. Before an upgrade,
+compare StoreKit's verified original ID with these bindings. An empty list does
+not establish that an existing device subscription is unbound; restore/resolve
+its workspace first. Agents and marketing members receive no subscription IDs.
+
+Run from the repository root:
+
+```bash
+python3 tools/audit/run_workspace_selection.py
+python3 tools/audit/run_team_readiness.py
+python3 tools/audit/run_subscription_trial_regression.py
+```
+
+These create socket-only disposable PostgreSQL, test the old failure before the
+fix and its replay, and run network-denied handler tests. They never send real
+invites, call Apple or make purchases. The subscription suite preserves the
+known owner-retained Astra ceiling invariant failure separately from its passing
+policy checks. Deployment status and live timestamp mappings are recorded in
+the [release receipt](../../../docs/handoff/CORE-READINESS-20261001.md).
 
 ## Develop and verify
 
@@ -158,8 +360,11 @@ unreviewed `db push --include-all` is not a safe reconciliation procedure.
 The [deploy-functions.sh](../deploy-functions.sh) wrapper now delegates to that
 same explicit-selection helper. It no longer deploys an implicit list or forces
 uniform JWT settings. Choose every affected read handler deliberately. Earlier sections of
-[DEPLOYMENT.md](../DEPLOYMENT.md) document older rollout/setup work; use the latest
-release record for current production facts.
+[DEPLOYMENT.md](../DEPLOYMENT.md) document older rollout/setup work. Use the
+[6 October candidate handoff](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
+for current dependencies and remaining gates, and dated delivery receipts for
+completed production changes. The [1 October record](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
+retains that release's historical production facts.
 
 ## Configuration and scheduled work
 

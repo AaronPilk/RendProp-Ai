@@ -1,0 +1,1775 @@
+{
+  "status": "TESTFLIGHT_AVAILABLE_APP_STORE_NO_GO_PENDING_INDEPENDENT_ACCEPTANCE",
+  "branch": "audit/launch-alignment-20261008",
+  "code_checkpoint": "95243bf85960974814de67692e04d3a1c24221e6",
+  "app_store_submitted": false,
+  "testflight": {
+    "version": "1.0.4",
+    "build": 55,
+    "apple_build_id": "577f362e-e3f4-404d-a0ea-cc85747aa185",
+    "processing_state": "VALID",
+    "audience": "APP_STORE_ELIGIBLE",
+    "internal": "IN_BETA_TESTING",
+    "external": "READY_FOR_BETA_SUBMISSION",
+    "source_checkpoint": "25f155da4710c029c4ce9630f7fdfd8739210322",
+    "ipa_sha256": "f78e6b0d84356e7471704c9f71a5fd67120ac7c97f4c087694b4d60d76fc9890",
+    "archive_export_upload_attempts": {
+      "archive": 1,
+      "export": 1,
+      "upload": 1
+    },
+    "all_phase_exits_zero": true,
+    "signature_verified": true,
+    "exported_ipa_entitlements": {
+      "application-identifier": "5F5C5G25Y6.com.rendprop.app",
+      "com.apple.developer.team-identifier": "5F5C5G25Y6",
+      "aps-environment": "production",
+      "get-task-allow": false
+    },
+    "archive_signing_qualification": "The archive uses development signing; export re-signs the IPA for distribution. Production APNs/no-debug applies to the exported IPA.",
+    "compiler_source_binding": {
+      "tracked": 135,
+      "generated": 1,
+      "all_tracked_match_archive_checkpoint": true,
+      "matching_arm64_uuid": "00F6BD99-E678-3509-BE85-B846E59E9E74",
+      "privacy_manifest_sha256": "802a31540c097c5df176fc55da03d3dcbffcea3236995ca544aa3d9097163392"
+    },
+    "native_source_equivalence": {
+      "artifactCheckpoint": "25f155da4710c029c4ce9630f7fdfd8739210322",
+      "finalCodeCheckpoint": "95243bf85960974814de67692e04d3a1c24221e6",
+      "previousCodeCheckpoint": "fefd0681d585bba5a1eb94dd58dcdc03661f5c5d",
+      "nativeProductionPathsCompared": 197,
+      "nativeProductionByteIdentical": true,
+      "changes": [
+        "apps/ios/tests/PhotoEditLifecycleTests.swift",
+        "apps/ios/tests/WorkspaceAllowanceDisplayTests.swift",
+        "apps/ios/tests/run-workspace-allowance-display.py",
+        "services/supabase/functions/me/devices.test.ts",
+        "services/supabase/migrations/20261010000700_preserve_replayed_library_selection.sql",
+        "services/supabase/migrations/20261010001329_retain_deleted_video_settlement_liability.sql",
+        "services/supabase/tests/app_video_cost_pg.py",
+        "tools/audit/apple-code-session-20261004/Fixture.swift.template",
+        "tools/audit/run_account_library_safety.py",
+        "tools/audit/run_private_internal_testing.py",
+        "tools/audit/run_team_private_libraries.py",
+        "tools/audit/run_workspace_selection.py"
+      ],
+      "nonCompiledNativeTestChanges": [
+        "apps/ios/tests/PhotoEditLifecycleTests.swift",
+        "apps/ios/tests/WorkspaceAllowanceDisplayTests.swift",
+        "apps/ios/tests/run-workspace-allowance-display.py"
+      ],
+      "dbEvidenceInputsCompared": 133,
+      "dbEvidenceOriginallyExecutedAt": "7c2bbb9eed494952815f98069919769128974354",
+      "dbConsumedInputsByteIdenticalToFinalCode": true,
+      "preparedFunctionClosureInputsCompared": 142,
+      "allPreparedFunctionClosureInputsMatchFinalCode": true,
+      "lifecycleEvidenceCapturedBeforeCommit": "7c2bbb9 plus the three-line test-only fixture change",
+      "lifecycleEvidenceFourConsumedInputsMatchFinalCode": true,
+      "note": "Three iOS test fixtures and one audit fixture differ from the immutable archive checkpoint. All 197 paths outside apps/ios/tests/ under apps/ios and tools/asc are byte-identical, including runtime, resources, project and ASC tools. No app rearchive is required.",
+      "additionalNonCompiledAuditFixtureChanges": [
+        "tools/audit/apple-code-session-20261004/Fixture.swift.template"
+      ],
+      "postLifecycleEvidenceCapturedBeforeCommit": "fefd068 plus the 14-line inert Apple test-fixture dependency repair",
+      "postLifecycleConsumedInputsMatchFinalCode": true,
+      "postLifecycleEndHashesCompared": 459
+    }
+  },
+  "production": {
+    "new_migrations": [
+      {
+        "version": "20261010000338",
+        "name": "private_library_adoption_and_serving_safety",
+        "source": "services/supabase/migrations/20261010000032_private_library_adoption_and_serving_safety.sql",
+        "sha256": "fa5fe31d7f529fbffc970f8ae6c60487d76dc28a110446e77e2998586e3d886f"
+      },
+      {
+        "version": "20261010001811",
+        "name": "preserve_replayed_library_selection",
+        "source": "services/supabase/migrations/20261010000700_preserve_replayed_library_selection.sql",
+        "sha256": "4a4b0d2d91f4cd1b68f64a69a74f8e0f6cbd273ba995132e484732870e5b21ae",
+        "final_function_body_md5": "6fcf6612285aa6bc4ddfcff4f2dbc0b4"
+      },
+      {
+        "version": "20261010001815",
+        "name": "retain_deleted_video_settlement_liability",
+        "source": "services/supabase/migrations/20261010001329_retain_deleted_video_settlement_liability.sql",
+        "sha256": "9d95f47e2bca6d5c4a919f3a30b3f24fdfafb39b9533d345076b7fdc4dbc0d2d",
+        "final_function_body_md5": "3976c4aaf6cea5185df1e133475fb83f"
+      }
+    ],
+    "affected_functions": [
+      {
+        "name": "me",
+        "version": 63,
+        "status": "ACTIVE",
+        "verify_jwt": false,
+        "live_files_matched": 51,
+        "compiled_type_imports_elided": [
+          "functions/_shared/providers/types.ts",
+          "functions/studio/context.ts"
+        ]
+      },
+      {
+        "name": "leads",
+        "version": 47,
+        "status": "ACTIVE",
+        "verify_jwt": false,
+        "live_files_matched": 13,
+        "compiled_type_imports_elided": []
+      },
+      {
+        "name": "ai-photo",
+        "version": 67,
+        "status": "ACTIVE",
+        "verify_jwt": true,
+        "live_files_matched": 36,
+        "compiled_type_imports_elided": []
+      },
+      {
+        "name": "ai-copy",
+        "version": 34,
+        "status": "ACTIVE",
+        "verify_jwt": true,
+        "live_files_matched": 25,
+        "compiled_type_imports_elided": [
+          "functions/_shared/providers/types.ts"
+        ]
+      },
+      {
+        "name": "notify",
+        "version": 23,
+        "status": "ACTIVE",
+        "verify_jwt": false,
+        "live_files_matched": 14,
+        "compiled_type_imports_elided": []
+      }
+    ],
+    "prepared_function_closures": [
+      {
+        "name": "me",
+        "before_version": 62,
+        "verify_jwt": false,
+        "files": 53,
+        "prior_production_lag": [],
+        "package_sha256": "28928961d8db11eda4080f7a7f3e878f7c459c16027fffab9e5e78132d1b509c",
+        "inputs": [
+          {
+            "name": "functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "name": "functions/_shared/apple-funding.ts",
+            "sha256": "bf1f9309e7c89857fbe7d18bc7d6fe825c337df5db771b897da760e174f4b40f"
+          },
+          {
+            "name": "functions/_shared/apple.ts",
+            "sha256": "23d78360f6c9a7b417e8b4a8fa2070226da5669dbbda852f9cb48d4751f94913"
+          },
+          {
+            "name": "functions/_shared/applejws.ts",
+            "sha256": "73ecedf823601c6407b29c639c19f658e9db7e10892f3bd764f4fb20e7e2f0d0"
+          },
+          {
+            "name": "functions/_shared/bounded-trial.ts",
+            "sha256": "9b64dbb245b2aa828d6f54a1d22e8f974df928f019709f28747f687af50092e6"
+          },
+          {
+            "name": "functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "name": "functions/_shared/entitlements.ts",
+            "sha256": "ae2edbe28130cdcb50312ab6a149da4dca335805767c3a8d076a3b858125674e"
+          },
+          {
+            "name": "functions/_shared/funded-serving.ts",
+            "sha256": "91bd5d946b443ffa34602c77631c2eb6a0308d330da0f5399be2949a04c02ba7"
+          },
+          {
+            "name": "functions/_shared/ghl.ts",
+            "sha256": "c68b8a224d4f3ebfc40f5327f320850880fbcfdd99b78a6eec6812500568583d"
+          },
+          {
+            "name": "functions/_shared/hosting-retention.ts",
+            "sha256": "b701b3e991f3f97d522505f661c4ca3fd9caab8ab6f0e33966ad5728cec82f75"
+          },
+          {
+            "name": "functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "name": "functions/_shared/internal-testing.ts",
+            "sha256": "7d650f7638ee03960786ac92c181a18011897c252e687b1cbdd25ee9b4d65a8a"
+          },
+          {
+            "name": "functions/_shared/legacy-ghl-cleanup.ts",
+            "sha256": "4cbe077e8b6e708a39c561f286c021c9d5145dc9659033c9f9efaa4f9f2ba68e"
+          },
+          {
+            "name": "functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "name": "functions/_shared/library-summary.ts",
+            "sha256": "0f4ba6a520233e2c5fef79ceb736e1228132d8ba02ff2606f5ad173d831cc75d"
+          },
+          {
+            "name": "functions/_shared/media-delivery-admission.ts",
+            "sha256": "de0b928251b92bc63e90e0ceb951b7bd17dc812391e5aa1f8a353b25d3d34569"
+          },
+          {
+            "name": "functions/_shared/media-source-access.ts",
+            "sha256": "bc958f62a2e11723ddba52cab37d213ee369ce8cca33a3213493b81da4d1d5c7"
+          },
+          {
+            "name": "functions/_shared/photo-package-context.ts",
+            "sha256": "af1617deee9274448655ce42b9b199dc1ea321c4e51a88be026630eeb6587db3"
+          },
+          {
+            "name": "functions/_shared/privacy-cleanup.ts",
+            "sha256": "c594ac27ffa35cb831d74ef2125257b913042a3fb9e7592a2457ec2b012719c5"
+          },
+          {
+            "name": "functions/_shared/private-media.ts",
+            "sha256": "f635b9f6d80c7301789a5b76d038738452c1d3ab57e31a39212b3c2c296934bc"
+          },
+          {
+            "name": "functions/_shared/private-provenance-links.ts",
+            "sha256": "9136f779f4131d38c9cd74422df38f9542f1a02c57d9e01c2f59c9d3fe2db0aa"
+          },
+          {
+            "name": "functions/_shared/providers/anthropic.ts",
+            "sha256": "9a871009005094617f666df505e11d48df9c659834de1f814672131618ccf792"
+          },
+          {
+            "name": "functions/_shared/providers/common.ts",
+            "sha256": "05e826ac2b523e6022815e8d6177784bbced327c79cacc2050830dfada46aacd"
+          },
+          {
+            "name": "functions/_shared/providers/gemini.ts",
+            "sha256": "5c07f0f1fbc71775f1eec113ded79dde00f9875b959aa6c58286556752faf0a7"
+          },
+          {
+            "name": "functions/_shared/providers/openai.ts",
+            "sha256": "8eee34f0570dba9a7df26834f1d4ce090301a1e3bfd6ca8edf79ca461c06444c"
+          },
+          {
+            "name": "functions/_shared/providers/params.ts",
+            "sha256": "3835bd34b45a9eee4aac46b708764db4f8fd73341c3d7bdf98921580f16b9a6c"
+          },
+          {
+            "name": "functions/_shared/providers/types.ts",
+            "sha256": "1c61ebecdf29e0511b7a5bee6a13d30b7ea5f6f770c43fd95fefd25a0ba82bcd"
+          },
+          {
+            "name": "functions/_shared/r2.ts",
+            "sha256": "b1e601028cb7d2fb88309c6f979a723a639c3ffbf084c757656f085a85988219"
+          },
+          {
+            "name": "functions/_shared/ratelimit.ts",
+            "sha256": "61671b0b7c9ee05b19bbd565cf5778c44126f7b4a050942c4d14d26fdb1a2e61"
+          },
+          {
+            "name": "functions/_shared/router.ts",
+            "sha256": "c58aa1d32a1b8e33b40e935000f6b8be68ddc49adc47b2bb5c2dea51868b7010"
+          },
+          {
+            "name": "functions/_shared/spacetypes.ts",
+            "sha256": "df1f0702b774224365eb10215d1448a942243109074403d30ebdee4e5aacc211"
+          },
+          {
+            "name": "functions/_shared/stream.ts",
+            "sha256": "9fba6edaccc8df4ef823eaa6f22b94ddb8ed17b8720922429fc22ee856ae2c09"
+          },
+          {
+            "name": "functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "name": "functions/_shared/trial-purchase.ts",
+            "sha256": "2261164bbef3806bf9c217ef2246447f4deee08bb2d7bb6031fd3d4b9c180382"
+          },
+          {
+            "name": "functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "name": "functions/me/billing.ts",
+            "sha256": "23bfe023f11df0879068227ad62b395c233b5f4cd38d2de4e0bbc6ab7b350073"
+          },
+          {
+            "name": "functions/me/brand-image.ts",
+            "sha256": "e16292b2f7ab3b90d76af8d3772e3bd72780637e81f62af5b563b9150ca79248"
+          },
+          {
+            "name": "functions/me/brand-logo.ts",
+            "sha256": "c3b7869e7cb2bbc0bc5a954b43b2290fd3992a7b1ef81415ccad3d40ccc476c6"
+          },
+          {
+            "name": "functions/me/card.ts",
+            "sha256": "82797bd9146b382a0060de4cf3ece245cf6fd69ea9f435b0d8719264cf24d3c3"
+          },
+          {
+            "name": "functions/me/deletion.ts",
+            "sha256": "727437e6f05c574bf6a720c6b67703069942811da0d9a767e429c14383a05b03"
+          },
+          {
+            "name": "functions/me/devices.ts",
+            "sha256": "41ede08160d33f9f06b537125d1703b76217576b0103e5aad52353c5b33cb60f"
+          },
+          {
+            "name": "functions/me/export.ts",
+            "sha256": "d8cb9a3430ee92c4752596f8d8d490be634943163316f6a6ad14acac249f0f74"
+          },
+          {
+            "name": "functions/me/index.ts",
+            "sha256": "8dd3e481662ba8b6e85b305590a33bebf907af08f823eac22b2e80cbd97a7564"
+          },
+          {
+            "name": "functions/me/logic.ts",
+            "sha256": "3450e44c5b75d783be57841c6177955fd6ff016e0db6a746baeb494b2c2d878c"
+          },
+          {
+            "name": "functions/me/portfolio.ts",
+            "sha256": "d712bd029a08c3bdb7b1fd5b1cbc137f01b3c5443339204eb680f74ef2d26889"
+          },
+          {
+            "name": "functions/me/profile.ts",
+            "sha256": "dea5a1d89fa9bcc6829337d568165a6e0b6d7d6c0a559eaf0082df934261d71a"
+          },
+          {
+            "name": "functions/studio/context.ts",
+            "sha256": "0124ab405d490823c8e51b410e61bb0e1bbb4f75fcf6452ebd552fae82709ba3"
+          },
+          {
+            "name": "functions/studio/handler.ts",
+            "sha256": "114fb3bc7bec27316398c0f349a92152c9564552271d9263c26cf4ac2703c131"
+          },
+          {
+            "name": "functions/studio/project-media.ts",
+            "sha256": "df2be445e6eb2f36d66e4b7db61a05ea003e0bdead529de9936277e43c9ef17b"
+          },
+          {
+            "name": "functions/studio/property-music.ts",
+            "sha256": "3786eb287b7c318ca625f999a80aee52c5fc641ee0c4bafb1184f20942d6c978"
+          },
+          {
+            "name": "functions/uploads/content_type.ts",
+            "sha256": "630b2bc98f67d1f5ea95e910cd740fceefc2abd0e48a3197ef1950c113ccf6c6"
+          },
+          {
+            "name": "functions/uploads/gateway_contract.ts",
+            "sha256": "651109a429bb72782e6164ddf11e0a2eb9f8a7781f4cb855ad1d929bd1727d92"
+          },
+          {
+            "name": "functions/uploads/transport.ts",
+            "sha256": "7d906d93f07a6eeb15aa3b3a95b637c9d1a6ac663265bb26f54ee7d89691274e"
+          }
+        ]
+      },
+      {
+        "name": "leads",
+        "before_version": 46,
+        "verify_jwt": false,
+        "files": 13,
+        "prior_production_lag": [],
+        "package_sha256": "8f928e56b802996917b63cc9dec74d726293427544764f35dccd10c2ab1d41a4",
+        "inputs": [
+          {
+            "name": "functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "name": "functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "name": "functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "name": "functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "name": "functions/_shared/library-leads.ts",
+            "sha256": "690a46b170b2fab113458b721cad6fd3795a201a9cea1b358d556cfb42a3ea92"
+          },
+          {
+            "name": "functions/_shared/ratelimit.ts",
+            "sha256": "61671b0b7c9ee05b19bbd565cf5778c44126f7b4a050942c4d14d26fdb1a2e61"
+          },
+          {
+            "name": "functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "name": "functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "name": "functions/leads/client-delivery.ts",
+            "sha256": "a6439e155b373b3f32d99fbd90c928a09ca0167b2ce40892b4a6b164bf30e3b6"
+          },
+          {
+            "name": "functions/leads/deletion.ts",
+            "sha256": "3de2e2f57eae0f875949ec06827878d80497c2ff88571c5259e5a02bc641b8cb"
+          },
+          {
+            "name": "functions/leads/index.ts",
+            "sha256": "d58ff928d2c79ed84b37031f5794bcff7af9bb49f87464848040a3e6cba0271d"
+          },
+          {
+            "name": "functions/leads/recipient-verification.ts",
+            "sha256": "b516bf27c36879da7ba7af4cd7bb7d9aeebf6a01ad127392d7242ec1ec2e0156"
+          },
+          {
+            "name": "functions/leads/turnstile.ts",
+            "sha256": "3a7d750b0427271cf6a3c921647bb571d41265b7ef0bfbbbbd7ecf0f8f0012c8"
+          }
+        ]
+      },
+      {
+        "name": "ai-photo",
+        "before_version": 66,
+        "verify_jwt": true,
+        "files": 36,
+        "prior_production_lag": [],
+        "package_sha256": "06d4d732f7982b7449fdfed63bb94e9796b2e3c8876fe4098275f8d6a246c172",
+        "inputs": [
+          {
+            "name": "functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "name": "functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "name": "functions/_shared/custom-photo-prompt.ts",
+            "sha256": "3f29e66bb473d85de0472f9571c458d13dc799e0f944111858003dab02416676"
+          },
+          {
+            "name": "functions/_shared/entitlements.ts",
+            "sha256": "ae2edbe28130cdcb50312ab6a149da4dca335805767c3a8d076a3b858125674e"
+          },
+          {
+            "name": "functions/_shared/fairhousing.ts",
+            "sha256": "fb98d1dcd99dba48a698ad4a90d853032afcf23eac5e25d89094c33560234647"
+          },
+          {
+            "name": "functions/_shared/funded-serving.ts",
+            "sha256": "91bd5d946b443ffa34602c77631c2eb6a0308d330da0f5399be2949a04c02ba7"
+          },
+          {
+            "name": "functions/_shared/hosting-retention.ts",
+            "sha256": "b701b3e991f3f97d522505f661c4ca3fd9caab8ab6f0e33966ad5728cec82f75"
+          },
+          {
+            "name": "functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "name": "functions/_shared/idempotency.ts",
+            "sha256": "f24927ffe48602c7a8a8e9995c0ebc70156bdf8932276d75999d6a3b6b9b9b87"
+          },
+          {
+            "name": "functions/_shared/ledger.ts",
+            "sha256": "99ea700b397dbcdc45cc2799c48c1936c72f9eb73e55b8311bc9e8eee2703224"
+          },
+          {
+            "name": "functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "name": "functions/_shared/media-delivery-admission.ts",
+            "sha256": "de0b928251b92bc63e90e0ceb951b7bd17dc812391e5aa1f8a353b25d3d34569"
+          },
+          {
+            "name": "functions/_shared/provenance.ts",
+            "sha256": "b87cd250d2bc28f93ebab7dbb4b81c804bb53fc0ad08978729119fb810eb8b7a"
+          },
+          {
+            "name": "functions/_shared/providers/anthropic.ts",
+            "sha256": "9a871009005094617f666df505e11d48df9c659834de1f814672131618ccf792"
+          },
+          {
+            "name": "functions/_shared/providers/chain.ts",
+            "sha256": "4ecb52ce2c58f304dca74b4f06320a479486db0042add3ce00d5f65580320d49"
+          },
+          {
+            "name": "functions/_shared/providers/common.ts",
+            "sha256": "05e826ac2b523e6022815e8d6177784bbced327c79cacc2050830dfada46aacd"
+          },
+          {
+            "name": "functions/_shared/providers/elevenlabs.ts",
+            "sha256": "e8aec5792e94316a01a0f9d262a4245bdfec210ccd1b4d47e28bb25ad037f4e3"
+          },
+          {
+            "name": "functions/_shared/providers/fal.ts",
+            "sha256": "784f441e4af6a2c3f7337ebb4db522d57e4849d825af5831654f0ef0f1b34b93"
+          },
+          {
+            "name": "functions/_shared/providers/gemini.ts",
+            "sha256": "5c07f0f1fbc71775f1eec113ded79dde00f9875b959aa6c58286556752faf0a7"
+          },
+          {
+            "name": "functions/_shared/providers/higgsfield.ts",
+            "sha256": "e3fdfaf46164e12863592e475f337b2d747f559eb77eb03b3f62c64f07528faf"
+          },
+          {
+            "name": "functions/_shared/providers/index.ts",
+            "sha256": "fb7e8a959cfcbbf2e7075ffb0bce3b61f04455d47db4b67a611c70960e264b9f"
+          },
+          {
+            "name": "functions/_shared/providers/kie.ts",
+            "sha256": "012e5b0b5edc8746affa8bf0a3b1b2ba6f024f70a6184143089b35305dfb2967"
+          },
+          {
+            "name": "functions/_shared/providers/openai.ts",
+            "sha256": "8eee34f0570dba9a7df26834f1d4ce090301a1e3bfd6ca8edf79ca461c06444c"
+          },
+          {
+            "name": "functions/_shared/providers/params.ts",
+            "sha256": "3835bd34b45a9eee4aac46b708764db4f8fd73341c3d7bdf98921580f16b9a6c"
+          },
+          {
+            "name": "functions/_shared/providers/types.ts",
+            "sha256": "1c61ebecdf29e0511b7a5bee6a13d30b7ea5f6f770c43fd95fefd25a0ba82bcd"
+          },
+          {
+            "name": "functions/_shared/r2.ts",
+            "sha256": "b1e601028cb7d2fb88309c6f979a723a639c3ffbf084c757656f085a85988219"
+          },
+          {
+            "name": "functions/_shared/ratelimit.ts",
+            "sha256": "61671b0b7c9ee05b19bbd565cf5778c44126f7b4a050942c4d14d26fdb1a2e61"
+          },
+          {
+            "name": "functions/_shared/router.ts",
+            "sha256": "c58aa1d32a1b8e33b40e935000f6b8be68ddc49adc47b2bb5c2dea51868b7010"
+          },
+          {
+            "name": "functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "name": "functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "name": "functions/ai-copy/guard.ts",
+            "sha256": "2ce85e815e8bfd2c6cebb99dd11047deffcb5e45313569993cea828d6690df27"
+          },
+          {
+            "name": "functions/ai-copy/prompt.ts",
+            "sha256": "5595355894f3c26f57508c39b447aeefcbedd838d7448ca63b59c445b43dce6c"
+          },
+          {
+            "name": "functions/ai-photo/helper-policy.ts",
+            "sha256": "97ef99e93559b093ff6525f956118b83c0f1ed90ad8fa775fb071fc545599b0a"
+          },
+          {
+            "name": "functions/ai-photo/index.ts",
+            "sha256": "054d53e912840ac181fba456d19a84419d5f004d1c29f42ea9e74acbf9a55fd9"
+          },
+          {
+            "name": "functions/ai-photo/input-policy.ts",
+            "sha256": "d8ac5e2130e4724b29924bc6d0bde570345651d6a7848a960de5e06e74cce543"
+          },
+          {
+            "name": "functions/ai-photo/photo-result.ts",
+            "sha256": "ed85579b941d9d7cd2e09c9e22ad637f8cc53cf62c33fab081248b9641c62ded"
+          }
+        ]
+      },
+      {
+        "name": "ai-copy",
+        "before_version": 33,
+        "verify_jwt": true,
+        "files": 26,
+        "prior_production_lag": [],
+        "package_sha256": "f78aa2f098f43a233dad6a7bacd052a18c282d89f9443477e207a66c3afcab77",
+        "inputs": [
+          {
+            "name": "functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "name": "functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "name": "functions/_shared/custom-photo-prompt.ts",
+            "sha256": "3f29e66bb473d85de0472f9571c458d13dc799e0f944111858003dab02416676"
+          },
+          {
+            "name": "functions/_shared/entitlements.ts",
+            "sha256": "ae2edbe28130cdcb50312ab6a149da4dca335805767c3a8d076a3b858125674e"
+          },
+          {
+            "name": "functions/_shared/fairhousing.ts",
+            "sha256": "fb98d1dcd99dba48a698ad4a90d853032afcf23eac5e25d89094c33560234647"
+          },
+          {
+            "name": "functions/_shared/funded-serving.ts",
+            "sha256": "91bd5d946b443ffa34602c77631c2eb6a0308d330da0f5399be2949a04c02ba7"
+          },
+          {
+            "name": "functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "name": "functions/_shared/ledger.ts",
+            "sha256": "99ea700b397dbcdc45cc2799c48c1936c72f9eb73e55b8311bc9e8eee2703224"
+          },
+          {
+            "name": "functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "name": "functions/_shared/providers/anthropic.ts",
+            "sha256": "9a871009005094617f666df505e11d48df9c659834de1f814672131618ccf792"
+          },
+          {
+            "name": "functions/_shared/providers/chain.ts",
+            "sha256": "4ecb52ce2c58f304dca74b4f06320a479486db0042add3ce00d5f65580320d49"
+          },
+          {
+            "name": "functions/_shared/providers/common.ts",
+            "sha256": "05e826ac2b523e6022815e8d6177784bbced327c79cacc2050830dfada46aacd"
+          },
+          {
+            "name": "functions/_shared/providers/gemini.ts",
+            "sha256": "5c07f0f1fbc71775f1eec113ded79dde00f9875b959aa6c58286556752faf0a7"
+          },
+          {
+            "name": "functions/_shared/providers/openai.ts",
+            "sha256": "8eee34f0570dba9a7df26834f1d4ce090301a1e3bfd6ca8edf79ca461c06444c"
+          },
+          {
+            "name": "functions/_shared/providers/params.ts",
+            "sha256": "3835bd34b45a9eee4aac46b708764db4f8fd73341c3d7bdf98921580f16b9a6c"
+          },
+          {
+            "name": "functions/_shared/providers/types.ts",
+            "sha256": "1c61ebecdf29e0511b7a5bee6a13d30b7ea5f6f770c43fd95fefd25a0ba82bcd"
+          },
+          {
+            "name": "functions/_shared/r2.ts",
+            "sha256": "b1e601028cb7d2fb88309c6f979a723a639c3ffbf084c757656f085a85988219"
+          },
+          {
+            "name": "functions/_shared/ratelimit.ts",
+            "sha256": "61671b0b7c9ee05b19bbd565cf5778c44126f7b4a050942c4d14d26fdb1a2e61"
+          },
+          {
+            "name": "functions/_shared/router.ts",
+            "sha256": "c58aa1d32a1b8e33b40e935000f6b8be68ddc49adc47b2bb5c2dea51868b7010"
+          },
+          {
+            "name": "functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "name": "functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "name": "functions/ai-copy/agentreel.ts",
+            "sha256": "f9fb1b0a9d1b9e22ffe9b2a7735f9661edd0b20df33a55f9c86afb58aed1dc88"
+          },
+          {
+            "name": "functions/ai-copy/guard.ts",
+            "sha256": "2ce85e815e8bfd2c6cebb99dd11047deffcb5e45313569993cea828d6690df27"
+          },
+          {
+            "name": "functions/ai-copy/index.ts",
+            "sha256": "a159d7b76c799a14b6c184b72ed818c0dde03ba52340420d56791678b3156850"
+          },
+          {
+            "name": "functions/ai-copy/prompt.ts",
+            "sha256": "5595355894f3c26f57508c39b447aeefcbedd838d7448ca63b59c445b43dce6c"
+          },
+          {
+            "name": "functions/ai-copy/shotlist.ts",
+            "sha256": "5bafc014c41f9702b42e436ba39a35bc34d733f8727029bf8b27d31bab58d2de"
+          }
+        ]
+      },
+      {
+        "name": "notify",
+        "before_version": 22,
+        "verify_jwt": false,
+        "files": 14,
+        "prior_production_lag": [
+          {
+            "path": "services/supabase/functions/_shared/supabase.ts",
+            "exact_prior_commit": "78556e0cad0d23b500773aceb388b712a6efd5f5",
+            "review": "Read actual diff: older pre-Team membership resolver; current shared library resolver was separately deployed/tested in17 functions. Notify does not call those resolver functions."
+          }
+        ],
+        "package_sha256": "a24bbd31ba7b6e5932e8876b9798e39617d08155e04f8710a35fbcd9542c0df3",
+        "inputs": [
+          {
+            "name": "functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "name": "functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "name": "functions/_shared/hosting-retention.ts",
+            "sha256": "b701b3e991f3f97d522505f661c4ca3fd9caab8ab6f0e33966ad5728cec82f75"
+          },
+          {
+            "name": "functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "name": "functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "name": "functions/_shared/ops-alert.ts",
+            "sha256": "eaffe41657a613e66bb8009381140f8b5dee6c02110f4fe9935f21d9d48613e6"
+          },
+          {
+            "name": "functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "name": "functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "name": "functions/notify/apns.ts",
+            "sha256": "a153ab4b1a4b77857b1745133ae7a26430dff55f523803d32079f03543c2ca69"
+          },
+          {
+            "name": "functions/notify/client-delivery.ts",
+            "sha256": "231576760dd51ca01867545fc4cfdeb23c1c90adb4c5f16cdaf6a8af78875206"
+          },
+          {
+            "name": "functions/notify/copy.ts",
+            "sha256": "b95c402df23530316541b5221a8b4f19432cd62259ef267a9e5a276aa6bbe0ae"
+          },
+          {
+            "name": "functions/notify/deliver.ts",
+            "sha256": "d2a95cdc86723ae50ba7f32197a7eecd2e61c7a334d3e4ab8c20d580ee2a5276"
+          },
+          {
+            "name": "functions/notify/email.ts",
+            "sha256": "886b9da2dea3de8bd5dbe0bf0e528a59eca08f2ec4215bcacba0d984fd8a7ed5"
+          },
+          {
+            "name": "functions/notify/index.ts",
+            "sha256": "78e993e72213c332c5b8dc14f37f079f3e1cf36954fe25e35dbf1db1645adcf4"
+          }
+        ]
+      }
+    ],
+    "every_returned_live_file_matches_prepared_source": true,
+    "followup_function_permissions": {
+      "public_execute": false,
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "security_definer": true,
+      "empty_search_path": true,
+      "invite_service_execute": true,
+      "trigger_service_execute": false,
+      "authoritative_acl_method": "aclexplode(grantee=0), not a string LIKE match"
+    },
+    "tour_host": "c34c126b-a04d-44ce-b612-08ad954812ae",
+    "studio_unchanged": "c2875843-acdd-4960-858c-af9f3c817f1d",
+    "site_live_verification": {
+      "source_commit": "25f155da4710c029c4ce9630f7fdfd8739210322",
+      "passed": true,
+      "rows": [
+        {
+          "route": "/",
+          "status": 200,
+          "sha256": "0b237da40c1a80175c8357aeed85e8316856abbcc8b923b7df6537730bdc04bf",
+          "source_or_body_checks": true,
+          "cloudflare_js_injection_sha256": [
+            "caabccc4d2d6deaf21b2db9f425663387aa5a8247ed1abf8120c3657b2534aa8"
+          ]
+        },
+        {
+          "route": "/features",
+          "status": 200,
+          "sha256": "73e2a71e784eea5d871e6e4c6bca5cec5a3c2cbd38137bb1978cd360dd16a2da",
+          "source_or_body_checks": true,
+          "cloudflare_js_injection_sha256": [
+            "3e4869c4b03308771310b5e9da285f886e26d203a0f8c835ffe34d3a26050d9b"
+          ]
+        },
+        {
+          "route": "/support",
+          "status": 200,
+          "sha256": "68673db99d28fd18b4c441a1a7098e758b7e3a44eb5fc9bfd22a839271bb9156",
+          "source_or_body_checks": true,
+          "cloudflare_js_injection_sha256": [
+            "c6fb90d70f9de2f77bb3370614607e879f3447ec8b0d65160eec49debeb1c81e"
+          ]
+        },
+        {
+          "route": "/terms",
+          "status": 200,
+          "sha256": "85fdcee173825d1f812e093032d7734ce5f1069db24b1b856c160f32252f3e99",
+          "source_or_body_checks": true,
+          "cloudflare_js_injection_sha256": [
+            "8440bdcda20b2c19564a49e25b58d6406f5e5ce762f3f88d7cff2ea4cb69fe5b"
+          ]
+        },
+        {
+          "route": "/privacy",
+          "status": 200,
+          "sha256": "ab13395c15d904e5eba64d2b970a98353d3b49d06c9b9e1508004c4e3775b355",
+          "source_or_body_checks": true,
+          "cloudflare_js_injection_sha256": [
+            "38df2d3af6d4b50358bba53af7aa3cd9d683c79b12455f1b5bbb643f3dedacc9"
+          ]
+        },
+        {
+          "route": "/f/estate-demo",
+          "status": 200,
+          "sha256": "425e87e9a0d22dacb9d7f15863e2b1a1d2b12e2f34db8edf19b36985d0ee196d",
+          "source_or_body_checks": true,
+          "cloudflare_js_injection_sha256": [
+            "f1f40ab026d534cd56caf50ccc75ac84d9b9b91f1796824b8b1b1d400c95e31f"
+          ]
+        }
+      ],
+      "lead_submission": false,
+      "initial_python_user_agent_403": true,
+      "source_compare_excludes_only_verified_appended_Cloudflare_js": true
+    },
+    "security_advisor": {
+      "errors": 0,
+      "existing_warnings_present": true,
+      "new_tombstone_rls": true,
+      "new_tombstone_client_policies": 0,
+      "no_clean_advisor_claim": true
+    }
+  },
+  "tests": {
+    "edge": {
+      "passed": 1874,
+      "failed": 0,
+      "ignored": 1
+    },
+    "final_schema_db_followups": {
+      "commands_passed": 44,
+      "commands": [
+        {
+          "ordinal": 1,
+          "command": "python3 tools/audit/test_privacy_receipt_fail_closed.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-01.log",
+          "logSHA256": "efea6bab5c3ed80174ec1b11431cd19e316c2117f96d158929ae11c068832825"
+        },
+        {
+          "ordinal": 2,
+          "command": "python3 tools/audit/run_deletion_integrity.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-02.log",
+          "logSHA256": "4c79c1ca6043ad946fba273a985607c2850ef1e4cd88e791a9497b4fec0785f6"
+        },
+        {
+          "ordinal": 3,
+          "command": "python3 tools/audit/run_deletion_regression.py --provider-commit \"$GITHUB_SHA\"",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-03.log",
+          "logSHA256": "c8f1ca2e333fff53cdcdb5ceceb550be8203e4a56fe160d97b4a256a89b45a5d"
+        },
+        {
+          "ordinal": 4,
+          "command": "python3 tools/audit/run_adoption_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-04.log",
+          "logSHA256": "7e63c090db09c1982b2b842e0bb0c976f09160554ccdea9b26df8984c5f0b06b"
+        },
+        {
+          "ordinal": 5,
+          "command": "python3 tools/audit/run_team_readiness.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-05.log",
+          "logSHA256": "86786adb51c9ca1208177c305141a1076cb006217625a8b92d520b2db88e0df9"
+        },
+        {
+          "ordinal": 6,
+          "command": "python3 tools/audit/run_subscription_trial_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-06.log",
+          "logSHA256": "cefe8445dafe4c4a1d253d2833d4b34e2cdaeec0346facf3e406982eef0ace22"
+        },
+        {
+          "ordinal": 7,
+          "command": "python3 tools/audit/run_subscription_chronology.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-07.log",
+          "logSHA256": "afacae13bc76c142486879a1aca7614c3c325457d5f293e8e16c8f2e20e5418b"
+        },
+        {
+          "ordinal": 8,
+          "command": "python3 tools/audit/test_workspace_handler_inventory.py --out \"$RUNNER_TEMP/rendprop-workspace-inventory\"",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-08.log",
+          "logSHA256": "03a2d55a2fd9061430ceeb1e1acae2520a87f761cc727edc74c8c9a0fd14996f"
+        },
+        {
+          "ordinal": 9,
+          "command": "python3 tools/audit/run_workspace_selection.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-09.log",
+          "logSHA256": "583f9dda393f0a7dcb708acacc62798f4e808098db231f6da1dcbd589c30b521"
+        },
+        {
+          "ordinal": 10,
+          "command": "python3 tools/audit/run_team_private_libraries.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-10.log",
+          "logSHA256": "d86a942dea6dcfd186cc41bc665576f26f934510e80f3039739b3c7d36cfb2c3"
+        },
+        {
+          "ordinal": 11,
+          "command": "python3 tools/audit/run_account_library_safety.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-11.log",
+          "logSHA256": "28f1729ccb0f46ddf22f50405a0da3bb880a4550edd0963a9a5d516e155f1e28"
+        },
+        {
+          "ordinal": 12,
+          "command": "python3 tools/audit/run_internal_testing_grants.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-12.log",
+          "logSHA256": "6a737b635da0e6d2772c3145a80cc9c1040ebbc01131edb9a599cfb39a35c44f"
+        },
+        {
+          "ordinal": 13,
+          "command": "python3 tools/audit/run_private_internal_testing.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-13.log",
+          "logSHA256": "f2ffbe1d6c34f0a9674490875708d09588288ed6c04ea59c1eb11215d95c1feb"
+        },
+        {
+          "ordinal": 14,
+          "command": "python3 services/supabase/tests/funded_serving_pg.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-14.log",
+          "logSHA256": "25bb77ce2e4954b0e5c9c8411e49d21100f240994be8fb5a8e28fcfeface654f"
+        },
+        {
+          "ordinal": 15,
+          "command": "python3 services/supabase/tests/verified_retail_guest_pg.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-15.log",
+          "logSHA256": "a9347fed92b4b23c2301b261ae7a01a768db11b5c28c8810d21375a3249afbd1"
+        },
+        {
+          "ordinal": 16,
+          "command": "python3 services/supabase/tests/subscription_trial_video_duration_pg.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-16.log",
+          "logSHA256": "2ddd61024e5cf4315bd5381b4fd5d1775b56ce13aca5b5c82ec611b225660580"
+        },
+        {
+          "ordinal": 17,
+          "command": "python3 services/supabase/tests/subscription_trial_purchase_reservations_pg.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-17.log",
+          "logSHA256": "5b9922ad77313d926660a193ef847b6df213400f85d80d9420050ebc77af2fb3"
+        },
+        {
+          "ordinal": 18,
+          "command": "python3 services/supabase/tests/bounded_subscription_trial_pg.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-18.log",
+          "logSHA256": "4867432bc996d1f916faa630cb78e99d047391f653e4398e57630edf23ebc207"
+        },
+        {
+          "ordinal": 19,
+          "command": "python3 services/supabase/tests/serving_photo_partitions_pg.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-19.log",
+          "logSHA256": "a9260d72f3329df5700289bf56ac9bdd3b4c541016f47760adc166ee0664e117"
+        },
+        {
+          "ordinal": 20,
+          "command": "python3 services/supabase/tests/launch_blockers_pg.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-20.log",
+          "logSHA256": "21245b013886d2a91e17656d202257133f137af72a772336b209f3ea35544342"
+        },
+        {
+          "ordinal": 21,
+          "command": "python3 tools/audit/run_listing_gallery_selection.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-21.log",
+          "logSHA256": "3a193149aabfac97a4d2d83aa34eb1de1be68f9f2527e45d36638b01971ac0fb"
+        },
+        {
+          "ordinal": 22,
+          "command": "python3 tools/audit/run_listing_measurement_cas.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-22.log",
+          "logSHA256": "1e35a07e3c2b49f193d194eb33adbcf4600031d2cb86d03f0d00efd4c00c9868"
+        },
+        {
+          "ordinal": 23,
+          "command": "python3 tools/audit/run_listing_facts_cas.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-23.log",
+          "logSHA256": "54622ad630ca5ac1def421084c6c664ba8f06cf1bf709fd804f41996220e7868"
+        },
+        {
+          "ordinal": 24,
+          "command": "python3 tools/audit/run_brand_logo_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-24.log",
+          "logSHA256": "4557b84346fa0c1c2f0966f3099835f20f4b4d22d7b5ae6f6deec676d045f483"
+        },
+        {
+          "ordinal": 25,
+          "command": "python3 tools/audit/run_personal_card_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-25.log",
+          "logSHA256": "ddca83a793d6335287f1befd5be42de21e43a64f6835951d28eef14ab1f754c6"
+        },
+        {
+          "ordinal": 26,
+          "command": "python3 tools/audit/run_member_portfolio_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-26.log",
+          "logSHA256": "5412f44ea74a5b5bc431014ec8e6ae8d3224cfb4ba39c0819609bba9e68ee461"
+        },
+        {
+          "ordinal": 27,
+          "command": "python3 tools/audit/run_account_export.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-27.log",
+          "logSHA256": "e50a1c13f7aeadd75ef7c7b917cf5c4a65d9f04f4cf10079dd5fd53dbfc72988"
+        },
+        {
+          "ordinal": 28,
+          "command": "python3 tools/audit/run_photographer_client_delivery.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-28.log",
+          "logSHA256": "2037d9d5b9b5b8210028496fded6e44e351ebc12be0a78eff83d3fc209e3a364"
+        },
+        {
+          "ordinal": 29,
+          "command": "python3 tools/audit/run_spatial_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-29.log",
+          "logSHA256": "2282b6e96134a97b983b16d89868eed046dea9d50fdc90f4478ba4eec14c603b"
+        },
+        {
+          "ordinal": 30,
+          "command": "python3 tools/audit/run_spatial_provider_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-30.log",
+          "logSHA256": "0e2d895420b9ddfb95e9135dafc5ccb417283e6d339d19069f9e9553bc626347"
+        },
+        {
+          "ordinal": 31,
+          "command": "python3 tools/audit/run_deletion_handler_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-31.log",
+          "logSHA256": "79478afb5af7775c625f70c50ace18de2f8d859f6de1b943b2a044e677da685e"
+        },
+        {
+          "ordinal": 32,
+          "command": "python3 tools/audit/run_spatial_edge_regression.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-32.log",
+          "logSHA256": "119495233e4c7c5f2a3d824751028a9c9d9b2950900337d920ae599823718f87"
+        },
+        {
+          "ordinal": 33,
+          "command": "python3 tools/audit/test_upload_transport_db.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-33-resumed.log",
+          "logSHA256": "2d0c6aac4cc8481b32f559f3c5fb0fcd3e17a78be9e19a89e08272496c96d2b9"
+        },
+        {
+          "ordinal": 34,
+          "command": "python3 services/supabase/tests/production_review.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-34.log",
+          "logSHA256": "f5c06c0167ceb6a7cda163b5b74ac0b5c4de05b51b22564a04f70da6abca3419"
+        },
+        {
+          "ordinal": 35,
+          "command": "python3 services/supabase/tests/presenter_workspace.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-35.log",
+          "logSHA256": "779dc1ba5915efbd1bdf2cec45861c0da7d9f12e7bd9b757ddf3741b62ae73a0"
+        },
+        {
+          "ordinal": 36,
+          "command": "python3 services/supabase/tests/presenter_execution.py --controller",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-36.log",
+          "logSHA256": "950ad4c82e613f12a347bf5d3fd16d287c69adcdd930234d007b1e8ddf92dab6"
+        },
+        {
+          "ordinal": 37,
+          "command": "python3 services/supabase/tests/prompt_library.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-37.log",
+          "logSHA256": "3bdc1ffa09386d70d3935473d0bf6d54bada6e5ae12678371bd41cbadba31089"
+        },
+        {
+          "ordinal": 38,
+          "command": "python3 tools/audit/run_studio_private_media.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-38.log",
+          "logSHA256": "222d2124531259fd2c8ed412fff3683e0cbe62fe1950ab57106084cf36f5e79f"
+        },
+        {
+          "ordinal": 39,
+          "command": "python3 tools/audit/run_photo_authority.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-39.log",
+          "logSHA256": "9c0337b0f9e7ff9dddf485860dc6be3dc48cd06939d570160729de820054b232"
+        },
+        {
+          "ordinal": 40,
+          "command": "python3 tools/audit/run_backend_billing_authority.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-40.log",
+          "logSHA256": "93eb85c5f87a0462f40c431c50570aa8d7d782c7ad8bf643d64658448ad97b05"
+        },
+        {
+          "ordinal": 41,
+          "command": "python3 tools/audit/run_verified_recipients.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-41.log",
+          "logSHA256": "6c791b9452480f2608850cfb3bdc2353457ca4daade935ecf24a779e4da4e926"
+        },
+        {
+          "ordinal": 42,
+          "command": "python3 tools/audit/run_privacy_cleanup_inventory.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-42.log",
+          "logSHA256": "76096bdf04ee53deb5dd22f7d2270cfe24430449c8f57266fafc5073f695485f"
+        },
+        {
+          "ordinal": 43,
+          "command": "python3 tools/audit/run_upload_privacy_admission.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-43.log",
+          "logSHA256": "82f40d234e10b2f1dd38ac2fdfe1a110c6942f6e7581522b0df96233fc898f9e"
+        },
+        {
+          "ordinal": 44,
+          "command": "python3 tools/audit/run_bounded_media_delivery.py",
+          "exit": 0,
+          "log": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/closure-44.log",
+          "logSHA256": "3964d4414a5f71c98593723e96e8dee91d4c543f957a4b7b8f5602374df3719e"
+        }
+      ],
+      "source_hashes": {
+        ".github/workflows/ci.yml": "55cbe9489b7d06890d9f50a808e7ff7221fa60236496f5eb518e854f8323d966",
+        "services/supabase/tests/app_video_cost_pg.py": "2f7b49e061ae06008a395ff4ddfb9fea9b1c60be6b96f1019b80560410392159",
+        "services/supabase/functions/me/devices.test.ts": "db463ca8b7651de24f02b758e9acd99a7051f575a21f8546fae0ab38377046fd",
+        "services/supabase/migrations/0001_init.sql": "589d578f1498b459ff035c22b5b75b4666baedb312be8d70b6cf73169b7f742f",
+        "services/supabase/migrations/0002_multipart.sql": "dbd83a782a6f120be8b43f88cb1d9e76cb3440c0f0a79dae43e1463d685ce3f3",
+        "services/supabase/migrations/0003_app_publish.sql": "3bde2f06e7ba67d48173237984072dde2f3bab7394aefdec3a93fdd054c82870",
+        "services/supabase/migrations/0004_rate_limits.sql": "f29bf2db0a21d7b21e459f58988cd2f4b070cbe20cd8f868e46ecc5130dcbbae",
+        "services/supabase/migrations/0005_authz_hardening.sql": "9d46b15c1b4444afa6cb5e325c5a5b3139c0a2be10b640af88852536834f0a66",
+        "services/supabase/migrations/0005b_lock_down_rpc_definer_functions.sql": "32e00b138672966b20ae658386f180ad4e8ebc0f7ad8f814d2807b0a816275fe",
+        "services/supabase/migrations/0006_p0_rpcs.sql": "e062ba3c03f2bf5aeb00a55803bb88efebec3b97a858a1612e1f81e0f8c287a6",
+        "services/supabase/migrations/0007_p0_lockdown.sql": "46727edf934c0ab1b82466fcd30ecffabd09f375f57ee80b2ff11328c8982797",
+        "services/supabase/migrations/0008_audit_round4.sql": "bba6ab062710752c1612f57871c40e6bf295b41988e2af548d6c68e1c6f1dda3",
+        "services/supabase/migrations/0008b_audit_round4_grant_fix.sql": "6ea19c6eb28306293c95321b431c1da4374b7c2f218e3739bdac4bfe3ef58ff5",
+        "services/supabase/migrations/0009_plan_coherence.sql": "85f3e557b051dd86e43b618003ffb33d7b668746733c6197ca7fcd110a564735",
+        "services/supabase/migrations/0010_pricing_entitlements_and_spend_ceiling.sql": "70728bca1b0747bb7a17592776e81640c8b4cc60765862292377b3c81c583a9e",
+        "services/supabase/migrations/0011_app_publish_and_lifecycle.sql": "9638e195204c9511e3c060d09f9a49b9ce218c963c267100be24453b51362112",
+        "services/supabase/migrations/0012_provenance_and_unbranded.sql": "419f6ccaf116c986d6f0df4132ddf515f90196551314a06c196a15f173b02fa7",
+        "services/supabase/migrations/0013_trial_includes_ai.sql": "4576fcf20e7ccd22b936ada16d5831b4004bbc80e316d830d4a2adeab3c333b7",
+        "services/supabase/migrations/0014_upload_idempotency_and_quota_refunds.sql": "11d6490245cc6e7ad9898f4d3e3c793ae98e2e785ad98ce2899a3f9ee85dc149",
+        "services/supabase/migrations/0015_job_lease.sql": "01a97939cb399ba47eeec14d0b8e29f5ea3f0c9c9577b3cea1d51628df0ea697",
+        "services/supabase/migrations/0016_enhancement_outcome.sql": "c8d4d2acf9a70c2556b5c51a33166c4f6e65206da849d0fd4f228b37293098bd",
+        "services/supabase/migrations/0017_admin_role.sql": "e4b1c1857f6ed290c5140f1179ff8e419173c79df0a7d6a7a177b45401adad32",
+        "services/supabase/migrations/0018_ai_routes.sql": "4e27ede072b0e4ea61a5233441ebc35a9388dd02f663e3858c0e0026758ee092",
+        "services/supabase/migrations/0019_subscriptions.sql": "bf8db22677640c2c9094d903b0ab3e9aed880b99c53f292b029737e5057055c6",
+        "services/supabase/migrations/0020_app_events.sql": "b363b234f54205bdc28eb4465df6f233d71b7ea9d1f933d7564cdb215dc014d8",
+        "services/supabase/migrations/0021_launch_hardening.sql": "856d4fd6d15830bf128e3ceabbfcb5ca89933f0cd4a1c46a6d82d93f485ff417",
+        "services/supabase/migrations/0022_app_events_purge_schedule.sql": "bef6e920b8414088055f22320117a6bac4960fc0bd405650ee8f96fcba67f5ea",
+        "services/supabase/migrations/0023_coach_routes.sql": "8316993b6c61aba1fe1bf6ae56e5ce7e084d01e99975ec6f9ef399c54a0a419f",
+        "services/supabase/migrations/0024_spend_ceiling_lock.sql": "79a12b5e2c49eb43f26b22226d2a73632d95bd2edb3d2723c99f3efbb2a8b4ad",
+        "services/supabase/migrations/0025_cost_ledger_idempotency.sql": "7105c469bfc9a97e37619c04683c544a109856d6c3dbda34b7a2481a9104b9f1",
+        "services/supabase/migrations/0026_apple_transaction_binding.sql": "3472ef7746150dc13748e624d36829526aefb4c84091cf4c68cb8ebe906f0ff4",
+        "services/supabase/migrations/0027_copy_routes.sql": "95f8ad123042f17bfb67b6e837771855dc10c698efaf2206d5cb873c4a2d000c",
+        "services/supabase/migrations/0028_shotlist_route.sql": "ea5fe636aa7e0e8b0dc9377635964b98e9906fd7d99c1c4941dc9af99d16c829",
+        "services/supabase/migrations/0029_media_qc.sql": "39c32e6390f588c951128b07920a2b96d0921f8f6cff33ab8d310ead025b9a92",
+        "services/supabase/migrations/0030_route_params.sql": "bbefc6517e32ad680df68eb5b0c94c8c43886f5e1f2cf7efd09fdf686326c97a",
+        "services/supabase/migrations/0031_property_lookups.sql": "3626a242dc14a9a0f6af240de81cb3ee57b4533868126d1462f3b68f72965de7",
+        "services/supabase/migrations/0032_seats_and_invites.sql": "fa77565188a87c9455e978581a067bcc3b8c7a0f3b81d97bbccb9331a0a00d4a",
+        "services/supabase/migrations/0033_team_transactions.sql": "c3f852752b5fdca597ed52703d0836bb0420854ba360d2e575d3f06bae0f13c1",
+        "services/supabase/migrations/0034_agent_reel_and_video_ladder.sql": "90f3e418c6b231392e0dd3c30387b344e08798aab1bffc4a6d52d77169d32981",
+        "services/supabase/migrations/0035_worker_publish_transaction.sql": "5171f5d2c4204cc4fa5326a98f54b8d64749a62ccfe6b9aa12fcb414714f3833",
+        "services/supabase/migrations/0036_upload_publication_immutability.sql": "3f60dc4fb0228f13d1733a2a6219866755afc11026ee9c82572bfeab0aadeef1",
+        "services/supabase/migrations/0037_upload_transport_budget.sql": "6b22d3446798d03a496e4bcd8a7f3d4ac52e1951d46a8f16cdcf9dacdc7eb2a6",
+        "services/supabase/migrations/0038_anonymous_adoption_recovery.sql": "9ee427eb495d95cf9e7a47ea3d806e459aa59c12b02fc73a9a3a0e017c0492b6",
+        "services/supabase/migrations/0039_account_deletion_intent.sql": "07c38d258b7c45510ce9f32f49b3cef3fb6c9366b8c09136ebbf9242921a6c74",
+        "services/supabase/migrations/0040_spatial_jobs.sql": "e87628c82546bf8266924fb2ece48dd70839f707c407718dc8fced2f9fb1c6ff",
+        "services/supabase/migrations/0041_spatial_provider_attempts.sql": "ed076e3c1ffcfc00e97aa22452fabd6b263f72d9d81a3c37bdaadabd9bafb575",
+        "services/supabase/migrations/0042_upload_operation_recovery.sql": "268f81317434d45b66a4dd8295626b8b318d0e63b67d77c6f7d9a2426b860954",
+        "services/supabase/migrations/0043_spatial_hardening.sql": "d248ef370e7ceecfe9219f3ff5759b0fc02353905db1b65e3a9aa3047a6f812b",
+        "services/supabase/migrations/0044_plan_rework_and_industry_trial.sql": "a976bb1df219e7edd4ffca9d8f65c05e6886d95559297b0c1b79b72f344a899a",
+        "services/supabase/migrations/0046_commercial_telemetry.sql": "c069fd3cb52b50b9d9d0969df04faeac64666508f40afaef26408665e1eb1cdf",
+        "services/supabase/migrations/0047_lifecycle_notifications.sql": "4897012f7ccd6fdb36f5364e8fa9d737e736ea287541a8e4216fed55abb7445f",
+        "services/supabase/migrations/0048_brokerage.sql": "531a6d43ca096ed1b896a8689cec119094e407fcafe611f6f1b7fa1126faa130",
+        "services/supabase/migrations/0049_notification_drain_schedule.sql": "b43e0a2c867d86922974d96fee98e119965ffd3dfd2751955713a193682e4d38",
+        "services/supabase/migrations/0050_brokerage_contracts.sql": "cf8ce7d734f847aeed77a7b02e90bf85d3af357949ec5e02594906815988936f",
+        "services/supabase/migrations/0051_brokerage_price_floor.sql": "760c92c7d91897501c1dacd80ef71ec629e24ff56a7aeb89b36ecedda5a8ca65",
+        "services/supabase/migrations/0052_retire_dying_models.sql": "041db3b61a6e2a142c562141f29c0202d6cedae0882e4e5437c7b942af388527",
+        "services/supabase/migrations/0053_invite_delivery.sql": "0f26463791ffa5719fce52d5cd346c6be08209380cf86d2210555f51b8c69a6c",
+        "services/supabase/migrations/0054_invite_link.sql": "34bbbf22c8babb76fcb057e838559e8aa3d401067508c98160fae02d70d6e125",
+        "services/supabase/migrations/0055_video_reflection_jobs.sql": "10f358bf8a18b4c211b31d3f4fbaf4dfbf32ce1d367e6407c0cfdb508f31981e",
+        "services/supabase/migrations/0056_active_photo_fallback.sql": "edb85d4526eefeb008c885204056dd37757bde232fd7593a06a015969ae3f09d",
+        "services/supabase/migrations/20260914161954_studio_cross_device_workspace.sql": "9badff8e6c9854b2e40e2e708232675c254e9a50eed7684acd384edf0279b2b6",
+        "services/supabase/migrations/20260914164554_studio_documents_named_accounts.sql": "a462096213844bcb64d235fb12853e10c17b0eaa7ff2595184f3a1f5236bd4d4",
+        "services/supabase/migrations/20260914170849_studio_generated_quality_gate.sql": "c115b59fc241c0a36379315e848733db857b43b7aa9283156b28729fbe7e3df2",
+        "services/supabase/migrations/20260914173513_studio_edit_output_disclosure.sql": "a3bb4d6020e01f7ecc1d2fc02caedf6a1b4fdcc3d25985eca1bc54e352f257da",
+        "services/supabase/migrations/20260914174519_studio_voice_history_cleanup.sql": "f096e8843fe6e84f897f3b375957aa2a40ec36c83b1de555b50fab761e99ab25",
+        "services/supabase/migrations/20260914175636_studio_account_cleanup_schedule.sql": "2f571756df79976d30babcf0f82ddc4e063f6d6e7f035213ceb8a820878adb80",
+        "services/supabase/migrations/20260914180739_studio_voice_storage_reservations.sql": "49a757921a5c5826d020ba61acdea13e58f2d0416c16324caed4b2b6d00ea107",
+        "services/supabase/migrations/20260914185000_studio_gallery_controls.sql": "139e78f2e65775bf490f01a6d838d97251c1eb1d813a819c04ec804168564444",
+        "services/supabase/migrations/20260924153826_studio_production_reviews.sql": "1cf3d991ba8b6f32da9f4ee23a1ec9d50a26e2a45d82bce1e5152d3ce3c1cea3",
+        "services/supabase/migrations/20260924174114_studio_presenter_workspace.sql": "83a045f4654af27a831960c34dcf3e7264bd119d4f1f113c7d8a5e86b429e1bd",
+        "services/supabase/migrations/20260924180853_studio_presenter_execution.sql": "982c5c5977fb31fdd305bc6d08a66ee85ff664777d39ebf4844f0c8f1f2af838",
+        "services/supabase/migrations/20260924184052_studio_prompt_library.sql": "a377e8e11deb38daf51f2464617ac3ff8399a29e78b02bf3693a2407b0298f32",
+        "services/supabase/migrations/20260924184319_studio_presenter_media_revocation.sql": "2f8db9cb11ca88765537a44cdf5ae9945db072c3ea7aed984705187f19a01638",
+        "services/supabase/migrations/20260924232058_studio_named_projects.sql": "9108e897cabbd55401e4fa4b5a37abb8998cccf2e2320aa402f1413132530c19",
+        "services/supabase/migrations/20260924232510_studio_project_media.sql": "285ba5cc4fdceeda3bb7a3ad8f0f964af4a46f489a3f8fb901d78cb46cf295e5",
+        "services/supabase/migrations/20260924232803_studio_property_music.sql": "a74c222a2135bd3c10bc06efdbbfe6c2f1c14e647afc3e82a696bcc92c2c8d24",
+        "services/supabase/migrations/20260924235553_studio_editing_intelligence_routes.sql": "5606a7e12df04f5473124df388299c56c393a067f779aa95bc45fc6fbcc2fd9b",
+        "services/supabase/migrations/20261001142823_team_invite_delivery_confirmation.sql": "10b814776f25ad35a276eff40d0e14d5a3612b5da168e6eb70bb1902aac910fc",
+        "services/supabase/migrations/20261001143615_subscription_confirmed_trial_start.sql": "0ecd5f19ad40cd2b7839ed989f5a011b3fa18a4a86dbb450c9e55f13e273b344",
+        "services/supabase/migrations/20261001145730_workspace_selection.sql": "fead53cd9db99baa1dbac0e426e70af81ce43956e3794b51fba5b1f1d5078d90",
+        "services/supabase/migrations/20261001222809_photographer_client_delivery.sql": "8cba2047d6a46bdb57ff343dd1987eee2c95b42e9c986aa0ec9d610b1422b14c",
+        "services/supabase/migrations/20261002160344_listing_gallery_selection.sql": "f6c335be739ef2ea5d61a6792f6f254559cfeffc59c2e0234dd1042f8978acba",
+        "services/supabase/migrations/20261002225458_video_erase_direct_bria.sql": "71933902c7b8c2a75691df38adfcd09401e1e8ac8620d933f5a7118f874e9637",
+        "services/supabase/migrations/20261003020955_app_video_cost_reservations.sql": "486dacab63d3d7ffff3f674d5b711be977b9766a7d2d6984c57c9f728ddf4236",
+        "services/supabase/migrations/20261004215403_app_video_rejected_submission_release.sql": "598bb7efbceb549998035d3357d94cd0d944a0c41528a9d69c253beabd500afe",
+        "services/supabase/migrations/20261004220253_listing_measurement_compare_and_set.sql": "7b7b8c8c4f87a073e0ef9c5305ca1eed918975be620902bd7072fb23bbfdba78",
+        "services/supabase/migrations/20261005024539_apple_entitlement_chronology.sql": "0023a725dfebb6e9c8a6eb4bf94c886ddea745807b685e4bfafed74a54329839",
+        "services/supabase/migrations/20261005024702_listing_facts_intent_cas.sql": "a74d9b398201b813f2dc33074325e4e2881080b0b916a18d8ea487eefa0bc57f",
+        "services/supabase/migrations/20261005032635_apple_entitlement_legacy_cutover.sql": "8829dd7a0afd183e5491e9fe16cec23f1b0c765a59bf8b38cfcaada533569e94",
+        "services/supabase/migrations/20261005034754_studio_floorplan_attachment_cas.sql": "7d5e5efb0c4f7a8b70d88c848fa71bc1642009e3e6d4ad95fd4d066820ec93b9",
+        "services/supabase/migrations/20261005150445_scoped_business_logo.sql": "ddfa35e96e4be542297997672789f8a9aef7cb295352a6f583e7ea7d606e3a38",
+        "services/supabase/migrations/20261005150951_nearby_places_reviewed_facts.sql": "43964f45a7f542f624021f2393e0e51a81ef3b88a81afa1cd3a04216b8acbe75",
+        "services/supabase/migrations/20261005160701_personal_public_card.sql": "02c0777efd708099fc13c035e15618d58af264e0b2b6a544f21c8fb26a5e7905",
+        "services/supabase/migrations/20261005172028_restore_deletion_voice_and_project_inventory.sql": "0974af9ebacfa704ee44b084483d397abecab71405d3c3bd4bb5041ced2972ae",
+        "services/supabase/migrations/20261005181812_preserve_personal_card_on_anonymous_adoption.sql": "1ba86f215b80fffeab6939a9fdf3543bbe982d9beb56333a6e6e4a7aa928b1e9",
+        "services/supabase/migrations/20261005195004_workspace_internal_testing_grants.sql": "3e4f4967d22465da1c9b649d552778197f65957eb63cb1387212cabbf8b54e52",
+        "services/supabase/migrations/20261005200559_private_internal_testing_sponsorships.sql": "05be6bf7394d0772220baf99389fefc5c38c974b0daae3eb8a6e7e13883ca7a0",
+        "services/supabase/migrations/20261005215707_brokerage_pricing_service_acl.sql": "20a67412cd9c74e20cf4c7dc7e2273de49a52bbad59d74224abcdfb63d890d91",
+        "services/supabase/migrations/20261005215724_photo_authority_rpc_expand.sql": "7803a47bfd38f034796e88df14506d319cbc2a7a6af0e17ea71c12c15607e09a",
+        "services/supabase/migrations/20261005215832_photo_authority_acl_contract.sql": "641d8a70243aa1390671284ddfd8fa57fa0b1925ecf757a7870b25339ab78ad6",
+        "services/supabase/migrations/20261005220001_verified_notification_and_client_recipients.sql": "a2d09539c58e24a91ee52667e95c77aea432a9f65deab664c80bdb4059b09ca1",
+        "services/supabase/migrations/20261005220002_privacy_cleanup_inventory.sql": "7267500b6cc660b7de5ecac478f5b3380f40eb64dbe52f7b9474cedcf71a4a9e",
+        "services/supabase/migrations/20261005220556_app_video_allowance_receipts.sql": "0f8ae97cf48e4e18152f18102f1a201f3918f173c731f5cabcfa22d8e7c8e799",
+        "services/supabase/migrations/20261005220709_apple_sandbox_authority_fence.sql": "05559cb6791ff206c159a87f8570ef22c0da59d4871dee631d42dba2d8658768",
+        "services/supabase/migrations/20261005220841_render_slug_crypto_entropy.sql": "4dfcb4d3bb1b67bebc837cf61576d05052bcdbbd1d7ca5af4c145c5590825501",
+        "services/supabase/migrations/20261005222001_upload_identity_monthly_technical_ceiling.sql": "1c3943b3627b30882a1dab9bd6fa67907a710308f0af94c39259a655b1c1ea4e",
+        "services/supabase/migrations/20261006164721_funded_serving_and_app_review_authority.sql": "1dd0a636060bf7e4633d2c20e39fc0bdeba56b8d525c4397a1fbf655b5a6d0f3",
+        "services/supabase/migrations/20261006164755_hosted_portfolio_selection.sql": "c08aaf6f988c78c270df7e370ec4976d2e91380414d01e156b2708e856966518",
+        "services/supabase/migrations/20261006172251_prospective_hosting_retention.sql": "6af17ded7a9ed934e333278a7c8a1c1840aa538df17af8524c2b072cf6efe95a",
+        "services/supabase/migrations/20261006193633_cas_conflicts_terminal.sql": "47e4f43acf6fd30aaca5b4eacfd34420e63e7a0df63234bbf3da3047826660c4",
+        "services/supabase/migrations/20261006202500_bounded_subscription_trial.sql": "2c6707eb641c02b9598b395d15067bcfa4b62ef31ad06710b8dc71a7feead260",
+        "services/supabase/migrations/20261006212900_subscription_trial_purchase_reservations.sql": "e33bf611c734129cd226f324086d479443ed7e18f1c1c8208456bed602ac757f",
+        "services/supabase/migrations/20261006213000_subscription_trial_video_duration.sql": "bb9e5d99cf601fef4b7b3cd23edc7d414a6151ddc7b30a187e05d9146717fbfd",
+        "services/supabase/migrations/20261007051345_account_deletion_integrity.sql": "720b25851760fdb24a12a299925bee6a7bc8cc10a985ccc6f48902481e057be9",
+        "services/supabase/migrations/20261007135551_verified_retail_guest_admission.sql": "d85e10b644a24154ad0507642821bdf3d8d112d6f023f37cd96c5a9a887c022d",
+        "services/supabase/migrations/20261007135843_bounded_media_delivery.sql": "8e91317bf993cbf18ff314398306640de664b9133d524cf520860215024499f3",
+        "services/supabase/migrations/20261007141725_bounded_photo_package.sql": "5ae48887cefe8eaf966317799d8d3d119ffd11a67632852ee82da0ad380c41c2",
+        "services/supabase/migrations/20261007143916_modern_service_transport.sql": "47954ae4fe95015287db60750623dcd080b3cd9ffce79ff09f71976d34d695c0",
+        "services/supabase/migrations/20261007145000_pooled_media_startup.sql": "622cc0e971d73000a86fb593387a59c3872c8f3dd58de80136f8589b722600ba",
+        "services/supabase/migrations/20261007145527_serving_photo_partitions.sql": "e13497208fbb970fd71f5e4c1c74638a596ce4e442222eeb0fed9ba0573e1e03",
+        "services/supabase/migrations/20261008201736_launch_ceiling_mode.sql": "b4de91df95d70cd1facc7e33bca86b2782051be63772e1de4ef44ad6fbb49797",
+        "services/supabase/migrations/20261008201840_ops_health_alert.sql": "e57942dd3b98f5c62427c082c0ef8e448a528fd9f36c0f8f114a2ca341fc7521",
+        "services/supabase/migrations/20261008220411_launch_blockers.sql": "28f1f6af00ccc71e665635e5c267e24c40e2d3b9314b337feac6583acd1c0f46",
+        "services/supabase/migrations/20261008235218_launch_round2.sql": "1a380d4f55352970ebd431d3e30336805be21330df5c0a9bf583950b736c1944",
+        "services/supabase/migrations/20261009005727_launch_settlement_identity.sql": "fe11aa2fc0771e6e8f7dbf4e214ab1b561e8b62695c93b86f31497b0f64cfb3e",
+        "services/supabase/migrations/20261009005753_carry_paid_allowance_through_grace.sql": "d94f4ed07a290232fea666d9dfac7cb9af24b7c0342eac42d62ec0cefa351ab5",
+        "services/supabase/migrations/20261009015823_small_business_commission_date.sql": "432c7e315c45593d610ea7b4bdd3c26eaf20e25b2b3db249fb29e79ddd1660ff",
+        "services/supabase/migrations/20261009022239_admit_pre_and_grants.sql": "71e6593547a6ffe8d37dedb750d54e2270680c734c725a7478ef70df1f2dd67f",
+        "services/supabase/migrations/20261009155553_ops_alert_live_workspace.sql": "c27eae0db0af50584ad4059db23fce9978f9333381b175f62f044ebe6a0e3224",
+        "services/supabase/migrations/20261009192550_team_private_listing_libraries.sql": "3a0a02b67632bb4c84fe2f72c5bd4e5efd7153a6472d86083cd26e33f3eae94f",
+        "services/supabase/migrations/20261010000032_private_library_adoption_and_serving_safety.sql": "fa5fe31d7f529fbffc970f8ae6c60487d76dc28a110446e77e2998586e3d886f",
+        "services/supabase/migrations/20261010000700_preserve_replayed_library_selection.sql": "4a4b0d2d91f4cd1b68f64a69a74f8e0f6cbd273ba995132e484732870e5b21ae",
+        "services/supabase/migrations/20261010001329_retain_deleted_video_settlement_liability.sql": "9d95f47e2bca6d5c4a919f3a30b3f24fdfafb39b9533d345076b7fdc4dbc0d2d"
+      },
+      "all_consumed_inputs_match_code_checkpoint": true,
+      "ordinary_video_assertions": 103,
+      "fresh_replay_restored": true,
+      "rejection_assertions": 34,
+      "old_trigger_late_settlement_cents": 24,
+      "fixed_late_settlement_cents": 104,
+      "deletion_auth_and_two_connection_races_executed": true,
+      "original_execution_checkpoint": "7c2bbb9eed494952815f98069919769128974354",
+      "all_consumed_inputs_match_final_code_checkpoint": true
+    },
+    "studio_export": {
+      "local_unchanged_exact_step": "PASS",
+      "resume_exports": 12,
+      "preparation_refusals": 4,
+      "audio_cases": 8,
+      "dropped_speech_mutant": "rejected at intended unchanged RMS assertion",
+      "cloud_editor_checks": 16,
+      "conversation_checks": 16,
+      "audio_probe_controls": 14,
+      "finishing_checks": 11,
+      "source_or_threshold_changes": false,
+      "hosted_first_failure_retained": true,
+      "hosted_stall_cause": "unproven, not reproduced locally"
+    },
+    "native": "Compiled runtime/guard controls and signed artifact proofs passed; physical camera, StoreKit and APNs acceptance are separately unverified.",
+    "native_lifecycle": {
+      "assertions_passed": 90,
+      "old_assertions_retained": 89,
+      "compiled_recipient_removal_mutant": "fails at the added actual-account recipient assertion",
+      "runtime_or_harness_product_changes": false
+    },
+    "native_post_lifecycle": {
+      "workflow_groups_covered": 17,
+      "full_groups_freshly_executed": 15,
+      "apple_assertions": 29,
+      "apple_existing_compiled_mutants": 5,
+      "original_assertions_preserved": true,
+      "floor_qualified_reuse": "Final positive whole-file/harness hashes match; extracted floor bodies unchanged, 140 checks and 21 mutants including retained source-change retry. Short preface ran fresh.",
+      "profile_exact_source_reuse": "All 15 receipts match 16 consumed input hashes: 117 assertions and 14 mutants.",
+      "fresh_receipts": 47,
+      "all_end_inputs_match_final_code_checkpoint": true,
+      "only_new_change": "tools/audit/apple-code-session-20261004/Fixture.swift.template",
+      "product_source_changes": false
+    },
+    "hosted_native_final_counts": {
+      "photoLifecycleAssertions": 90,
+      "customPhotoDeliveryControls": 15,
+      "customPhotoReviewSourceGates": 11,
+      "appleCodeAssertions": 29,
+      "appleCodeWorkflowMutants": 4,
+      "nativeMediaExportAssertions": 118,
+      "nativeMediaExportWorkflowMutants": 7,
+      "listingCreateAssertions": 79,
+      "listingCreateMutants": 4,
+      "photoHistoryAssertions": 536,
+      "actualGallerySyncAssertions": 77,
+      "photoHistoryMutants": 4,
+      "floorDimensionsAssertions": 628,
+      "floorCompiledRuntimeControls": 6,
+      "outlineAssertions": 108,
+      "outlineMutants": 3,
+      "floorSyncAssertions": 140,
+      "floorSyncMutants": 21,
+      "measurementAdmissionAssertions": 83,
+      "measurementAdmissionMutants": 11,
+      "clientContactAssertions": 73,
+      "profileAssertions": 117,
+      "profileMutants": 14,
+      "panoramaStoreAssertions": 71
+    }
+  },
+  "ci": {
+    "run_id": 38011398674,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674",
+    "head_sha": "95243bf85960974814de67692e04d3a1c24221e6",
+    "status": "completed",
+    "conclusion": "success",
+    "previous_run": {
+      "id": 38008442608,
+      "sha": "7c2bbb9eed494952815f98069919769128974354",
+      "conclusion": "failure",
+      "passed": 10,
+      "failed": [
+        "Tour-host old exporter stalled before corrected cases",
+        "Native lifecycle notification mock lacked userInfo"
+      ]
+    },
+    "same_sha_retry_dispatched": false,
+    "stale_source_dispatch": {
+      "id": 38010097007,
+      "head_sha": "7c2bbb9eed494952815f98069919769128974354",
+      "cancel_requested": true,
+      "proof_claim": false
+    },
+    "note": "Final full run completed successfully on 95243bf. All 12 jobs passed; native job ran 61 successful steps with none skipped, including all 13 formerly skipped groups. No same-SHA retry, relaxed oracle or skipped check closed this gate.",
+    "superseded_run": {
+      "id": 38010144016,
+      "sha": "fefd0681d585bba5a1eb94dd58dcdc03661f5c5d",
+      "cancel_requested": true,
+      "reason": "Actual local Apple-code fixture compilation exposed missing inert cleanup dependencies before hosted execution reached that group; fixed test-only at final SHA. Eleven jobs already passed, full run is not a final CI pass.",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "jobs_passed": 11,
+      "complete_pass_claim": false
+    },
+    "number": 216,
+    "jobs_passed": 12,
+    "jobs_total": 12,
+    "updated_at": "2026-10-10T02:05:25Z",
+    "proof_file": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38011398674-completed.json",
+    "proof_sha256": "2480cdc94271d220b6f0beb3199d3e240b73e4fcf999a06d94686e5d83350bb2",
+    "job_summaries": [
+      {
+        "databaseId": 114092135215,
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:00:43Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135215"
+      },
+      {
+        "databaseId": 114092135384,
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:01:01Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135384"
+      },
+      {
+        "databaseId": 114092135390,
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:01:23Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135390"
+      },
+      {
+        "databaseId": 114092135412,
+        "name": "iOS static gates",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:00:41Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135412"
+      },
+      {
+        "databaseId": 114092135431,
+        "name": "Secret scan",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:00:45Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135431"
+      },
+      {
+        "databaseId": 114092135470,
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:07:54Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135470"
+      },
+      {
+        "databaseId": 114092135485,
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:42Z",
+        "completedAt": "2026-10-10T02:05:24Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135485"
+      },
+      {
+        "databaseId": 114092135486,
+        "name": "Studio contracts, build and property workflows (offline)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:03:54Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135486"
+      },
+      {
+        "databaseId": 114092135494,
+        "name": "Supabase edge functions (deno check + tests)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:02:36Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135494"
+      },
+      {
+        "databaseId": 114092135518,
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:00:50Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135518"
+      },
+      {
+        "databaseId": 114092135522,
+        "name": "Cloudflare Worker (tour-host)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:40Z",
+        "completedAt": "2026-10-10T01:07:18Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135522"
+      },
+      {
+        "databaseId": 114092135527,
+        "name": "Python workers (render, spatial, training adapter)",
+        "status": "completed",
+        "conclusion": "success",
+        "startedAt": "2026-10-10T01:00:34Z",
+        "completedAt": "2026-10-10T01:01:56Z",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38011398674/job/114092135527"
+      }
+    ],
+    "native_gate": {
+      "job_id": 114092135485,
+      "steps_successful": 61,
+      "steps_skipped": 0,
+      "formerly_skipped_groups": [
+        {
+          "number": 45,
+          "name": "Native forms retain opened intent, exact cents and workspace binding",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T01:30:26Z",
+          "completedAt": "2026-10-10T01:31:13Z"
+        },
+        {
+          "number": 46,
+          "name": "Legacy photo galleries, cover review and per-family selection",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T01:31:13Z",
+          "completedAt": "2026-10-10T01:31:33Z"
+        },
+        {
+          "number": 47,
+          "name": "Listing unit fields and real estate metadata survive editing",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T01:31:33Z",
+          "completedAt": "2026-10-10T01:31:37Z"
+        },
+        {
+          "number": 48,
+          "name": "Owner cohort metrics preserve numeric wire keys",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T01:31:37Z",
+          "completedAt": "2026-10-10T01:31:42Z"
+        },
+        {
+          "number": 49,
+          "name": "Floor measurements preserve dimensions, layout and wire data",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T01:31:42Z",
+          "completedAt": "2026-10-10T01:54:18Z"
+        },
+        {
+          "number": 50,
+          "name": "Measured-plan Photos export fences permission and context changes",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T01:54:18Z",
+          "completedAt": "2026-10-10T01:55:52Z"
+        },
+        {
+          "number": 51,
+          "name": "Photographer preference, client drafts and confirmed contact transactions",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T01:55:52Z",
+          "completedAt": "2026-10-10T01:55:58Z"
+        },
+        {
+          "number": 52,
+          "name": "Actual business cards, deliberate portfolio selection and scoped logo recovery",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T01:55:58Z",
+          "completedAt": "2026-10-10T02:03:39Z"
+        },
+        {
+          "number": 53,
+          "name": "App Store capture isolation and physical UI-test switch boundaries",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T02:03:39Z",
+          "completedAt": "2026-10-10T02:04:06Z"
+        },
+        {
+          "number": 54,
+          "name": "Guided scan storage, pose epochs and native depth packing",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T02:04:06Z",
+          "completedAt": "2026-10-10T02:04:16Z"
+        },
+        {
+          "number": 55,
+          "name": "Panorama projection, coverage and cancellation on synthetic images",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T02:04:16Z",
+          "completedAt": "2026-10-10T02:04:39Z"
+        },
+        {
+          "number": 56,
+          "name": "Room survey, standing suggestions and saved-view navigation",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T02:04:39Z",
+          "completedAt": "2026-10-10T02:04:44Z"
+        },
+        {
+          "number": 57,
+          "name": "Saved panorama cache freshness, corruption and cancellation",
+          "conclusion": "success",
+          "startedAt": "2026-10-10T02:04:44Z",
+          "completedAt": "2026-10-10T02:05:08Z"
+        }
+      ],
+      "fixture_repair_steps": [
+        {
+          "number": 40,
+          "name": "Photo edit lifecycle and background resource cleanup",
+          "conclusion": "success"
+        },
+        {
+          "number": 42,
+          "name": "Owner-bound Apple sign-in code and export admission",
+          "conclusion": "success"
+        },
+        {
+          "number": 44,
+          "name": "Create receipts retire consumed intent and preserve newer edits",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "native_artifact": {
+      "id": 11656570292,
+      "name": "native-audit-evidence-1",
+      "size_in_bytes": 541988,
+      "digest": "sha256:e7da4bf441621fca89f3a4940f3b7abaef7a9e825af18094e0829b5ae1a8f9cc",
+      "created_at": "2026-10-10T02:05:11Z",
+      "expired": false,
+      "downloaded_directory": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38011398674-native-evidence"
+    },
+    "native_evidence_verification": {
+      "receipt": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38011398674-native-independent-final.json",
+      "sha256": "8ab6f602adb329bf053cee0d67324e319c7ae03bb8d1796db18bb966ecbe31fe",
+      "retained_receipts": 90,
+      "explicit_passed_true": 78,
+      "status_schema_receipts": 12,
+      "positive_status_0": 1,
+      "intended_control_status_1": 11,
+      "source_bound_receipts": 90,
+      "verified_input_hash_pairs": 1360,
+      "mismatches": 0,
+      "qualifications": [
+        "Hosted workflow executes4 Apple mutants. The existing fifth drop-apply-acceptance control passed in preceding local verification; it is not claimed as hosted coverage.",
+        "Apple/native-media and some shell-only receipt files are absent from the configured upload, but actual passing output and intended control failures are preserved in the native job log and successful step metadata.",
+        "Camera, physical capture, real StoreKit purchase, APNs delivery and paid-model output quality remain outside these offline/native checks.",
+        "The original failed runs remain retained. This receipt closes the CI blocker with a new fully successful run at exact95243bf."
+      ]
+    }
+  },
+  "boundaries": {
+    "home_design_preserved": true,
+    "listing_toolbox_preserved": true,
+    "john_apple_untouched": true,
+    "credentials_changed": false,
+    "repo_visibility_changed": false,
+    "funding_changed": false,
+    "new_paid_generations": 0,
+    "real_buyer_inquiries": 0,
+    "spatial_runtime_changed": false
+  },
+  "still_unverified_or_deferred": [
+    "Physical iPhone sign-in/guest-upgrade, Team join/removal, StoreKit/capture/interruption/export/APNs and mobile Safari/Turnstile acceptance.",
+    "Ordinary non-sponsored photo/reel/aerial, output review, supplier invoices and authenticated Studio login.",
+    "Expired outgoing push JWT or unreadable cleanup queue can block replacement-account push registration; no fresh-auth recovery flow.",
+    "Native photo lost-response retry creates a fresh UUID and can consume another unit/hold; no durable photo journal.",
+    "Uncertain/non-winning holds remain conservative; no evidence-backed reconcile/release RPC, no historic missing invoice fabricated.",
+    "Two preexisting content-bearing owned orgs or paid entitlement on the nonselected org need separate library/billing grouping acceptance.",
+    "Envelope price/duration inference limited to current US monthly catalog and one-week trial; no signed price/currency/offer persistence.",
+    "Dormant Python fleet, legacy invited Studio documents/brokerage libraries, former-owner local caches, media proxy amplification and dated provider retirement checks remain followups.",
+    "App Store build attachment, metadata, monthly IAP association and manual-release submission await independent GO; John Apple stays untouched."
+  ],
+  "evidence_files": [
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/production-readback.json",
+      "sha256": "4d9cc7bbe900b4a02bf20872da9b191218b191834e129680ca354daa75f02dd0"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/production-followups-readback.json",
+      "sha256": "a9f18b9874036a31773e6825250a817c0a28c5ad35feb4a688ea313631a39749"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/site-live-verification.json",
+      "sha256": "a7a931e871e32c7a3cf7391de8af366565405d38e93aa9b52850db512e7aaece"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/testflight55/receipt.json",
+      "sha256": "38aeedae4a5a1b92d87dfa3ef4b7bca454a16a9826e61bc715a1081634b78ea6"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/testflight55/apple-snapshot.json",
+      "sha256": "92fbf2317519ed2c7bba0c37e2fdfce86c32fbaba211f6ba4ba8cbde1856b2a1"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/testflight55/independent-verification/receipt.json",
+      "sha256": "9011498466a0db89b0d6e506cedc417d8413ab23d0ae57a8432ce62876cf417c"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/testflight55/independent-verification/source-binding.json",
+      "sha256": "9e68e7634a026e995211852317b265fbc8acb7b9e5b7550e04b7db972a923c5a"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/testflight55/final-code-source-binding-fefd068.json",
+      "sha256": "f33d1a0a23e71b0de5d70c74cfcd54dc1b1b5d79f6d25d2063084bdd59c3a38f"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/studio-ci-38008442608/final-targeted-verification.json",
+      "sha256": "e75aac3ebf7d60be972ce69ad504901575b86053c94d7b5a397f5ed36668d37e"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/final-audit-20261010/ordinary-video-fixture/final-fixture-review-receipt.json",
+      "sha256": "9e8d0c79c0d09d8de817e6d94e3840f72a4e069f49d647b008103ab5e868755a"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/native-ci-38008442608/lifecycle-fixture-repair.json",
+      "sha256": "344567c67c727e86116622b87654ff2fd51fdc17e1b9ea73544affb8a93300e9"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/testflight55/final-code-source-binding-95243bf.json",
+      "sha256": "7b4352655c0b35288fdef650249b4d52ef19a79c0b95f9ae02e255aa2961f871"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/native-ci-38010144016/post-lifecycle-final-receipt.json",
+      "sha256": "5c5724a22529ebe53d9d5a6a35d2dcc0fd34f13b4b5424fbc68e06d50dd67ac0"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38010144016-superseded.json",
+      "sha256": "b7ec0faaa1369b7c2a6fae01347ccbcb7dde3b0d4980c7c1ffe3d04153827f0e"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38011398674-completed.json",
+      "sha256": "2480cdc94271d220b6f0beb3199d3e240b73e4fcf999a06d94686e5d83350bb2"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38011398674-native-artifact-metadata.json",
+      "sha256": "35f9a441c916f85ca3d00f9ec1582fe8baf5a3130e0cca2353db6ce16e3f2429"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38011398674-native.log",
+      "sha256": "1610cbdda6441ef2820042ad2d55d05aa6c2b24cee3a64b48083a8178f10c860"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38011398674-native-independent-final.json",
+      "sha256": "8ab6f602adb329bf053cee0d67324e319c7ae03bb8d1796db18bb966ecbe31fe"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-final-remediation-20261009/ci-38011398674-native-hash-readback.json",
+      "sha256": "6d012b12dbe5fc4cef087be33ffc3ab1714bc9470bcd6dfabae6355b751a9eb2"
+    }
+  ]
+}

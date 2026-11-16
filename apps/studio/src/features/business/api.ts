@@ -1,17 +1,20 @@
 import type { StudioServices } from "../../data/services";
 import type { Workspace } from "../../data/contracts";
-import { uuid } from "../../data/contracts";
+import { uuid, decodeRealEstateRole, type RealEstateRole } from "../../data/contracts";
 import {
-  brandPayload, decodeAccount, decodeCompliance, decodeInviteResults, decodeLead, decodeLeads, decodeNotifications,
+  brandPayload, decodeAccount, decodeCompliance, decodeInviteResults, decodeLead, decodeLeads, decodeNotifications, decodeClientDelivery,
   decodeOverview, decodeTeam, inviteEmails, leadStatuses, record,
   type Brand, type LeadStatus, type Notifications,
 } from "./model";
 
 export function businessApi(services: Pick<StudioServices, "api">, workspace: Workspace) {
-  const orgId = workspace.org.id;
+  const orgId = workspace.libraryOrgId ?? workspace.org.id;
+  const teamOrgId = workspace.billingOrgId ?? orgId;
+  const teamBinding = workspace.billingOrgId ? { actorId: workspace.user.id, contentOrgId: orgId } : undefined;
+  const accountWorkspace = { ...workspace, org: { ...workspace.org, id: orgId } };
   const call = (path: string, options: Omit<Parameters<StudioServices["api"]>[1], "orgId"> = {}) => services.api(`/functions/v1/${path}`, { ...options, orgId });
   return {
-    account: async (signal?: AbortSignal) => decodeAccount(await call("me", { signal }), workspace),
+    account: async (signal?: AbortSignal) => decodeAccount(await call("me", { signal }), accountWorkspace),
     leads: async (filters: { listingId?: string; status?: LeadStatus; since?: string }, signal?: AbortSignal) => {
       const query = new URLSearchParams({ limit: "500" });
       if (filters.listingId) query.set("listing_id", uuid(filters.listingId));
@@ -26,7 +29,21 @@ export function businessApi(services: Pick<StudioServices, "api">, workspace: Wo
       if (!(leadStatuses as readonly string[]).includes(status)) throw new Error("Choose a lead status.");
       return decodeLead(record(await call(`leads/${uuid(id)}`, { method: "PATCH", body: { status }, signal })).lead);
     },
-    team: async (signal?: AbortSignal) => decodeTeam(await call("team", { signal }), orgId),
+    sendLeadToClient: async (id: string, requestId: string, recipient: string, signal?: AbortSignal) => {
+      if (recipient.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(recipient)) throw new Error("Reload the client contact before sending this lead.");
+      const response = record(await call(`leads/${uuid(id)}/send-to-client`, { method: "POST", body: { request_id: uuid(requestId), expected_recipient_email: recipient }, signal }));
+      if (response.ok !== true) throw new Error("Client delivery could not be confirmed. Retry to check the same request.");
+      const delivery = decodeClientDelivery(response.delivery);
+      if (delivery.recipient_email !== recipient) throw new Error("The client recipient changed. Refresh before sending again.");
+      return delivery;
+    },
+    saveWorkRole: async (role: RealEstateRole, signal?: AbortSignal) => {
+      const response = record(await call("me/profile", { method: "PATCH", body: { real_estate_role: role }, signal }));
+      const user = record(response.user);
+      if (uuid(user.id) !== workspace.user.id || decodeRealEstateRole(user.real_estate_role) !== role) throw new Error("Your work preference could not be confirmed. Refresh your account.");
+      return role;
+    },
+    team: async (signal?: AbortSignal) => decodeTeam(await call("team", { signal }), teamOrgId, teamBinding),
     invite: async (addresses: string, role: string, signal?: AbortSignal) => {
       if (!["admin", "agent", "marketing"].includes(role)) throw new Error("Choose an invited team member's role.");
       const emails = inviteEmails(addresses), bulk = emails.length > 1;
@@ -42,11 +59,12 @@ export function businessApi(services: Pick<StudioServices, "api">, workspace: Wo
       if (r.ok !== true) throw new Error("The invite could not be accepted. Refresh your workspaces.");
       return uuid(r.org_id);
     },
+    saveWorkspaceBrand: async (brand: Brand, signal?: AbortSignal) => call("me/brand", { method: "PATCH", body: Object.fromEntries(Object.entries(brandPayload({ ...brand, name: "", title: "", phone: "", email: "", website: "", headshot_url: "", avatar_url: "", instagram: "", linkedin: "", tiktok: "" })).filter(([key]) => ["org_name", "space_type", "handle", "brokerage", "accent"].includes(key))), signal }),
     saveBrand: async (brand: Brand, signal?: AbortSignal) => call("me/brand", { method: "PATCH", body: brandPayload(brand), signal }),
     saveNotifications: async (preferences: Notifications, signal?: AbortSignal) => decodeNotifications(record(await call("me/notifications", { method: "PATCH", body: preferences, signal })).notifications),
     overview: async (window: "7d" | "30d" | "90d", signal?: AbortSignal) => {
       if (!["7d", "30d", "90d"].includes(window)) throw new Error("Choose an overview period.");
-      return decodeOverview(await call(`team/overview?window=${window}`, { signal }), orgId);
+      return decodeOverview(await call(`team/overview?window=${window}`, { signal }), teamOrgId, teamBinding);
     },
     compliance: async (filters: { listingId?: string; scope: "user" | "org"; from?: string; to?: string }, signal?: AbortSignal) => {
       const q = new URLSearchParams({ scope: filters.scope, limit: "5000" });

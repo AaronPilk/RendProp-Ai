@@ -34,12 +34,12 @@ struct PlanBanner: View {
         Group {
             if let state = loader.state {
                 Button {
-                    if state.offersUpgrade { showPaywall = true }
+                    showPaywall = true
                 } label: {
                     banner(state)
                 }
                 .buttonStyle(.plain)
-                .disabled(!state.offersUpgrade)
+
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -61,6 +61,10 @@ struct PlanBanner: View {
         private var bag = Set<AnyCancellable>()
         private var foreground: NSObjectProtocol?
         private var inFlight = false
+        /// The account, session and library whose plan `state` shows.
+        private var shownScope: String?
+        /// Set by a plan change: the next read must come from the server.
+        private var wantsFreshRead = false
 
         init() {
             // AuthStore's own publisher, which fires IMMEDIATELY with the
@@ -75,6 +79,21 @@ struct PlanBanner: View {
                 .removeDuplicates()
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in Task { @MainActor in await self?.refresh() } }
+                .store(in: &bag)
+
+            NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)
+                .sink { [weak self] _ in
+                    self?.state = nil
+                    MeReadCoalescer.shared.invalidate()
+                    Task { @MainActor in await self?.refresh() }
+                }.store(in: &bag)
+
+            NotificationCenter.default.publisher(for: .rendpropPlanChanged)
+                .sink { [weak self] _ in
+                    self?.wantsFreshRead = true
+                    MeReadCoalescer.shared.invalidate()
+                    Task { @MainActor in await self?.refresh() }
+                }
                 .store(in: &bag)
 
             // A plan can change while the app is backgrounded — a purchase on
@@ -100,10 +119,8 @@ struct PlanBanner: View {
             if let forced = Config.uiTestPlanBanner {
                 let day: TimeInterval = 86_400
                 let iso = ISO8601DateFormatter()
-                // Fixed numbers, so the screenshot is the same on every run:
-                // the real-estate free week for the trial states, and the Pro
-                // literals from Products.swift for the paid one.
-                let week = Allowances(renders: 3, photoEdits: 60, reels: 4)
+                // Fixed numbers for the limited free week and paid Pro state.
+                let week = Allowances(renders: 0, photoEdits: 5, reels: 0)
                 let pro = RendpropPlan.pro.allowances
                 let paid = Allowances(renders: pro.renders, photoEdits: pro.photoEdits, reels: pro.reels)
                 switch forced {
@@ -116,29 +133,83 @@ struct PlanBanner: View {
                 return
             }
             guard Config.useLiveBackend, let base = Config.apiBaseURL else { return }
+            let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+            guard let org = WorkspaceContext.selectedOrgID, let billingOrg = WorkspaceContext.servingOrgID else { state = nil; return }
+            // The plan already on screen stays there while the same account,
+            // session and library re-read it; blanking it first made the
+            // banner vanish and return on every foreground. A different
+            // account, session or library still starts from nothing.
+            let scope = "\(actor ?? "")|\(revision)|\(org.uuidString)"
+            if scope != shownScope { state = nil }
+            shownScope = scope
+            // A plan change must not be answered from a read made before it.
+            let reuse = wantsFreshRead ? 0 : MeReadCoalescer.reuseInterval
+            wantsFreshRead = false
 
             // A session can exist a beat before its token is usable, so give it
             // a few tries rather than going quiet for the rest of the launch.
             for delay in [0.0, 0.8, 2.0, 4.0] {
                 if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
                 guard let token = await AuthStore.validAccessToken() else { continue }
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                      WorkspaceContext.selectedOrgID == org else { state = nil; return }
                 var req = URLRequest(url: base.appendingPathComponent("me"))
                 req.timeoutInterval = 20
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
-                guard let (data, resp) = try? await URLSession.shared.data(for: req),
-                      let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+                req.setValue(Config.edgeFunctionRegion, forHTTPHeaderField: Config.edgeFunctionRegionHeader)
+                req.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+                // The brand and role readers ask for the same thing at the same
+                // moment; whoever asks first sends the one request.
+                let request = req
+                guard let key = MeReadCoalescer.currentKey(),
+                      let data = try? await MeReadCoalescer.shared.data(key: key, reuseWithin: reuse, fetch: {
+                          let (body, resp) = try await URLSession.shared.data(for: request)
+                          guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                              throw APIError.badResponse(-1)
+                          }
+                          return body
+                      })
                 else { continue }
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                      WorkspaceContext.selectedOrgID == org else { state = nil; return }
                 let d = JSONDecoder()
                 // convertFromSnakeCase and explicit CodingKeys are mutually
                 // exclusive — MeSlice declares none, so `trial_ends_at` maps.
                 d.keyDecodingStrategy = .convertFromSnakeCase
-                guard let me = try? d.decode(MeSlice.self, from: data) else { return }
-                // The server's own numbers for THIS org — the free week is sized
-                // per industry from `orgs.space_type`, so these, not a literal
-                // in the app, are the promise the server will actually keep.
-                state = PlanBanner.state(plan: me.plan, trialEndsAt: me.trialEndsAt,
-                                         allowances: me.entitlement?.allowances, now: Date())
+                guard let me = try? d.decode(MeSlice.self, from: data) else { state = nil; return }
+                // Use the server's effective allowances for this workspace;
+                // an Apple introductory week can have a narrower allowance
+                // than the paid SKU named by `plan`.
+                if let activation = me.servingActivation {
+                    guard me.org?.id.flatMap(UUID.init(uuidString:)) == org,
+                          activation.checked(org: billingOrg) != nil else { state = nil; return }
+                }
+                if let trial = me.trialUsage {
+                    guard me.org?.id.flatMap(UUID.init(uuidString:)) == org,
+                          trial.checked(org: billingOrg) != nil else { state = nil; return }
+                }
+                if let trial = me.trialUsage, trial.status != .active {
+                    state = PlanBanner.boundedTrialState(trial)
+                } else if me.servingActivation?.shouldShowPending(plan: me.plan, recordedTrial: me.trialUsage) == true {
+                    state = PlanBanner.pendingActivationState()
+                } else if let trial = me.trialUsage {
+                    state = PlanBanner.boundedTrialState(trial)
+                } else if me.servingEnvelope?.window == "intro_window" {
+                    // A malformed introductory snapshot must never fall
+                    // through to the full paid-plan banner.
+                    guard me.org?.id.flatMap(UUID.init(uuidString:)) == org,
+                          let envelope = me.servingEnvelope?.checked(), envelope.kind == "trial",
+                          let end = envelope.periodEndDate, end > Date(),
+                          let photoEdits = me.entitlement?.allowances?.photoEdits else {
+                        state = nil
+                        return
+                    }
+                    state = PlanBanner.appleIntroState(plan: me.plan, photoEdits: photoEdits, ends: end)
+                } else {
+                    state = PlanBanner.state(plan: me.plan, trialEndsAt: me.trialEndsAt,
+                                             allowances: me.entitlement?.allowances, now: Date())
+                }
                 // The server sizing the week for a different industry than the
                 // one chosen on this phone means the last sync never landed
                 // (or landed on another org). Forget that it did, so the next
@@ -152,6 +223,7 @@ struct PlanBanner: View {
             }
             // Every attempt failed: say nothing rather than guess at somebody's
             // money. The next foreground tries again.
+            state = nil
         }
     }
 
@@ -185,10 +257,14 @@ struct PlanBanner: View {
             }
         }
         struct Org: Decodable {
+            let id: String?
             let spaceType: String?
         }
         let plan: String?
         let trialEndsAt: String?
+        let trialUsage: TrialUsageSummary?
+        let servingActivation: ServingActivationSummary?
+        let servingEnvelope: ServingEnvelopeSummary?
         let entitlement: Entitlement?
         let org: Org?
     }
@@ -213,8 +289,8 @@ struct PlanBanner: View {
             }
             Spacer(minLength: 8)
 
-            if s.offersUpgrade {
-                Text("See plans")
+            if s.isWorthShowing {
+                Text(s.kind == .paid || s.kind == .activationPending ? "Manage plan" : "See plans")
                     .font(.rpCaption.weight(.semibold))
                     .foregroundStyle(Theme.accent)
             }
@@ -227,12 +303,45 @@ struct PlanBanner: View {
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("home.planBanner")
         .accessibilityLabel("\(s.title). \(s.detail)")
-        .accessibilityAddTraits(s.offersUpgrade ? .isButton : [])
+        .accessibilityAddTraits(.isButton)
     }
 
     // MARK: - State
 
-    enum Kind: Equatable { case trial, endingSoon, ended, paid }
+    static func pendingActivationState() -> PlanState {
+        PlanState(kind: .activationPending, title: ServingActivationSummary.pendingTitle,
+                  detail: ServingActivationSummary.pendingExplanation)
+    }
+
+    static func appleIntroState(plan: String?, photoEdits: Int, ends: Date) -> PlanState {
+        let name = (plan ?? "").lowercased()
+        let title = ["pro", "max", "ultra", "team"].contains(name)
+            ? "\(name.capitalized) free week" : "Your free week"
+        return PlanState(kind: .trial, title: title,
+            detail: "\(SpaceType.makeFreeWeekLine(photoEdits: photoEdits)) during this week. Video and aerial generation start after the first paid renewal. Ends \(ends.formatted(date: .abbreviated, time: .omitted)).")
+    }
+
+    /// New trials use recorded independent counters, not monthly plan numbers
+    /// or a local clock's guess about whether Apple has renewed.
+    static func boundedTrialState(_ trial: TrialUsageSummary) -> PlanState {
+        switch trial.status {
+        case .active:
+            let photos = trial.photoEdits.remaining
+            if trial.walkthroughs.cap == 0 {
+                return PlanState(kind: .trial, title: trial.statusLabel,
+                    detail: "\(photos) AI photo edit credit\(photos == 1 ? "" : "s") left. Create a listing and add photos; video, aerial openings, walkthroughs and website publishing begin with a paid plan. Upload space: \(trial.uploadSpaceValue).")
+            }
+            let videos = trial.walkthroughs.remaining
+            let listings = trial.publishedListings.remaining
+            return PlanState(kind: .trial, title: trial.statusLabel,
+                detail: "\(videos) walkthrough\(videos == 1 ? "" : "s"), \(photos) photo edit credit\(photos == 1 ? "" : "s") and \(listings) published listing\(listings == 1 ? "" : "s") left. Each allowance is separate. Upload space: \(trial.uploadSpaceValue).")
+        case .exhausted, .expired:
+            return PlanState(kind: .ended, title: trial.statusLabel,
+                detail: "Your saved work remains available under your workspace's access and retention terms. Apple keeps your renewal date.")
+        }
+    }
+
+    enum Kind: Equatable { case trial, endingSoon, ended, paid, activationPending }
 
     struct PlanState: Equatable {
         let kind: Kind
@@ -242,13 +351,14 @@ struct PlanBanner: View {
         var isWorthShowing: Bool { true }
         /// Only the two ends of the funnel ask. The middle of a good trial does
         /// not, and a paying customer never does.
-        var offersUpgrade: Bool { kind == .endingSoon || kind == .ended }
+        var offersUpgrade: Bool { kind != .paid && kind != .activationPending }
 
         var icon: String {
             switch kind {
             case .trial, .endingSoon: return "gift"
             case .ended:              return "clock.badge.exclamationmark"
             case .paid:               return "checkmark.seal.fill"
+            case .activationPending:  return "hourglass"
             }
         }
         var tint: Color {
@@ -257,6 +367,7 @@ struct PlanBanner: View {
             case .endingSoon: return Theme.warn
             case .ended:      return Theme.warn
             case .paid:       return Theme.accent
+            case .activationPending: return Theme.warn
             }
         }
     }
@@ -271,54 +382,62 @@ struct PlanBanner: View {
     /// otherwise.
     static func state(plan: String?, trialEndsAt: String?, allowances: Allowances?, now: Date,
                       space: SpaceType = .current) -> PlanState? {
-        // "Your free week has ended" is said in two places below; one string.
         let ended = PlanState(kind: .ended,
-                              title: "Your free week has ended",
-                              detail: "You're on the free plan — one tour a month. Your \(space.spaceNounPlural) and tours are all still here.")
+                              title: "Choose your Rendprop plan",
+                              detail: "Your saved listings and photos remain available. Choose a plan for more AI edits, videos and publishing; eligible new subscribers get 7 days free.")
         switch (plan ?? "").lowercased() {
         case "pro":
             return PlanState(kind: .paid, title: "Pro", detail: paidDetail(allowances, fallback: RendpropPlan.pro))
+        case "max":
+            return PlanState(kind: .paid, title: "Max", detail: paidDetail(allowances, fallback: RendpropPlan.max))
+        case "ultra":
+            return PlanState(kind: .paid, title: "Ultra", detail: paidDetail(allowances, fallback: RendpropPlan.ultra))
         case "team":
-            return PlanState(kind: .paid, title: "Team", detail: "Your whole workspace, on the Team plan.")
+            return PlanState(kind: .paid, title: "Team", detail: paidDetail(allowances, fallback: RendpropPlan.team))
+        case "legacy_pro":
+            return PlanState(kind: .paid, title: "Legacy Pro", detail: legacyPaidDetail(allowances))
         case "starter", "solo":
-            return PlanState(kind: .paid, title: "Starter", detail: paidDetail(allowances, fallback: RendpropPlan.starter))
+            return PlanState(kind: .paid, title: "Legacy Starter", detail: legacyPaidDetail(allowances))
         case "free":
             return ended
         case "trial":
-            // What the week gives, in the server's numbers when it sent them —
-            // the week is sized per industry (`orgs.space_type`), and the
-            // server's figure is the one it enforces.
-            let week = allowances.map {
-                SpaceType.makeFreeWeekLine(tours: $0.renders, photoEdits: $0.photoEdits, reelClips: $0.reels)
-            } ?? space.freeWeekLine
+            // Display the server's effective photo allowance when available.
+            let week = allowances.map { SpaceType.makeFreeWeekLine(photoEdits: $0.photoEdits) }
+                ?? space.freeWeekLine
             let days = daysLeft(trialEndsAt, now: now)
             guard let days else {
-                return PlanState(kind: .trial, title: "Your first week is on us",
-                                 detail: "\(week), free.")
+                return PlanState(kind: .trial, title: "Existing trial access",
+                                 detail: "\(week). This is your previously granted trial access.")
             }
             if days <= 0 {
                 return ended
             }
             if days <= 2 {
                 return PlanState(kind: .endingSoon,
-                                 title: days == 1 ? "Last day of your free week" : "\(days) days left of your free week",
-                                 detail: "After that it's the free plan — one tour a month.")
+                                 title: days == 1 ? "Last day of existing trial access" : "\(days) days left of existing trial access",
+                                 detail: "Choose a subscription and confirm with Apple to continue after this access ends.")
             }
             return PlanState(kind: .trial,
-                             title: "Your first week is on us",
+                             title: "Existing trial access",
                              detail: "\(week) — \(days) days left.")
         default:
             return nil          // unknown plan: say nothing at all
         }
     }
 
-    /// "10 tours a month, 200 photo edits, 12 reel clips." — from the server's
-    /// numbers when known, else the plan's literals in Products.swift.
+    /// The plan name comes from /me. Its proposed monthly credit number is
+    /// deliberately absent here: the server may have recorded a paid plan
+    /// before the funded credit grant catalog has been activated.
     static func paidDetail(_ allowances: Allowances?, fallback plan: RendpropPlan) -> String {
-        let a = plan.allowances
-        let renders = allowances?.renders ?? a.renders
-        let edits = allowances?.photoEdits ?? a.photoEdits
-        let clips = allowances?.reels ?? a.reels
+        "Paid plan active. Check Settings for current limits and any funded credits."
+    }
+
+    /// Manual historical plans retain their independent recorded allowances.
+    static func legacyPaidDetail(_ allowances: Allowances?) -> String {
+        guard let allowances else { return "Your existing plan and workspace allowances remain active." }
+        let renders = allowances.renders
+        let edits = allowances.photoEdits
+        let clips = allowances.reels
         let tourNoun = renders == 1 ? "tour" : "tours"
         let editNoun = edits == 1 ? "edit" : "edits"
         let clipNoun = clips == 1 ? "clip" : "clips"

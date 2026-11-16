@@ -40,6 +40,16 @@ final class SpatialUploadCoordinator: ObservableObject {
     private var backgroundDrain: UIBackgroundTaskIdentifier = .invalid
     private var drainTask: Task<Void, Never>?
 
+    /// A regular release may inherit a TestFlight journal and background
+    /// session. Keep their receipts, but never admit experimental work there.
+    private static var permitsSpatialWork: Bool {
+#if SPATIAL_CAPTURE_LAB
+        true
+#else
+        false
+#endif
+    }
+
     private init() {
         UserDefaults.standard.register(defaults: [SpatialUploadPreferences.wifiOnlyKey: SpatialUploadPreferences.wifiOnlyDefault])
         do {
@@ -319,6 +329,15 @@ final class SpatialUploadCoordinator: ObservableObject {
     }
 
     func reconnect() {
+        guard Self.permitsSpatialWork else {
+            // Rebinding lets iOS deliver already-completed receipts. Suspending
+            // remaining transfers retains their tasks, journal and local photos
+            // for a later lab build, without starting cloud generation.
+            session.getAllTasks { tasks in
+                for task in tasks where task.state == .running { task.suspend() }
+            }
+            return
+        }
         guard !reconnecting else { return }
         reconnecting = true
         session.getAllTasks { tasks in
@@ -339,7 +358,7 @@ final class SpatialUploadCoordinator: ObservableObject {
     }
 
     private func pump() {
-        guard recoveryError == nil, !reconnecting else { return }
+        guard Self.permitsSpatialWork, recoveryError == nil, !reconnecting else { return }
         for record in records where owns(record) && !record.queued && !record.isUserPaused && record.failure == nil {
             if record.jobID == nil || record.confirmedCount == record.frames.count {
                 guard !starting.contains(record.id) else { continue }
@@ -359,6 +378,7 @@ final class SpatialUploadCoordinator: ObservableObject {
 
     private func advanceJob(_ id: UUID) async {
         defer { starting.remove(id); pump() }
+        guard Self.permitsSpatialWork else { return }
         do {
             var i = try assertOwner(id)
             let record = records[i]
@@ -523,6 +543,7 @@ final class SpatialUploadCoordinator: ObservableObject {
         pump()
     }
     fileprivate func eventsDrained() {
+        guard Self.permitsSpatialWork else { finishDrain(); return }
         // URLSession finished delivering *its* callbacks, not our authenticated
         // /complete -> /inputs -> /start transitions. Give those a bounded drain
         // before yielding iOS's wake assertion; otherwise only three photos

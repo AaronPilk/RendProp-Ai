@@ -1,0 +1,113 @@
+{
+  "build": 58,
+  "date": "2026-10-11",
+  "deployer": "Claude (sandbox) via apps/studio/scripts/deploy-backend.mjs --run",
+  "migration": {
+    "repoFile": "services/supabase/migrations/20261011170000_build58_trash_restore_republish.sql",
+    "liveVersion": "20261011155746",
+    "appliedVia": "Supabase MCP apply_migration",
+    "readbackMd5": {
+      "list_trashed_listings": "d3a658597a821845e24b5cff26f83d17",
+      "listing_trash_sweep": "fcf78a8cb3f953561ea527140fd38d6f",
+      "queue_deleted_listing_media": "9af9a8ab2186b4f94a2f14b510654d1e",
+      "queue_listing_media_cleanup": "2f98ff0564f8d137591ec413f4957068",
+      "republish_render": "a7cd98b9a110140623c84738ea99570e",
+      "restore_listing": "b00e564a9aacc1424f26eaabcfaa0b4d",
+      "trashed_listing_library": "2189774caaee492c99382c399323b7ba",
+      "unpublished_deleted_listing_renders": "d74256a0c4649a8557f50b3ca301a0ea"
+    },
+    "cron": "listing-trash-sweep 23 * * * *"
+  },
+  "batches": [
+    {
+      "log": "deploy58-a.log",
+      "status": "verified",
+      "functions": [
+        "listings",
+        "me",
+        "uploads",
+        "ai-photo"
+      ],
+      "completed": {
+        "listings": "source-verified",
+        "me": "source-verified",
+        "uploads": "source-verified",
+        "ai-photo": "source-verified"
+      },
+      "stage": "/sessions/dreamy-confident-ritchie/tmp/rendprop-backend-stage-vBZI3h"
+    },
+    {
+      "log": "deploy58-b.log",
+      "status": "verified",
+      "functions": [
+        "leads",
+        "ai-copy",
+        "ai-video",
+        "ai-voice",
+        "ai-chapters",
+        "coach"
+      ],
+      "completed": {
+        "leads": "source-verified",
+        "ai-copy": "source-verified",
+        "ai-video": "source-verified",
+        "ai-voice": "source-verified",
+        "ai-chapters": "source-verified",
+        "coach": "source-verified"
+      },
+      "stage": "/sessions/dreamy-confident-ritchie/tmp/rendprop-backend-stage-QCqybn"
+    },
+    {
+      "log": "deploy58-c.log",
+      "status": "verified",
+      "functions": [
+        "renders",
+        "team",
+        "property",
+        "studio",
+        "spatial",
+        "events"
+      ],
+      "completed": {
+        "renders": "source-verified",
+        "team": "source-verified",
+        "property": "source-verified",
+        "studio": "source-verified",
+        "spatial": "source-verified",
+        "events": "source-verified"
+      },
+      "stage": "/sessions/dreamy-confident-ritchie/tmp/rendprop-backend-stage-JuyNuh"
+    },
+    {
+      "log": "deploy58-d.log",
+      "status": "verified",
+      "functions": [
+        "listings",
+        "renders"
+      ],
+      "completed": {
+        "listings": "source-verified",
+        "renders": "source-verified"
+      },
+      "stage": "/sessions/dreamy-confident-ritchie/tmp/rendprop-backend-stage-dtpivA"
+    }
+  ],
+  "liveVersionsAfter": {
+    "listings": 51,
+    "me": 64,
+    "uploads": 55,
+    "ai-photo": 70,
+    "leads": 49,
+    "ai-copy": 37,
+    "ai-video": 64,
+    "ai-voice": 47,
+    "ai-chapters": 38,
+    "coach": 36,
+    "renders": 52,
+    "team": 28,
+    "property": 24,
+    "studio": 30,
+    "spatial": 21,
+    "events": 37
+  }
+}

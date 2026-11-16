@@ -12,6 +12,26 @@ import Vision
 /// added. That means no mic permission prompt, no pausing the user's music, and
 /// a phone call no longer ends the take (audit F-D-06).
 final class CameraManager: NSObject, ObservableObject {
+    enum Framing: Equatable {
+        case unknown, halfX, oneX
+
+        var buttonLabel: String {
+            switch self {
+            case .unknown: return "?"
+            case .halfX: return "0.5×"
+            case .oneX: return "1×"
+            }
+        }
+
+        var accessibilityLabel: String {
+            switch self {
+            case .unknown: return "Camera lens unconfirmed. Tap to retry 0.5×."
+            case .halfX: return "0.5× ultra-wide framing. Tap for 1×."
+            case .oneX: return "1× framing. Tap for 0.5×."
+            }
+        }
+    }
+
     enum CaptureState: Equatable {
         case idle, configuring, ready, recording
         /// Mid-take, nothing being written, everything recorded so far kept.
@@ -53,8 +73,12 @@ final class CameraManager: NSObject, ObservableObject {
     /// "Stabilization: Enhanced / Standard / Off" — the mode the ACTIVE format
     /// really supports, never a silent fallback to off (audit F-D-04).
     @Published var stabilizationLabel: String = ""
-    @Published var isUltraWide = true               // 0.5× default — the real-estate look
+    /// A 0.5× label requires both the ultra-wide physical constituent and its
+    /// full field of view; a requested zoom is not proof that either is active.
+    @Published private(set) var framing: Framing = .unknown
     @Published private(set) var supportsUltraWide = false
+    @Published private(set) var isSwitchingLens = false
+    @Published private(set) var lensMessage: String?
 
     /// SOMEBODY IS IN THE SHOT — the photographer in a mirror or a window, or a
     /// person walking through. Drives the warning on the capture screen.
@@ -98,6 +122,12 @@ final class CameraManager: NSObject, ObservableObject {
     private let movieOutput = AVCaptureMovieFileOutput()
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private var device: AVCaptureDevice?
+    private var lensObservation: NSKeyValueObservation?
+    private var zoomFactorObservation: NSKeyValueObservation?
+    private var zoomRampObservation: NSKeyValueObservation?
+    /// Confined to sessionQueue. The actual framing is published separately.
+    private var requestedUltraWide = true
+    private var lensConfigurationError: String?
     private var recordTimer: Timer?
     private var usesHEVC = false
 
@@ -181,6 +211,12 @@ final class CameraManager: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.session.isRunning { self.session.stopRunning() }
+            self.lensObservation?.invalidate()
+            self.zoomFactorObservation?.invalidate()
+            self.zoomRampObservation?.invalidate()
+            self.lensObservation = nil
+            self.zoomFactorObservation = nil
+            self.zoomRampObservation = nil
         }
         NotificationCenter.default.removeObserver(self)
         recordTimer?.invalidate()
@@ -189,6 +225,9 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func configure() {
         state = .configuring
+        framing = .unknown
+        lensMessage = nil
+        isSwitchingLens = false
         observeInterruptions()
         observeThermal()
         thermalChanged()
@@ -199,6 +238,7 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func configureSession() {
+        lensConfigurationError = nil
         session.beginConfiguration()
         session.sessionPreset = .inputPriority
 
@@ -254,8 +294,13 @@ final class CameraManager: NSObject, ObservableObject {
 
         session.commitConfiguration()
         applyStabilization()
-        applyLens()
         session.startRunning()
+        if hasUltraWide {
+            observeLens(device)
+            applyLens()
+        } else {
+            DispatchQueue.main.async { self.framing = .oneX }
+        }
         publishActiveStabilization()
         DispatchQueue.main.async { self.state = .ready }
     }
@@ -372,27 +417,105 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: - Lens (0.5× ultra-wide ↔ 1× wide)
 
     /// On the dual-wide virtual camera, zoom 1.0 = ultra-wide (0.5×) and the
-    /// switch-over factor (usually 2.0) = the standard wide lens (1×).
+    /// switch-over factor (usually 2.0) = the standard wide field of view (1×).
     /// Haptic lives here (only here) so the toggle never buzzes twice.
     func toggleLens() {
-        guard supportsUltraWide else { return }
-        isUltraWide.toggle()
+        guard supportsUltraWide, !isSwitchingLens else { return }
+        let wantsUltraWide = framing != .halfX
+        isSwitchingLens = true
+        lensMessage = nil
         Haptics.selection()
-        applyLens()
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.requestedUltraWide = wantsUltraWide
+            self.applyLens()
+        }
     }
 
+    private func observeLens(_ device: AVCaptureDevice) {
+        lensObservation?.invalidate()
+        zoomFactorObservation?.invalidate()
+        zoomRampObservation?.invalidate()
+        lensObservation = device.observe(\.activePrimaryConstituent, options: [.initial, .new]) { [weak self] camera, _ in
+            self?.sessionQueue.async { [weak self, weak camera] in
+                guard let self, let camera, self.device === camera else { return }
+                self.publishLensState(camera)
+            }
+        }
+        zoomFactorObservation = device.observe(\.videoZoomFactor, options: [.new]) { [weak self] camera, _ in
+            self?.sessionQueue.async { [weak self, weak camera] in
+                guard let self, let camera, self.device === camera else { return }
+                self.publishLensState(camera)
+            }
+        }
+        zoomRampObservation = device.observe(\.isRampingVideoZoom, options: [.initial, .new]) { [weak self] camera, _ in
+            self?.sessionQueue.async { [weak self, weak camera] in
+                guard let self, let camera, self.device === camera else { return }
+                self.publishLensState(camera)
+            }
+        }
+    }
+
+    /// Session queue only. The switch can fail or the virtual device can use a
+    /// different physical lens as focus/exposure changes; neither is a 0.5× pass.
     private func applyLens() {
-        sessionQueue.async { [weak self] in
-            guard let self, let device = self.device,
-                  device.deviceType == .builtInDualWideCamera else { return }
-            let wideFactor = device.virtualDeviceSwitchOverVideoZoomFactors.first
-                .map { CGFloat(truncating: $0) } ?? 2.0
-            let target: CGFloat = self.isUltraWide ? 1.0 : wideFactor
-            do {
-                try device.lockForConfiguration()
-                device.ramp(toVideoZoomFactor: target, withRate: 8)
-                device.unlockForConfiguration()
-            } catch {}
+        guard let device, device.deviceType == .builtInDualWideCamera else { return }
+        guard let switchOver = device.virtualDeviceSwitchOverVideoZoomFactors.first else {
+            lensConfigurationError = "Lens switching is unavailable. Check framing before recording."
+            publishLensState(device)
+            return
+        }
+        let wideFactor = CGFloat(truncating: switchOver)
+        let target: CGFloat = requestedUltraWide ? 1.0 : wideFactor
+        guard target >= device.minAvailableVideoZoomFactor,
+              target <= device.maxAvailableVideoZoomFactor,
+              target <= device.activeFormat.videoMaxZoomFactor else {
+            lensConfigurationError = "This camera setting is unavailable. Check framing before recording."
+            publishLensState(device)
+            return
+        }
+        do {
+            try device.lockForConfiguration()
+            device.ramp(toVideoZoomFactor: target, withRate: 8)
+            device.unlockForConfiguration()
+            lensConfigurationError = nil
+        } catch {
+            lensConfigurationError = "Couldn’t switch camera lenses. Check framing before recording."
+        }
+        publishLensState(device)
+    }
+
+    private func publishLensState(_ device: AVCaptureDevice) {
+        let physical = device.activePrimaryConstituent
+        let zoom = device.videoZoomFactor
+        let wideFactor = device.virtualDeviceSwitchOverVideoZoomFactors.first.map { CGFloat(truncating: $0) }
+        let ramping = device.isRampingVideoZoom
+        let actual: Framing
+        if physical?.deviceType == .builtInUltraWideCamera, abs(zoom - 1) < 0.03 {
+            actual = .halfX
+        } else if physical != nil, let wideFactor, abs(zoom - wideFactor) < 0.03 {
+            actual = .oneX
+        } else {
+            actual = .unknown
+        }
+        let message: String?
+        if let lensConfigurationError {
+            message = lensConfigurationError
+        } else if ramping || !session.isRunning {
+            message = nil
+        } else if physical == nil {
+            message = "Camera lens could not be confirmed. Check framing before recording."
+        } else if requestedUltraWide && actual != .halfX {
+            message = "0.5× is not active. Check framing, then tap the lens control to retry."
+        } else if !requestedUltraWide && actual != .oneX {
+            message = "1× is not active. Check framing, then tap the lens control to retry."
+        } else {
+            message = nil
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.framing = actual
+            self?.isSwitchingLens = ramping
+            self?.lensMessage = message
         }
     }
 

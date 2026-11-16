@@ -1,13 +1,10 @@
-// probe.test.ts — the two pure pieces of the key probe, tested with NO network.
+// probe.test.ts — redaction, classifiers and the actual probe scheduler, offline.
 //
 //   deno test --allow-env admin/probe.test.ts
 //
-// Only sanitize() and the classifiers are exercised here, and that is
-// deliberate: the probes themselves are HTTP calls to eleven vendors, and a
-// test that mocks them would only assert that the mocks match the mocks. What
-// the probes actually promise — the endpoint is $0, the status codes mean what
-// the comment says — was verified against the live vendors with a bogus key on
-// 2026-09-05 and is recorded in each probe's comment and in HANDOFF-P4.md.
+// Synthetic HTTP responses exercise the actual ElevenLabs branch through
+// probeAll(), including its result/count mapping. This verifies our projection,
+// not a real account's permissions or the availability of generation routes.
 //
 // What IS testable, and is the part that would silently hurt somebody, is the
 // redaction. Rule 2 of probe.ts says no credential ever leaves the module; a
@@ -34,6 +31,7 @@ const {
   classifyStatus,
   classifyThrown,
   isAbort,
+  probeAll,
   sanitize,
   thrownMessage,
 } = await import("./probe.ts");
@@ -45,6 +43,91 @@ const FAKE_OPENAI = "sk-proj-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0";
 const FAKE_ELEVEN = "sk_9f3c81aa04be47d2b6157c0e9a2d38fb5471ee0c";
 const FAKE_FAL = "1f0a7c22-3b9e-4d51-8a6f-0c2e94b7d113:9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d";
 const FAKE_ANTHROPIC = "sk-ant-api03-0Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0Fe";
+
+// Isolate the real scheduler to one real probe; the only replaced boundary is
+// fetch. Run with --deny-net so no accidentally unmocked provider call can run.
+async function elevenFixture(status: number, body: unknown) {
+  const originalProbes = [...PROBES];
+  const originalFetch = globalThis.fetch;
+  const eleven = PROBES.find((probe) => probe.key === "elevenlabs");
+  assert(eleven !== undefined);
+  Deno.env.set("ELEVENLABS_API_KEY", FAKE_ELEVEN);
+  PROBES.splice(0, PROBES.length, eleven);
+  let calls = 0;
+  globalThis.fetch = (input, init) => {
+    const options = init as { redirect?: string; headers?: HeadersInit } | undefined;
+    assertEquals(String(input), "https://api.elevenlabs.io/v1/user/subscription");
+    assertEquals(options?.redirect, "manual");
+    assertEquals(new Headers(options?.headers).get("xi-api-key"), FAKE_ELEVEN);
+    calls++;
+    return Promise.resolve(new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    }));
+  };
+  try {
+    return { report: await probeAll(), calls };
+  } finally {
+    globalThis.fetch = originalFetch;
+    PROBES.splice(0, PROBES.length, ...originalProbes);
+    // Only this test process's synthetic value was set. No original secret is
+    // read, retained or restored.
+    Deno.env.delete("ELEVENLABS_API_KEY");
+  }
+}
+
+Deno.test("ElevenLabs: typed missing permission is untested, never a key rejection or TTS pass", async () => {
+  for (const status of [401, 403]) {
+    const { report, calls } = await elevenFixture(status, {
+      detail: { status: "missing_permissions", message: `Denied ${FAKE_ELEVEN}` },
+    });
+    assertEquals(calls, 1);
+    assertEquals(report.probe_count, 1);
+    assertEquals(report.ok_count, 0);
+    assertEquals(report.fail_count, 0);
+    assertEquals(report.not_probeable_count, 1);
+    const result = report.results[0];
+    assertEquals(result.configured, true);
+    assertEquals(result.ok, null);
+    assertEquals(result.error_class, "permission");
+    assertEquals(result.message, "Subscription probe lacks permission; voice access was not tested");
+    assertEquals(result.detail, null);
+    assert(!JSON.stringify(report).includes(FAKE_ELEVEN));
+  }
+});
+
+Deno.test("ElevenLabs: generic 401/403 and invalid keys retain their existing failure classification", async () => {
+  for (const status of [401, 403]) {
+    for (const detail of [
+      { status: "invalid_api_key", message: "Missing permission is merely text here" },
+      { message: "missing_permissions" },
+    ]) {
+      const { report, calls } = await elevenFixture(status, { detail });
+      assertEquals(calls, 1);
+      assertEquals(report.results[0].ok, false);
+      assertEquals(report.results[0].error_class, "auth");
+      assertEquals(report.fail_count, 1);
+      assertEquals(report.not_probeable_count, 0);
+    }
+  }
+});
+
+Deno.test("ElevenLabs: successful quota and rate-limit results survive the scheduler", async () => {
+  const { report, calls } = await elevenFixture(200, {
+    character_count: 12,
+    character_limit: 100,
+    tier: "creator",
+  });
+  assertEquals(calls, 1);
+  assertEquals(report.results[0].ok, true);
+  assertEquals(report.results[0].error_class, null);
+  assertEquals(report.results[0].detail, { characters_left: 88, tier: "creator" });
+  assertEquals(report.ok_count, 1);
+  const limited = await elevenFixture(429, { detail: { status: "missing_permissions" } });
+  assertEquals(limited.calls, 1);
+  assertEquals(limited.report.results[0].ok, false);
+  assertEquals(limited.report.results[0].error_class, "rate_limit");
+});
 
 Deno.test("sanitize: a fake key never survives, in any wrapper a vendor might use", () => {
   const bodies = [

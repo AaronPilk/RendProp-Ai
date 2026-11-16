@@ -36,6 +36,25 @@ import Foundation
         check(AuthStore.connections == 1 && firstLaunch.physicalWrites == 1,
               "Anonymous connection is established before binding upload owner")
 
+        // A→B→A may restore the same JWT subject while an old foreground PUT
+        // is still returning. Its earlier session must not complete that asset.
+        let replacedSession = RecoveryAPI()
+        let beforeReplacement = AuthStore.shared.syncSessionRevision
+        do {
+            _ = try await DirectUploader.uploadPhoto(fileURL: file, listingID: listing, role: "capture",
+                contentType: "image/jpeg", keyPrefix: "photo", api: replacedSession,
+                journalStore: DirectUploadJournal(directory: root.appendingPathComponent("replaced-session")),
+                transfer: { request, source in
+                    let response = try await replacedSession.transfer(request, source)
+                    AuthStore.shared.syncSessionRevision += 2
+                    return response
+                }, delay: { _ in })
+            check(false, "Replaced session completed a former photo upload")
+        } catch is CancellationError { assertions += 1 }
+        check(AuthStore.shared.syncSessionRevision != beforeReplacement &&
+              replacedSession.physicalWrites == 1 && !replacedSession.completed,
+              "Same owner after a session replacement cannot complete the former photo ticket")
+
         let putLoss = RecoveryAPI(); putLoss.loseTransferReplyOnce = true
         _ = try await upload(putLoss, "put-loss")
         check(putLoss.transfers == 1 && putLoss.physicalWrites == 1 && putLoss.creates == 1,
@@ -182,6 +201,102 @@ import Foundation
         check(persisted.assetID == "legacy-id" && persisted.parts.first?.etag == "old-etag", "Old video records retain asset and part receipts")
         check(persisted.transportVersion == nil && persisted.ticketKey == nil, "Old record is not silently relabelled v2")
         check(persisted.legacyRecoveryApproved == nil, "Relaunch does not manufacture legacy consent")
+        check(!persisted.belongsToCurrentAccount(), "Legacy upload without owner proof cannot resume in another account")
+        var owned = UploadManager.State(filePath: "original.jpg", bytesTotal: Int64(bytes.count),
+                                        status: .paused, mode: "pending")
+        owned.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
+        check(owned.belongsToCurrentAccount(), "A proven owner can retain a paused upload")
+        let encodedOwner = try JSONDecoder().decode(UploadManager.State.self, from: JSONEncoder().encode(owned))
+        check(encodedOwner.ownerID == owned.ownerID, "The upload owner survives relaunch")
+        var foreign = owned; foreign.ownerID = UUID().uuidString.lowercased()
+        var persistedAfterSwitch: UploadManager.State? = foreign
+        let foreignAPI = RecoveryAPI()
+        let foreignManager = UploadManager(api: foreignAPI, session: URLSession(configuration: .ephemeral),
+                                           recovering: foreign, persistState: { persistedAfterSwitch = $0; return true })
+        foreignManager.resume()
+        check(foreignManager.state == nil && persistedAfterSwitch == nil && foreignAPI.creates == 0,
+              "Foreign saved upload cannot resume or reserve from another account")
+        var persistedAfterSignOut: UploadManager.State? = owned
+        let signOutManager = UploadManager(api: RecoveryAPI(), session: URLSession(configuration: .ephemeral),
+                                           recovering: owned, persistState: { persistedAfterSignOut = $0; return true })
+        signOutManager.accountWillChange()
+        check(signOutManager.state == nil && persistedAfterSignOut == nil && signOutManager.photoProgress == nil,
+              "Sign-out retires the queued upload and its presentation")
+        check(try Data(contentsOf: file) == bytes, "Account cleanup preserves the owner's original file")
+
+        // A Keychain read can be temporarily unavailable before first unlock.
+        // That must pause recovery without treating the saved owner as foreign.
+        let tokenBeforeLock = AuthStore.currentAccessToken
+        var retainedWhenLocked: UploadManager.State? = owned
+        let lockedManager = UploadManager(api: RecoveryAPI(), session: URLSession(configuration: .ephemeral),
+                                          recovering: owned, persistState: { retainedWhenLocked = $0; return true })
+        AuthStore.currentAccessToken = nil
+        lockedManager.resume()
+        check(lockedManager.state?.id == owned.id && retainedWhenLocked?.id == owned.id,
+              "Unreadable token leaves the saved upload and its ticket intact")
+        AuthStore.currentAccessToken = tokenBeforeLock
+
+        // The child photo request returns after sign-out. Its old error must
+        // not reappear in the replacement account's presentation.
+        let gatedPhotoAPI = RecoveryAPI(); gatedPhotoAPI.holdTicket = true
+        let photoManager = UploadManager(api: gatedPhotoAPI, session: URLSession(configuration: .ephemeral),
+                                         recovering: owned, persistState: { _ in true })
+        photoManager.beginPhotoBatch(listingID: listing, fileURLs: [file])
+        for _ in 0..<300 {
+            if gatedPhotoAPI.ticketGate != nil { break }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        check(gatedPhotoAPI.ticketGate != nil, "Synthetic photo request reached the held admission")
+        photoManager.accountWillChange()
+        check(photoManager.lastFailureMessage == nil, "Account change cleared the old photo message")
+        gatedPhotoAPI.ticketGate?.resume()
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        check(photoManager.lastFailureMessage == nil && photoManager.photoProgress == nil,
+              "Canceled old photo batch cannot write into a new account presentation")
+
+        // Two members can write the same org's listing. A queued abort from A
+        // must not inherit B's bearer after A signs out; A→B→A must not revive it.
+        let originalActor = AuthStore.shared.userID!
+        let originalRevision = AuthStore.shared.syncSessionRevision
+        let originalOrg = WorkspaceContext.selectedOrgID
+        var multipart = UploadManager.State(filePath: "original.jpg", bytesTotal: Int64(bytes.count),
+                                            status: .uploading, mode: "multipart", assetID: RecoveryAPI().oldID)
+        multipart.ownerID = originalActor
+        let switchedAPI = RecoveryAPI(); switchedAPI.abortable = true
+        let switchedManager = UploadManager(api: switchedAPI, session: URLSession(configuration: .ephemeral),
+                                            recovering: multipart, persistState: { _ in true })
+        switchedManager.accountWillChange()
+        AuthStore.shared.userID = "33333333-3333-4333-8333-333333333333"
+        AuthStore.shared.syncSessionRevision += 1
+        check(WorkspaceContext.selectedOrgID == originalOrg, "Account-switch abort case stays within the same org")
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        check(switchedAPI.cancels == 0, "Same-org account switch cannot abort the former owner's multipart upload")
+        AuthStore.shared.userID = originalActor
+        AuthStore.shared.syncSessionRevision += 1
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        check(switchedAPI.cancels == 0, "Returning to the original account cannot revive the retired abort")
+
+        let sameOwnerAPI = RecoveryAPI(); sameOwnerAPI.abortable = true
+        let sameOwnerManager = UploadManager(api: sameOwnerAPI, session: URLSession(configuration: .ephemeral),
+                                             recovering: multipart, persistState: { _ in true })
+        sameOwnerManager.cancel()
+        await until("Current owner can still abort an explicit cancellation") { sameOwnerAPI.cancels == 1 }
+
+        let changedRevisionAPI = RecoveryAPI(); changedRevisionAPI.abortable = true
+        changedRevisionAPI.beforeAbortDispatch = {
+            await MainActor.run { AuthStore.shared.syncSessionRevision += 1 }
+        }
+        let changedRevisionManager = UploadManager(api: changedRevisionAPI, session: URLSession(configuration: .ephemeral),
+                                                    recovering: multipart, persistState: { _ in true })
+        changedRevisionManager.cancel()
+        await until("Transport reached the changed-session boundary") {
+            AuthStore.shared.syncSessionRevision == originalRevision + 3
+        }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        check(changedRevisionAPI.cancels == 0,
+              "Session revision changed during transport hop cannot send a former abort")
+        check(AuthStore.shared.syncSessionRevision == originalRevision + 3 && AuthStore.shared.userID == originalActor,
+              "Abort tests restored the original account after each simulated boundary")
         var resuming = persisted
         resuming.prepareForExplicitResume()
         check(resuming.assetID == persisted.assetID && resuming.uploadID == persisted.uploadID &&
@@ -202,8 +317,39 @@ import Foundation
               "Original media remains byte-identical after every recovery")
         try await multipartRuntimeTests(root: root)
         try await boundedRecoveryTests(root: root)
+        try await admissionFailureTests(root: root)
         try await photoReferenceTests(root: root)
         print("PASS UploadRecoveryTests \(assertions) assertions")
+    }
+
+    @MainActor static func admissionFailureTests(root: URL) async throws {
+        FileStore.documents = root
+        let source = root.appendingPathComponent("admission.mov")
+        let original = Data("synthetic admission original".utf8)
+        try original.write(to: source)
+        let cases: [(APIError, Bool, String)] = [
+            (.server(status: 401, code: "unauthorized", message: "Sign in to upload media"), true, "Sign-in refusal is terminal"),
+            (.server(status: 402, code: "plan_required", message: "Trial upload allowance used"), true, "Allowance refusal is terminal"),
+            (.server(status: 429, code: "quota_exceeded", message: "Monthly upload limit reached"), true, "Monthly upload ceiling is terminal"),
+            (.server(status: 429, code: "rate_limited", message: "Too many requests"), false, "Burst upload limit stays retryable"),
+            (.server(status: 503, code: "upstream", message: "Retry later"), false, "Upload outage stays retryable"),
+        ]
+        for (index, item) in cases.enumerated() {
+            let api = RecoveryAPI(); api.admissionFailure = item.0
+            var initial = UploadManager.State(filePath: "admission.mov", bytesTotal: Int64(original.count),
+                status: .paused, mode: "pending")
+            initial.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
+            let session = URLSession(configuration: .ephemeral)
+            let manager = UploadManager(api: api, session: session, recovering: initial, persistState: { _ in true })
+            manager.resume()
+            await until("Admission failure completes \(index)") { manager.state?.status == .failed }
+            check((manager.state?.terminalError != nil) == item.1, item.2)
+            check(manager.state?.isAutoResumable == !item.1, "Only transient admission failures can automatically resume")
+            check(api.creates == 1 && api.physicalWrites == 0 && api.cancels == 0,
+                  "Admission refusal does not send bytes or cancel an existing receipt")
+            session.invalidateAndCancel()
+        }
+        check(try Data(contentsOf: source) == original, "Admission refusals preserve the saved original")
     }
 
     @MainActor static func photoReferenceTests(root: URL) async throws {
@@ -250,6 +396,85 @@ import Foundation
         await expectFailure("Empty photos cannot be matched to cloud identities") {
             _ = try await store.sourceID(fileURL: empty, ownerID: owner, orgID: org, listingID: owner, journalStore: journals)
         }
+
+        // Gallery subtraction must use capture_assets gallery identity, never
+        // an imported photos-table ID or a generic source receipt.
+        let gallery = UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!
+        let galleryStore = CloudPhotoReferences(directory: root.appendingPathComponent("gallery-references"))
+        let galleryJournals = DirectUploadJournal(directory: root.appendingPathComponent("gallery-upload-proof"))
+        let noGalleryJournals = DirectUploadJournal(directory: root.appendingPathComponent("no-gallery-upload-proof"))
+        try await galleryStore.save(sourceID: imported, fileURL: file, ownerID: owner, orgID: org, listingID: owner)
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: journals) == nil,
+              "Generic source identity and completed capture receipt are not gallery proof")
+        try await galleryStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals)
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == nil,
+              "Missing gallery upload journal stores no invented mapping")
+        let galleryKey = DirectUploader.photoJournalKey(owner: owner.uuidString.lowercased(), listingID: owner,
+            role: "gallery", keyPrefix: "gallery", digest: DirectUploader.sha256(of: file)!, bytes: FileStore.fileSize(file))
+        var galleryProof = UploadRecovery.Journal()
+        galleryProof.ticket = UploadTicket(assetID: gallery.uuidString, mode: .single,
+            storageKey: "renders/\(org.uuidString.lowercased())/\(owner.uuidString.lowercased())/gallery-\(gallery.uuidString.lowercased()).jpg")
+        galleryProof.dispatched = true
+        try await galleryJournals.save(galleryProof, for: galleryKey)
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals) == nil,
+              "Incomplete dispatched gallery journal never becomes removable identity")
+        await expectFailure("Incomplete gallery proof cannot be cached") {
+            try await galleryStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals)
+        }
+        galleryProof.completed = true
+        try await galleryJournals.save(galleryProof, for: galleryKey)
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals) == gallery,
+              "Completed gallery upload resolves its exact genuine asset")
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner, journalStore: galleryJournals) == nil,
+              "Completed gallery journal cannot cross library orgs")
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: other, orgID: org, listingID: owner, journalStore: galleryJournals) == nil,
+              "Completed gallery journal cannot cross actors")
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: other, journalStore: galleryJournals) == nil,
+              "Completed gallery journal cannot cross listings")
+        let logicalStore = CloudPhotoReferences(directory: root.appendingPathComponent("logical-library-gallery-references"))
+        check(try await logicalStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+            physicalOrgID: org, journalStore: galleryJournals) == gallery,
+              "Logical library may resolve a completed gallery ticket under its verified physical org")
+        check(try await logicalStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+            physicalOrgID: owner, journalStore: galleryJournals) == nil,
+              "Wrong physical org cannot adopt completed gallery ticket")
+        await expectFailure("Wrong physical org cannot be cached as a gallery receipt") {
+            try await logicalStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+                physicalOrgID: owner, journalStore: galleryJournals)
+        }
+        try await logicalStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+            physicalOrgID: org, journalStore: galleryJournals)
+        check(try await logicalStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+            physicalOrgID: org, journalStore: noGalleryJournals) == gallery,
+              "Scoped logical-library cache preserves the proved physical gallery identity")
+        await expectFailure("A different gallery asset cannot reuse completed proof") {
+            try await galleryStore.saveGalleryAssetID(assetID: imported, fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals)
+        }
+        try await galleryStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals)
+        let galleryReopened = CloudPhotoReferences(directory: root.appendingPathComponent("gallery-references"))
+        check(try await galleryReopened.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == gallery,
+              "Confirmed gallery identity survives reopen without changing generic source ID")
+        check(try await galleryReopened.sourceID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == imported,
+              "Separate gallery receipt never overwrites imported source identity")
+        let matchedStore = CloudPhotoReferences(directory: root.appendingPathComponent("server-matched-gallery-references"))
+        let digest = DirectUploader.sha256(of: file)!, size = FileStore.fileSize(file)
+        for wrongSHA in [true, false] {
+            await expectFailure("Fresh server SHA or byte mismatch cannot be cached") {
+                try await matchedStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner,
+                    expectedSHA256: wrongSHA ? String(repeating: "0", count: 64) : digest,
+                    expectedBytes: wrongSHA ? size : size + 1, journalStore: noGalleryJournals)
+            }
+            check(try await matchedStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == nil,
+                  "Mismatched server receipt leaves no gallery mapping")
+        }
+        try await matchedStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner,
+            expectedSHA256: digest, expectedBytes: size, journalStore: noGalleryJournals)
+        check(try await matchedStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == gallery,
+              "Exact scoped server SHA and bytes can save a gallery identity")
+        check(try await matchedStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner, journalStore: noGalleryJournals) == nil,
+              "Server-matched gallery cache cannot cross orgs")
+        check(try await matchedStore.galleryAssetID(fileURL: renamed, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == nil,
+              "Same-size altered bytes cannot reuse gallery identity")
     }
 
     @MainActor static func until(_ message: String, _ predicate: () -> Bool) async {
@@ -274,6 +499,7 @@ import Foundation
             var record = UploadManager.State(filePath: "bounded.mov", bytesTotal: 64,
                 status: .paused, mode: "multipart", assetID: api.assetID,
                 uploadID: "fixture-session", partSize: 16, partCount: 4)
+            record.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
             record.parts = (1...4).map { .init(number: $0, offset: Int64($0 - 1) * 16, length: 16) }
             record.transportVersion = 2
             record.ticketKey = "immutable-batch-fixture"
@@ -419,6 +645,7 @@ import Foundation
             var record = UploadManager.State(filePath: "multipart.mov", bytesTotal: 64,
                 status: .paused, mode: "multipart", assetID: api.assetID,
                 uploadID: "fixture-session", partSize: 16, partCount: 4)
+            record.ownerID = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
             record.parts = (1...4).map { .init(number: $0, offset: Int64($0 - 1) * 16, length: 16) }
             record.transportVersion = 2
             record.ticketKey = "immutable-batch-fixture"

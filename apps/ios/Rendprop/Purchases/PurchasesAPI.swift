@@ -18,7 +18,7 @@ import Foundation
 
 /// What `POST /me/entitlement` answers. Wire keys are snake_case.
 struct EntitlementSync: Codable, Hashable, Sendable {
-    /// Effective plan the server just wrote: free | trial | starter | pro | team.
+    /// Effective plan the server just wrote, including retail and legacy tiers.
     let plan: String
     /// Where the plan came from: "apple" | "manual" | "trial".
     let source: String?
@@ -30,6 +30,7 @@ struct EntitlementSync: Codable, Hashable, Sendable {
     let originalTransactionId: String?
     /// "Sandbox" | "Production" — as Apple spells it.
     let environment: String?
+    let servingActivation: ServingActivationSummary?
 
     enum CodingKeys: String, CodingKey {
         case plan
@@ -38,6 +39,7 @@ struct EntitlementSync: Codable, Hashable, Sendable {
         case productId = "product_id"
         case originalTransactionId = "original_transaction_id"
         case environment
+        case servingActivation = "serving_activation"
     }
 
     /// Tolerant decoding: `expires_at` arrives as an ISO-8601 string (with or
@@ -50,18 +52,23 @@ struct EntitlementSync: Codable, Hashable, Sendable {
         productId = try? c.decodeIfPresent(String.self, forKey: .productId)
         originalTransactionId = try? c.decodeIfPresent(String.self, forKey: .originalTransactionId)
         environment = try? c.decodeIfPresent(String.self, forKey: .environment)
+        servingActivation = try c.decodeIfPresent(ServingActivationSummary.self, forKey: .servingActivation)
+        if let activation = servingActivation, activation.checked(org: activation.orgId) == nil {
+            throw SubscriptionBillingContext.TrialPresentationError.invalidResponse
+        }
         let raw = try? c.decodeIfPresent(String.self, forKey: .expiresAt)
         expiresAt = EntitlementSync.parseDate(raw)
     }
 
     init(plan: String, source: String?, expiresAt: Date?, productId: String?,
-         originalTransactionId: String?, environment: String?) {
+         originalTransactionId: String?, environment: String?, servingActivation: ServingActivationSummary? = nil) {
         self.plan = plan
         self.source = source
         self.expiresAt = expiresAt
         self.productId = productId
         self.originalTransactionId = originalTransactionId
         self.environment = environment
+        self.servingActivation = servingActivation
     }
 
     func encode(to encoder: Encoder) throws {
@@ -71,6 +78,7 @@ struct EntitlementSync: Codable, Hashable, Sendable {
         try c.encodeIfPresent(productId, forKey: .productId)
         try c.encodeIfPresent(originalTransactionId, forKey: .originalTransactionId)
         try c.encodeIfPresent(environment, forKey: .environment)
+        try c.encodeIfPresent(servingActivation, forKey: .servingActivation)
         if let expiresAt {
             try c.encode(EntitlementSync.isoFormatter.string(from: expiresAt), forKey: .expiresAt)
         }
@@ -94,26 +102,106 @@ struct EntitlementSync: Codable, Hashable, Sendable {
     }
 }
 
+/// A verified StoreKit app environment is required for a new trial preflight.
+/// The server still verifies the eventual signed Apple transaction independently.
+enum PurchaseEnvironment: String, Codable, Sendable {
+    case production = "Production"
+    case sandbox = "Sandbox"
+}
+
+/// A one-attempt, server-signed instruction to omit Apple's introductory offer.
+/// This authorizes neither a charge nor an entitlement by itself. Apple still
+/// presents the price, and the server verifies the resulting paid receipt.
+struct StandardPricePurchaseAuthorization: Decodable, Sendable {
+    let actorID: UUID
+    let orgID: UUID
+    let productID: String
+    let appTransactionID: String
+    let compactJWS: String
+    let issuedAt: Int64
+    let purchaseEnvironment: PurchaseEnvironment
+    enum CodingKeys: String, CodingKey {
+        case actorID = "actor_id", orgID = "org_id", productID = "product_id"
+        case appTransactionID = "app_transaction_id", compactJWS = "compact_jws", issuedAt = "issued_at"
+        case purchaseEnvironment = "purchase_environment"
+    }
+    func checked(actor: UUID, org: UUID, product: String, appTransaction: String,
+                 environment: PurchaseEnvironment, now: Date = Date()) -> Self? {
+        let parts = compactJWS.split(separator: ".", omittingEmptySubsequences: false)
+        guard actorID == actor, orgID == org, productID == product,
+              purchaseEnvironment == environment,
+              appTransactionID == appTransaction, !appTransaction.isEmpty,
+              compactJWS.count >= 100, compactJWS.count <= 8_192,
+              parts.count == 3, parts.allSatisfy({ !$0.isEmpty }),
+              Double(issuedAt) >= now.timeIntervalSince1970 - 300,
+              Double(issuedAt) <= now.timeIntervalSince1970 + 60 else { return nil }
+        return self
+    }
+}
+
 /// The one call the purchase flow makes. `PurchaseManager` holds the client as
 /// this protocol so the offline (Mock) build walks the whole paywall.
 protocol PurchasesAPI {
+    func billingContext() async throws -> SubscriptionBillingContext
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
+                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation
+    func prepareStandardPricePurchase(orgID: UUID, productID: String,
+                                      signedAppTransaction: String,
+                                      environment: PurchaseEnvironment) async throws -> StandardPricePurchaseAuthorization
     /// POST /me/entitlement — hand Apple's signed transaction to the server and
     /// get back the plan it wrote. Throws `APIError` on a non-2xx.
-    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?) async throws -> EntitlementSync
+    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync
 }
 
 // MARK: - Live
 
 extension LiveAPIClient: PurchasesAPI {
-    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?) async throws -> EntitlementSync {
+    func prepareStandardPricePurchase(orgID: UUID, productID: String,
+                                      signedAppTransaction: String,
+                                      environment: PurchaseEnvironment) async throws -> StandardPricePurchaseAuthorization {
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil,
+              WorkspaceContext.billingOrgID == orgID,
+              productID == "com.rendprop.app.pro29.monthly",
+              !signedAppTransaction.isEmpty else { throw CloudSyncError.identityChanged }
+        let path = environment == .sandbox
+            ? ["me", "subscription", "standard-price", "sandbox-prepare"]
+            : ["me", "subscription", "standard-price", "prepare"]
+        let data = try await PurchasesRequest.post(path: path, json: [
+            "org_id": orgID.uuidString.lowercased(), "product_id": productID,
+            "signed_app_transaction": signedAppTransaction
+        ], retriesUnauthorized: false, requiredCurrentOrg: orgID)
+        do { return try JSONDecoder().decode(StandardPricePurchaseAuthorization.self, from: data) }
+        catch { throw APIError.decoding }
+    }
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
+                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == appAccountToken,
+              WorkspaceContext.billingOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let data = try await PurchasesRequest.post(path: ["me", "trial", "prepare"], json: [
+            "org_id": orgID.uuidString.lowercased(),
+            "actor_id": appAccountToken.uuidString.lowercased(), "app_account_token": appAccountToken.uuidString.lowercased(),
+            "product_id": productID, "purchase_environment": environment.rawValue
+        ], retriesUnauthorized: false, requiredCurrentOrg: orgID)
+        return try TrialPurchaseReservation.decode(data, actor: appAccountToken, org: orgID, product: productID)
+    }
+    func billingContext() async throws -> SubscriptionBillingContext {
+        let data = try await PurchasesRequest.getBilling()
+        return try SubscriptionBillingContext.fromMe(data, selectedOrg: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID, servingOrg: WorkspaceContext.servingOrgID)
+    }
+    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync {
         var body: [String: Any] = ["signed_transaction": signedTransaction]
+        if let expectedOrgID { body["expected_org_id"] = expectedOrgID.uuidString.lowercased() }
         if let signedRenewalInfo, !signedRenewalInfo.isEmpty {
             body["signed_renewal_info"] = signedRenewalInfo
         }
-        let data = try await PurchasesRequest.post(path: ["me", "entitlement"], json: body)
+        let data = try await PurchasesRequest.post(path: ["me", "entitlement"], json: body, requiredCurrentOrg: expectedOrgID)
         let decoder = JSONDecoder()   // EntitlementSync decodes its own snake_case keys
         do {
-            return try decoder.decode(EntitlementSync.self, from: data)
+            let result = try decoder.decode(EntitlementSync.self, from: data)
+            if let activation = result.servingActivation {
+                guard let expectedOrgID, activation.checked(org: expectedOrgID) != nil else { throw CloudSyncError.invalidResponse }
+            }
+            return result
         } catch {
             throw APIError.decoding
         }
@@ -129,13 +217,38 @@ extension LiveAPIClient: PurchasesAPI {
 /// mapping (via `LiveAPIClient.serverError`, which is internal) — and nothing
 /// else. If `Networking/APIClient.swift` ever gains `syncEntitlement` on the
 /// `APIClient` protocol, delete this and the body above becomes one line.
-private enum PurchasesRequest {
-    static func post(path: [String], json: [String: Any]) async throws -> Data {
+@MainActor private enum PurchasesRequest {
+    private static let reservationSession = URLSession(configuration: .ephemeral,
+        delegate: TrialPurchaseRedirectPolicy(), delegateQueue: nil)
+    static func getBilling() async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        guard let org = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        guard let base = Config.apiBaseURL, let token = await AuthStore.validAccessToken() else { throw APIError.notConfigured }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == org, AuthStore.jwtSubject(token) == actor else { throw CloudSyncError.identityChanged }
+        var request = URLRequest(url: base.appendingPathComponent("me"))
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        guard (200..<300).contains(http.statusCode) else { throw LiveAPIClient.serverError(status: http.statusCode, data: data) }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+        return data
+    }
+    static func post(path: [String], json: [String: Any], retriesUnauthorized: Bool = true, requiredCurrentOrg: UUID? = nil) async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let viewedOrg = WorkspaceContext.selectedOrgID
         guard var url = Config.apiBaseURL else { throw APIError.notConfigured }
         for segment in path { url.appendPathComponent(segment) }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = 20
+        if let org = json["expected_org_id"] as? String { req.setValue(org, forHTTPHeaderField: "X-Org-Id") }
+        if let requiredCurrentOrg { req.setValue(requiredCurrentOrg.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
@@ -156,10 +269,21 @@ private enum PurchasesRequest {
         // Owner route: refresh the JWT right before sending, never send one we
         // know is stale.
         if Config.enableAuth, let token = await AuthStore.validAccessToken() {
+            guard AuthStore.jwtSubject(token) == actor else { throw CloudSyncError.identityChanged }
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        if requiredCurrentOrg != nil, req.value(forHTTPHeaderField: "Authorization") == nil {
+            throw APIError.notConfigured
+        }
 
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == viewedOrg,
+              requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
+        let session = retriesUnauthorized ? URLSession.shared : reservationSession
+        let (data, resp) = try await session.data(for: req)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == viewedOrg,
+              requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         if (200..<300).contains(http.statusCode) { return data }
 
@@ -170,11 +294,19 @@ private enum PurchasesRequest {
         // token before giving up. The Idempotency-Key was derived from the
         // body alone, so the retry replays server-side rather than risking a
         // second entitlement write.
-        if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
+        if retriesUnauthorized, http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
             let refreshed = await AuthStore.shared.forceRefresh()
             if refreshed, let fresh = AuthStore.storedAccessToken() {
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                      AuthStore.jwtSubject(fresh) == actor,
+                      WorkspaceContext.selectedOrgID == viewedOrg,
+                      requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
                 req.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
                 let (data2, resp2) = try await URLSession.shared.data(for: req)
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                      WorkspaceContext.selectedOrgID == viewedOrg,
+                      requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
                 guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
                 if (200..<300).contains(http2.statusCode) { return data2 }
                 throw LiveAPIClient.serverError(status: http2.statusCode, data: data2)
@@ -184,29 +316,70 @@ private enum PurchasesRequest {
     }
 }
 
+/// Trial and signed standard-price preparation cannot redirect to another host.
+/// A redirect/error is an unresolved result; neither POST is retried silently.
+private final class TrialPurchaseRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 // MARK: - Mock (offline dev + the UI walk)
 
 extension MockAPIClient: PurchasesAPI {
+    func prepareStandardPricePurchase(orgID: UUID, productID: String,
+                                      signedAppTransaction: String,
+                                      environment: PurchaseEnvironment) async throws -> StandardPricePurchaseAuthorization {
+        throw APIError.notConfigured
+    }
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID,
+                              environment: PurchaseEnvironment) async throws -> TrialPurchaseReservation {
+        // Offline preview must not manufacture a funded trial promise.
+        throw SubscriptionBillingContext.TrialPresentationError.invalidResponse
+    }
+    func billingContext() async throws -> SubscriptionBillingContext {
+        .init(orgID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, orgName: "Preview workspace",
+              role: "owner", canManageSubscription: true, source: nil)
+    }
     /// Offline: trust the product id in the JWS payload the caller built. There
     /// is no server to verify anything, and the mock's job is to make every
     /// screen exercisable — never to imply a real entitlement.
-    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?) async throws -> EntitlementSync {
-        _ = signedRenewalInfo
+    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync {
+        _ = signedRenewalInfo; _ = expectedOrgID
         try? await Task.sleep(nanoseconds: 300_000_000)
-        let productID = MockAPIClient.productID(inJWS: signedTransaction)
-        let plan = productID.flatMap(RendpropProducts.planName(for:)) ?? "pro"
+        guard let productID = MockAPIClient.productID(inJWS: signedTransaction),
+              let originalTransactionID = MockAPIClient.originalTransactionID(inJWS: signedTransaction),
+              let plan = RendpropProducts.planName(for: productID) else {
+            throw CloudSyncError.invalidResponse
+        }
         return EntitlementSync(
             plan: plan,
             source: "apple",
             expiresAt: Date().addingTimeInterval(30 * 24 * 60 * 60),
             productId: productID,
-            originalTransactionId: "mock-original-transaction",
+            originalTransactionId: originalTransactionID,
             environment: "Sandbox")
     }
 
     /// Best-effort read of `productId` out of a JWS payload (middle segment,
     /// base64url, no signature check — offline only, never a trust decision).
     fileprivate static func productID(inJWS jws: String) -> String? {
+        payload(inJWS: jws)?["productId"] as? String
+    }
+
+    /// Echo Apple's actual original ID like the live endpoint. A placeholder
+    /// makes the StoreKit test fail the same receipt-binding check used in
+    /// production even when its locally signed transaction is valid.
+    fileprivate static func originalTransactionID(inJWS jws: String) -> String? {
+        let value = payload(inJWS: jws)?["originalTransactionId"]
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func payload(inJWS jws: String) -> [String: Any]? {
         let parts = jws.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count >= 2 else { return nil }
         var b64 = String(parts[1])
@@ -215,6 +388,6 @@ extension MockAPIClient: PurchasesAPI {
         while b64.count % 4 != 0 { b64 += "=" }
         guard let data = Data(base64Encoded: b64),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return obj["productId"] as? String
+        return obj
     }
 }

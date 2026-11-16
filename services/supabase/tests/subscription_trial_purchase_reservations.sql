@@ -1,0 +1,240 @@
+\set ON_ERROR_STOP on
+begin;
+\ir trial_media_fixture.sql
+-- Apple receipt windows are absolute UTC terms, including across DST changes.
+set local timezone='UTC';
+-- Funded-model regression: pin funded serving mode for this transaction. The
+-- live default since 2026-10-08 is ceiling mode (migration 20261008201736);
+-- ceiling-mode admission is covered by launch_blockers.sql.
+update public.app_config set value=value||'{"mode":"funded"}'::jsonb where key='serving_mode';
+-- Five-edit grant custody/exhaustion fixture. Introductory video is denied
+-- independently at the production serving and creative entitlement gates.
+update public.subscription_trial_config set photo_edits=5;
+create temp table purchase_checks(n integer default 0);insert into purchase_checks default values;
+grant all on purchase_checks to service_role;
+create function pg_temp.purchase_ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'PURCHASE FAIL: %',label;end if;update purchase_checks set n=n+1;end$$;
+create function pg_temp.purchase_denied(q text,expected text,label text)returns void language plpgsql as $$begin begin execute q;exception when others then if position(expected in sqlerrm)>0 then perform pg_temp.purchase_ok(true,label);return;end if;raise;end;raise exception 'PURCHASE FAIL accepted: %',label;end$$;
+create temp table buy(actor uuid,other uuid,org uuid,other_org uuid,pool uuid,hold uuid,product text,purchased timestamptz,expires timestamptz,stamp timestamptz);
+insert into buy values('e1000000-0000-4000-8000-000000000002','e1000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000001','e2000000-0000-4000-8000-000000000002',null,null,'com.rendprop.app.starter.monthly',now(),now()+interval '7 days',now());
+grant all on buy to service_role;
+insert into auth.users(id,email,is_anonymous,email_confirmed_at)select actor,'held-trial@example.invalid',false,now()from buy union all select other,'other-held@example.invalid',false,now()from buy;
+insert into orgs(id,name,plan,plan_source)select org,'Synthetic reservation','free','apple'from buy union all select other_org,'Synthetic foreign reservation','free','apple'from buy;
+insert into memberships(user_id,org_id,role)select actor,org,'owner'from buy union all select other,org,'owner'from buy union all select actor,other_org,'owner'from buy;
+select pg_temp.purchase_ok(not enabled,'trial config remains disabled by migration')from subscription_trial_config;
+select pg_temp.purchase_ok(not admissions_enabled,'pool acquisition defaults disabled')from serving_sponsor_pools;
+select pg_temp.purchase_ok(not has_table_privilege(r,'subscription_trial_purchase_reservations','INSERT,UPDATE,DELETE'),'no tenant or service direct commitment rewrite')from unnest(array['anon','authenticated','service_role'])r;
+select pg_temp.purchase_ok(not has_function_privilege(r,sig,'EXECUTE'),'prepurchase and conversion service only')from unnest(array['anon','authenticated'])r cross join unnest(array['prepare_subscription_trial_purchase(uuid,uuid,text)','fund_reserved_subscription_trial(uuid,uuid,text,text,text,bigint,text,text,integer,text,timestamptz,timestamptz,timestamptz,text)'])sig;
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_ok(subscription_trial_held_offer(b.actor,b.org)is null,'GET offers no loose availability');
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),'RP402','disabled trial cannot acquire cash');
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.other,b.other_org,b.product),'RP403','foreign workspace cannot acquire cash');
+end$$;
+reset role;
+update subscription_trial_config set enabled=true;
+insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256)values('synthetic-held-pool','trial',1000,now()-interval '3 days',now()+interval '20 days',repeat('b',64));
+update buy set pool=(select id from serving_sponsor_pools where collection_ref='synthetic-held-pool');
+insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
+ select product,'USA','USD',49000,4165,1,now()-interval '3 days',now()+interval '20 days','{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',500,'{"storage":8,"delivery":3,"compute":4,"email":5,"support":6,"retention":8,"uncertainty":8}',7,pool,repeat('a',64)from buy;
+set local role service_role;
+do $$declare b record;h jsonb;begin select * into b from buy;
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),'RP402','disabled pool cannot acquire despite enabled config');
+end$$;
+reset role;update serving_sponsor_pools set admissions_enabled=true where id=(select pool from buy);
+update apple_serving_schedules set trial_days=3 where trial_pool_id=(select pool from buy);
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),'RP402','short schedule cannot commit an unusable Apple seven-day trial');
+ perform pg_temp.purchase_ok(not exists(select 1 from subscription_trial_purchase_reservations),'short schedule holds no cash');
+end$$;
+reset role;update apple_serving_schedules set trial_days=7 where trial_pool_id=(select pool from buy);
+update subscription_trial_config set max_days=3;
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),'RP402','short configured terms cannot acquire seven-day hold');
+end$$;
+reset role;update subscription_trial_config set max_days=7;
+
+set local role service_role;
+do $$declare b record;h jsonb;r jsonb;begin select * into b from buy;
+ h:=prepare_subscription_trial_purchase(b.actor,b.org,b.product);update buy set hold=(h->>'reservation_id')::uuid;
+ perform pg_temp.purchase_ok(h->>'actor_id'=b.actor::text and h->>'app_account_token'=b.actor::text and h->>'org_id'=b.org::text and h->>'product_id'=b.product and h#>>'{trial_offer,photo_edits}'='5','cash hold binds exact buying owner rather than first sorted owner');
+ perform pg_temp.purchase_ok(prepare_subscription_trial_purchase(b.actor,b.org,b.product)=h,'lost prepare response replays exact immutable hold');
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,''com.rendprop.app.pro.monthly'')',b.actor,b.org),'RP409','cancelled or different-SKU attempt cannot rewrite cash commitment');
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.other_org,b.product),'RP409','workspace switch cannot acquire another lifetime hold');
+ perform pg_temp.purchase_ok(subscription_trial_reserved_workspace(b.other,b.product)is null,'wrong buying actor cannot recover held workspace');
+ perform pg_temp.purchase_ok(subscription_trial_reserved_workspace(b.actor,'com.rendprop.app.pro.monthly')is null,'wrong signed SKU cannot recover held workspace');
+ perform pg_temp.purchase_ok(subscription_trial_reserved_workspace(b.actor,b.product)=b.org,'signed exact actor/SKU recovers hold before device receipt');
+end$$;
+reset role;
+-- Old admitted holds can lack a frozen media receipt entirely. That cannot
+-- fund an active Production intro plus 90-day retention. It must disappear
+-- from billing GET and fail before the Apple sheet, without deleting cash.
+create temp table held_media_snapshot as select id,trial_media_account_ref,
+ trial_media_requests,trial_media_bytes,trial_media_storage,trial_media_evidence_sha256
+ from public.subscription_trial_purchase_reservations where id=(select hold from buy);
+update public.subscription_trial_purchase_reservations set
+ trial_media_account_ref=null,trial_media_requests=null,trial_media_bytes=null,
+ trial_media_storage=null,trial_media_evidence_sha256=null where id=(select hold from buy);
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_ok(subscription_trial_held_offer(b.actor,b.org)is null,
+  'billing GET suppresses objectively unfulfillable frozen media hold');
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),
+  'RP402: Cash-held trial media snapshot is unavailable','legacy client cannot open Apple sheet on null snapshot');
+ perform pg_temp.purchase_denied(format('select prepare_production_intro_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),
+  'RP402: Cash-held trial media snapshot is unavailable','explicit Production preflight rejects null snapshot');
+ perform pg_temp.purchase_ok(subscription_trial_reserved_workspace(b.actor,b.product)=b.org,
+  'existing signed exact actor/SKU recovery remains available');
+ perform pg_temp.purchase_ok((select count(*)=1 and bool_and(funding_id is null) from subscription_trial_purchase_reservations),
+  'failed preflight neither releases nor converts the immutable hold');
+end$$;
+reset role;
+update public.subscription_trial_purchase_reservations h set
+ trial_media_account_ref=s.trial_media_account_ref,trial_media_requests=s.trial_media_requests,
+ trial_media_bytes=s.trial_media_bytes,trial_media_storage=s.trial_media_storage,
+ trial_media_evidence_sha256=s.trial_media_evidence_sha256
+ from held_media_snapshot s where h.id=s.id;
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_ok((prepare_production_intro_trial_purchase(b.actor,b.org,b.product)->>'reservation_id')=b.hold::text,
+  'valid frozen historical hold passes explicit Production preflight');
+end$$;
+reset role;
+-- The explicit Sandbox preflight replays only an exact held purchase while
+-- checking the separate operational sponsor before StoreKit opens. A failed
+-- preflight must not create a second immutable Production cash hold.
+update public.app_config set value=jsonb_build_object('mode','ceiling','free_published_listings',1)
+ where key='serving_mode';
+update public.app_config set value=jsonb_build_object('cap_cents',29000,
+ 'starts_at',now()-interval '1 day','ends_at',now()+interval '20 days')
+ where key='trial_sponsor_pool';
+set local role service_role;
+do $$declare b record;h jsonb;begin select * into b from buy;
+ h:=prepare_sandbox_intro_trial_purchase(b.actor,b.org,b.product);
+ perform pg_temp.purchase_ok(h->>'reservation_id'=b.hold::text,
+  'valid Sandbox preflight replays the same immutable exact buyer/SKU hold');
+ perform pg_temp.purchase_ok((select count(*)=1 from subscription_trial_purchase_reservations),
+  'valid replay does not create a new sponsor commitment');
+end$$;
+reset role;
+update public.app_config set value=jsonb_set(value,'{ends_at}',to_jsonb(now()+interval '1 day'))
+ where key='trial_sponsor_pool';
+insert into public.memberships(user_id,org_id,role) select other,other_org,'owner' from buy;
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_denied(format('select prepare_sandbox_intro_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),
+  'RP402: Test-trial sponsor allocation is closed or too short','short Sandbox sponsor window blocks held replay');
+ perform pg_temp.purchase_denied(format('select prepare_sandbox_intro_trial_purchase(%L,%L,%L)',b.other,b.other_org,b.product),
+  'RP402: Test-trial sponsor allocation is closed or too short','short Sandbox sponsor refuses before a new cash hold');
+ perform pg_temp.purchase_ok((select count(*)=1 from subscription_trial_purchase_reservations),
+  'failed new Sandbox prepare leaves the original cash commitment alone');
+ perform pg_temp.purchase_ok((prepare_subscription_trial_purchase(b.actor,b.org,b.product)->>'reservation_id')=b.hold::text,
+  'Production replay remains available after Sandbox sponsor closes');
+end$$;
+reset role;
+delete from public.memberships where user_id=(select other from buy) and org_id=(select other_org from buy);
+update public.app_config set value=jsonb_build_object('cap_cents',499,
+ 'starts_at',now()-interval '1 day','ends_at',now()+interval '20 days')
+ where key='trial_sponsor_pool';
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_denied(format('select prepare_sandbox_intro_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),
+  'RP402: Test-trial sponsor allocation has less than one trial envelope','low Sandbox sponsor capacity blocks held replay');
+end$$;
+reset role;
+update public.app_config set value=jsonb_build_object('cap_cents',29000,
+ 'starts_at',now()-interval '1 day','ends_at',now()+interval '20 days')
+ where key='trial_sponsor_pool';
+update public.orgs set plan='pro',plan_source='manual' where id=(select org from buy);
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_denied(format('select prepare_sandbox_intro_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),
+  'RP409: This workspace already has subscription service','paid workspace cannot open a Sandbox trial sheet');
+end$$;
+reset role;
+update public.orgs set plan='free',plan_source='apple' where id=(select org from buy);
+update public.app_config set value=value||'{"mode":"funded"}'::jsonb where key='serving_mode';
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_denied(format('select prepare_sandbox_intro_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),
+  'RP403: Sandbox trials require ceiling serving mode','Sandbox preflight cannot claim funded serving mode');
+end$$;
+reset role;
+set local role service_role;
+do $$declare b record;h jsonb;r jsonb;begin select * into b from buy;
+ -- Exact millisecond receipt chronology cannot precede cash admission.
+ perform apply_apple_entitlement_v2(b.org,b.actor,'held-before-original','held-before-tx',b.product,'max','Production','active',b.expires,true,'SUBSCRIBED',b.purchased-interval '1 millisecond',b.stamp,b.stamp,b.stamp);
+ r:=fund_reserved_subscription_trial(b.actor,b.org,'held-before-original','held-before-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased-interval '1 millisecond',b.expires,b.stamp,repeat('c',64));
+ perform pg_temp.purchase_ok(r->>'reason'='trial_receipt_period_mismatch'and not exists(select 1 from serving_funding where org_id=b.org),'receipt before exact cash hold cannot consume sponsor funding');
+ delete from apple_subscriptions where original_transaction_id='held-before-original';
+ perform apply_apple_entitlement_v2(b.org,b.actor,'held-original','held-tx',b.product,'max','Production','active',b.expires,true,'SUBSCRIBED',b.purchased,b.stamp,b.stamp,b.stamp);
+ r:=fund_verified_apple_transaction(b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
+ perform pg_temp.purchase_ok(r->>'reason'='trial_purchase_reservation_required'and not exists(select 1 from serving_funding where org_id=b.org),'legacy first-owner route cannot bypass held receipt conversion');
+ r:=fund_reserved_subscription_trial(b.other,b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
+ perform pg_temp.purchase_ok(not(r->>'funded')::boolean and not exists(select 1 from serving_funding where org_id=b.org),'wrong actor cannot convert genuine other-owner receipt');
+ r:=fund_reserved_subscription_trial(b.actor,b.other_org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
+ perform pg_temp.purchase_ok(r->>'reason'='stale_or_unbound','wrong org cannot convert');
+ r:=fund_reserved_subscription_trial(b.actor,b.org,'held-original','held-tx',b.product,49000,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
+ perform pg_temp.purchase_ok(r->>'reason'='unreserved_trial_classification','nonzero paid receipt cannot consume intro hold');
+end$$;
+reset role;
+update auth.users set email_confirmed_at=null where id=(select actor from buy);
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_ok(subscription_trial_held_offer(b.actor,b.org)is null,'denamed buyer cannot advertise held offer');
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),'RP403','denamed buyer cannot re-open acquisition');
+end$$;
+reset role;update auth.users set email_confirmed_at=now()where id=(select actor from buy);
+update memberships set role='agent'where user_id=(select actor from buy)and org_id=(select org from buy);
+set local role service_role;
+do $$declare b record;begin select * into b from buy;
+ perform pg_temp.purchase_ok(subscription_trial_held_offer(b.actor,b.org)is null,'lost owner authority cannot display offer');
+ perform pg_temp.purchase_denied(format('select prepare_subscription_trial_purchase(%L,%L,%L)',b.actor,b.org,b.product),'RP403','lost owner cannot commit more cash');
+end$$;
+reset role;update memberships set role='owner'where user_id=(select actor from buy)and org_id=(select org from buy);
+-- Simulate an admitted StoreKit sheet resolved well after acquisition. Current
+-- policy expiry/disable cannot recycle or strand its immutable cash commitment.
+update subscription_trial_purchase_reservations set held_at=now()-interval '2 days'where id=(select hold from buy);
+update serving_sponsor_pools set admissions_enabled=false,ends_at=now()-interval '1 day'where id=(select pool from buy);
+update apple_serving_schedules set ends_at=now()-interval '1 day',trial_sponsored_cents=400,trial_reserve_components='{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}'where trial_pool_id=(select pool from buy);
+update subscription_trial_config set enabled=false;
+set local role service_role;
+do $$declare b record;r jsonb;h jsonb;begin select * into b from buy;
+ h:=prepare_subscription_trial_purchase(b.actor,b.org,b.product);perform pg_temp.purchase_ok(h#>>'{trial_offer,max_video_seconds}'='0','previous exact held offer remains pinned after disable');
+ perform pg_temp.purchase_ok((prepare_production_intro_trial_purchase(b.actor,b.org,b.product)->>'reservation_id')=b.hold::text,
+  'frozen valid Production hold remains dispatchable after mutable policy and schedule expiry');
+ r:=fund_reserved_subscription_trial(b.actor,b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
+ perform pg_temp.purchase_ok((r->>'funded')::boolean,'late genuine purchase converts after config/schedule/pool expiry');
+ perform pg_temp.purchase_ok((select sponsored_cents=500 and recurring_reserve_cents=42 and actor_id=b.actor from serving_funding where id=(r->>'funding_id')::uuid),'conversion honors exact admitted dollars/reserve and buying actor');
+ perform pg_temp.purchase_ok((select max_video_seconds=0 and walkthrough_cap=0 and listing_cap=0 and photo_cap=5 and identity_sha256=(select identity_sha256 from subscription_trial_purchase_reservations where id=b.hold)from subscription_trial_grants where actor_id=b.actor),'immutable grant uses admitted photo-only capacity/identity snapshot');
+ perform pg_temp.purchase_ok(subscription_trial_held_offer(b.actor,b.org)is null,'converted offer is not advertised as a second trial');
+ perform pg_temp.purchase_ok((select coalesce(sum(sponsored_cents),0)from serving_funding where sponsor_pool_id=b.pool)+(select coalesce(sum(sponsored_cents),0)from subscription_trial_purchase_reservations where pool_id=b.pool and funding_id is null)=500,'conversion replaces hold without double-counting cash');
+ perform pg_temp.purchase_ok((select count(*)=1 from media_delivery_budgets
+   where org_id=b.org and funding_id=(r->>'funding_id')::uuid),
+   'conversion creates one exact funded media budget');
+ perform media_delivery_admit(b.org,1024,true);
+ r:=fund_reserved_subscription_trial(b.actor,b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
+ perform pg_temp.purchase_ok((r->>'replay')::boolean and(select count(*)=1 from subscription_trial_grants where actor_id=b.actor)
+   and(select count(*)=1 and min(used_requests)=1 and min(used_bytes)=1024 from media_delivery_budgets where org_id=b.org),
+   'duplicate signed receipt does not replenish money, grant, or media counters: '||r::text||' / '||(select to_jsonb(budget)::text from media_delivery_budgets budget where org_id=b.org));
+ r:=fund_reserved_subscription_trial(b.other,b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp,repeat('c',64));
+ perform pg_temp.purchase_ok(r->>'reason'='trial_actor_mismatch','wrong actor cannot restore converted hold');
+ perform apply_apple_entitlement_v2(b.org,b.actor,'held-original','held-tx',b.product,'max','Production','refunded',b.expires,false,'REFUND',b.purchased,b.stamp+interval '1 second',b.stamp+interval '1 second',b.stamp+interval '1 second');
+ r:=fund_reserved_subscription_trial(null,b.org,'held-original','held-tx',b.product,0,'USD','USA',1,'FREE_TRIAL',b.purchased,b.expires,b.stamp+interval '1 second',repeat('d',64));
+ perform pg_temp.purchase_ok((select revoked_at is not null from serving_funding where actor_id=b.actor and source='trial'),'signed refund with missing buyer token revokes accepted funding');
+ perform pg_temp.purchase_ok((select count(*)=1 from serving_funding where org_id=b.org)and(select count(*)=1 from subscription_trial_grants where actor_id=b.actor),'refund grants no new money or allowance');
+
+end$$;
+reset role;
+-- Deleted identity cannot recycle its commitment on another account/workspace.
+delete from auth.users where id=(select actor from buy);
+insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('e1000000-0000-4000-8000-000000000003','HELD-TRIAL@example.invalid',false,now());
+insert into orgs(id,name,plan,plan_source)values('e2000000-0000-4000-8000-000000000003','Synthetic recreated buyer','free','apple');
+insert into memberships(user_id,org_id,role)values('e1000000-0000-4000-8000-000000000003','e2000000-0000-4000-8000-000000000003','owner');
+set local role service_role;
+select pg_temp.purchase_denied('select prepare_subscription_trial_purchase(''e1000000-0000-4000-8000-000000000003'',''e2000000-0000-4000-8000-000000000003'',''com.rendprop.app.starter.monthly'')','RP409','deleted trial identity cannot reset lifetime cash on a new actor/org');
+select pg_temp.purchase_ok((select count(*)=1 from subscription_trial_purchase_reservations),'deletion keeps immutable minimum commitment tombstone');
+reset role;
+select jsonb_build_object('assertions',n,'passed',true)from purchase_checks;
+rollback;

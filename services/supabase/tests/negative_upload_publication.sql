@@ -34,6 +34,8 @@ begin
   insert into auth.users(id, email, raw_user_meta_data)
     values (u, 'upload-publication-fixture@example.invalid', '{}'::jsonb);
   select org_id into strict o from memberships where user_id = u and role = 'owner' limit 1;
+  -- This fixture tests asset-publication immutability, not unpaid listing admission.
+  update orgs set plan = 'starter', plan_source = 'manual' where id = o;
   insert into listings(id, org_id, agent_id, address) values (l, o, u, 'Synthetic upload fixture');
   insert into capture_assets(id, listing_id, kind, storage_key, bytes, content_type, bucket)
     values (completed, l, 'photo', 'uploads/fixture/ticket.jpg', 4, 'image/jpeg', 'uploads');

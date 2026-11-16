@@ -36,6 +36,7 @@ import {
   ProviderError,
   Semaphore,
   classifyStatus,
+  definitiveSubmitRejection,
   fetchJson,
   persistResult,
   publicImageUrlFor,
@@ -282,11 +283,6 @@ export function readHfMotionTransferRef(value: unknown): HfMotionTransferRef {
 
 async function motionRequest(url: string, init: RequestInit, timeout: number): Promise<Record<string, unknown>> {
   const response = await fetch(url, { ...init, headers: hfHeaders(), redirect: "error", signal: AbortSignal.timeout(timeout) });
-  if (!response.ok) {
-    await response.body?.cancel();
-    // Never include vendor bodies: they can echo signed private media URLs.
-    throw new ProviderError(PROVIDER, classifyStatus(response.status), `higgsfield HTTP ${response.status}`, response.status);
-  }
   const reader = response.body?.getReader();
   motionTransferRequire(!!reader, "provider response is empty");
   const chunks: Uint8Array[] = []; let size = 0;
@@ -302,7 +298,15 @@ async function motionRequest(url: string, init: RequestInit, timeout: number): P
   const bytes = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   let data: unknown;
-  try { data = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new ProviderError(PROVIDER, "upstream", "Invalid higgsfield response"); }
+  let parsed = true;
+  try { data = JSON.parse(new TextDecoder().decode(bytes)); } catch { parsed = false; }
+  if (!response.ok) {
+    // A poll, malformed body or receipt-bearing error cannot release a submit
+    // hold. Never expose the provider body or its private media URLs.
+    const rejected = init.method?.toUpperCase() === "POST" && parsed && !!data && typeof data === "object" && !Array.isArray(data) && definitiveSubmitRejection(response.status, data);
+    throw new ProviderError(PROVIDER, classifyStatus(response.status), `higgsfield HTTP ${response.status}`, response.status, rejected);
+  }
+  if (!parsed) throw new ProviderError(PROVIDER, "upstream", "Invalid higgsfield response");
   motionTransferRequire(!!data && typeof data === "object" && !Array.isArray(data), "invalid provider response");
   return data as Record<string, unknown>;
 }

@@ -7,7 +7,7 @@ export type VersionChoice={listingId:string;authorId:string;revision:number};
 export type SavedVersion={id:string;document_user_id:string;org_id:string;key:string;listing_id:string;document_revision:number;reason:"submitted"|"before_replace";created_at:string};
 export type VersionSnapshot={version:SavedVersion;document:CloudDocument;brief:ProductionPlan|null};
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-export function canCopyVersion(workspace:Pick<Workspace,"org"|"memberships">):boolean{return ["owner","admin","agent"].includes(workspace.memberships.find(item=>item.orgId===workspace.org.id)?.role??"");}
+export function canCopyVersion(workspace:Pick<Workspace,"org"|"memberships"|"libraryOrgId">):boolean{const member=workspace.memberships.find(item=>item.orgId===(workspace.libraryOrgId??workspace.org.id));return member?.canWrite??["owner","admin","agent"].includes(member?.role??"");}
 function object(value:unknown):Record<string,unknown>{if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("Saved version information could not be read.");return value as Record<string,unknown>;}
 export function versionPath(route:"versions"|"version",choice:Omit<VersionChoice,"revision">&{revision?:number},offset=0){
   const params=new URLSearchParams({key:`edit:${choice.listingId}`,document_user_id:choice.authorId});

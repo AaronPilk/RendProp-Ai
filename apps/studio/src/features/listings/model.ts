@@ -1,5 +1,6 @@
 import type { Listing } from "../../data/contracts";
 import { uuid } from "../../data/contracts";
+import { detailChanges, detailInputs } from "./industry";
 export type Asset = { id: string; listing_id: string; storage_key: string; kind: string; bucket: string; uploaded: boolean; duration_s: number | null; bytes?: number; created_at: string; qc_required?: boolean; qc_publishable?: boolean; qc_message?: string | null };
 export type Job = { id: string; listing_id: string; capture_asset_id: string; status: string; progress: number; current_step: string | null; tier: string; error: string | null; created_at: string };
 export type Published = { id: string; listing_id: string; job_id: string; slug: string; published_at: string | null; duration_s: number | null; staged: boolean; created_at: string };
@@ -7,7 +8,20 @@ export type Chapter = { label: string; t_ms: number; sort: number; asset_id?: st
 export type GalleryPhoto = { id: string; listing_id: string; original_key: string | null; enhanced_key: string | null; caption: string | null; is_staged: boolean; is_main: boolean; sort: number; created_at: string };
 export type ListingState = { assets: Asset[]; jobs: Job[]; renders: Published[]; photos: GalleryPhoto[]; chapters: Chapter[]; nextOffset: number | null };
 export const EMPTY_STATE: ListingState = { assets: [], jobs: [], renders: [], photos: [], chapters: [], nextOffset: null };
-export function orderedGallery(photos: GalleryPhoto[]): GalleryPhoto[] { return [...photos].sort((a, b) => a.sort - b.sort || a.id.localeCompare(b.id)); }
+/** What a media read depends on. Job progress is left out on purpose: it
+ * changes every few seconds while a render runs and never changes a photo. */
+export function activitySignature(state: ListingState): string {
+  return JSON.stringify([
+    state.assets.map(asset => [asset.id, asset.uploaded, asset.storage_key, asset.qc_publishable ?? null]),
+    state.photos.map(photo => [photo.id, photo.original_key, photo.enhanced_key, photo.caption, photo.is_staged, photo.sort]),
+    state.renders.map(render => render.id),
+  ]);
+}
+export function isContactPhotoKey(value: unknown): boolean { return typeof value === "string" && value.split("/").at(-1)?.startsWith("contact-") === true; }
+/** Saved position first; photos attached before positions were assigned (all 0) keep their upload
+ * (attach) order instead of a random UUID order. The reorder RPC compares this same order. */
+export function orderedGallery(photos: GalleryPhoto[]): GalleryPhoto[] { return [...photos].sort((a, b) => a.sort - b.sort || attachTime(a) - attachTime(b) || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)); }
+function attachTime(photo: GalleryPhoto): number { const time = Date.parse(photo.created_at); return Number.isFinite(time) ? time : 0; }
 export function canPublishAsset(asset: Asset): boolean { return asset.qc_required !== true || asset.qc_publishable === true; }
 export function safeHTTPS(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 4096) return null;
@@ -20,20 +34,20 @@ export function decodeListingState(raw: unknown, orgId: string, listingId: strin
   const rows = <T,>(key: string): T[] => {
     if (!Array.isArray(row[key]) || row[key].length > 100) throw new Error("Property activity is incomplete. Refresh to try again.");
     return row[key].map((value: Record<string, unknown>) => {
-      if (!value || value.listing_id !== listingId) throw new Error("The server returned activity from another property.");
+      if (!value || value.listing_id !== listingId) throw new Error("We got activity for a different property. Refresh this property.");
       uuid(value.id);
       return value as T;
     });
   };
   const assets = rows<Asset>("assets");
   for (const asset of assets) {
-    if (!["uploads", "renders"].includes(asset.bucket) || !["photo", "video"].includes(asset.kind) || typeof asset.storage_key !== "string" || !asset.storage_key.startsWith(`${asset.bucket}/${orgId}/${listingId}/`) || asset.storage_key.includes("..")) throw new Error("A media item could not be verified.");
-    if (asset.qc_required !== undefined && typeof asset.qc_required !== "boolean" || asset.qc_publishable !== undefined && typeof asset.qc_publishable !== "boolean" || asset.qc_message != null && (typeof asset.qc_message !== "string" || asset.qc_message.length > 1000)) throw new Error("This video’s accuracy review could not be verified.");
+    if (!["uploads", "renders"].includes(asset.bucket) || !["photo", "video"].includes(asset.kind) || typeof asset.storage_key !== "string" || !asset.storage_key.startsWith(`${asset.bucket}/${orgId}/${listingId}/`) || asset.storage_key.includes("..")) throw new Error("One photo or video could not be read. Refresh this property.");
+    if (asset.qc_required !== undefined && typeof asset.qc_required !== "boolean" || asset.qc_publishable !== undefined && typeof asset.qc_publishable !== "boolean" || asset.qc_message != null && (typeof asset.qc_message !== "string" || asset.qc_message.length > 1000)) throw new Error("We could not read this video’s accuracy check. Refresh this property.");
   }
   const photos = row.photos === undefined ? [] : rows<GalleryPhoto>("photos");
   for (const photo of photos) {
-    if (photo.caption !== null && (typeof photo.caption !== "string" || photo.caption.length > 4000) || typeof photo.is_staged !== "boolean" || typeof photo.is_main !== "boolean" || !Number.isInteger(photo.sort) || photo.sort < -32768 || photo.sort > 32767) throw new Error("Gallery details could not be verified.");
-    for (const key of [photo.original_key, photo.enhanced_key]) if (key !== null && (typeof key !== "string" || !["uploads", "renders"].some(bucket => key.startsWith(`${bucket}/${orgId}/${listingId}/`)) || key.length > 1024 || key.includes("..") || /[?#\\]/.test(key))) throw new Error("A gallery photo could not be verified.");
+    if (photo.caption !== null && (typeof photo.caption !== "string" || photo.caption.length > 4000) || typeof photo.is_staged !== "boolean" || typeof photo.is_main !== "boolean" || !Number.isInteger(photo.sort) || photo.sort < -32768 || photo.sort > 32767) throw new Error("The photo gallery could not be read. Refresh this property.");
+    for (const key of [photo.original_key, photo.enhanced_key]) if (key !== null && (typeof key !== "string" || !["uploads", "renders"].some(bucket => key.startsWith(`${bucket}/${orgId}/${listingId}/`)) || key.length > 1024 || key.includes("..") || /[?#\\]/.test(key))) throw new Error("One gallery photo could not be read. Refresh this property.");
   }
   const nextOffset = row.next_offset;
   if (nextOffset !== null && (!Number.isSafeInteger(nextOffset) || nextOffset !== offset + 100)) throw new Error("Property activity pagination changed. Refresh to try again.");
@@ -41,7 +55,7 @@ export function decodeListingState(raw: unknown, orgId: string, listingId: strin
     if (typeof c.label !== "string" || c.label.length > 80 || !Number.isInteger(c.t_ms) || Number(c.t_ms) < 0 || Number(c.t_ms) > 86_400_000) throw new Error("Saved chapters could not be read.");
     return { label: c.label, t_ms: Number(c.t_ms), sort: Number(c.sort) || 0, asset_id: typeof c.asset_id === "string" ? uuid(c.asset_id) : undefined };
   }) : [];
-  return { assets, jobs: rows<Job>("jobs"), renders: rows<Published>("renders"), photos, chapters, nextOffset: nextOffset as number | null };
+  return { assets: assets.filter(asset => !isContactPhotoKey(asset.storage_key)), jobs: rows<Job>("jobs"), renders: rows<Published>("renders"), photos: photos.filter(photo => !isContactPhotoKey(photo.original_key) && !isContactPhotoKey(photo.enhanced_key)), chapters, nextOffset: nextOffset as number | null };
 }
 export function listingPayload(values: FormData, existing?: Listing): Record<string, unknown> {
   const text = (key: string, max = 500) => String(values.get(key) ?? "").trim().slice(0, max) || null;
@@ -56,8 +70,39 @@ export function listingPayload(values: FormData, existing?: Listing): Record<str
   if (!address) throw new Error("Give this property an address or name.");
   const price = number("price");
   const baths = number("baths");
-  if (baths !== null && baths > 99) throw new Error("Bathrooms must be 99 or fewer.");
-  return { address, tagline: text("tagline"), space_type: text("space_type"), beds: number("beds", true), baths, sqft: number("sqft", true), price_cents: price === null ? null : Math.round(price * 100), ...(existing ? {} : { status: "draft", source: "manual" }) };
+  if (baths !== null && (baths > 99 || Math.abs(baths * 10 - Math.round(baths * 10)) > 1e-8)) throw new Error("Bathrooms must be 99 or fewer, in tenths.");
+  const details = detailChanges(values, existing?.details ?? {}).changes;
+  return { address, tagline: text("tagline"), space_type: text("space_type"), beds: number("beds", true), baths, sqft: number("sqft", true), price_cents: price === null ? null : Math.round(price * 100), ...(existing ? {} : { status: "draft", source: "manual", ...(Object.keys(details).length ? { details } : {}) }) };
+}
+export type ListingFactsBody = { expected: Record<string, unknown>; changes: Record<string, unknown>; details_expected: Record<string, unknown>; details_changes: Record<string, unknown> };
+export function listingFactValues(listing: Listing): Record<string, unknown> {
+  // Keep the wire values as read, including null, zero and empty strings. Only
+  // user input is normalized; expected values must match the shared record.
+  return { address: listing.address, tagline: listing.tagline, space_type: listing.spaceType, beds: listing.beds, baths: listing.baths, sqft: listing.sqft, price_cents: listing.priceCents, status: listing.status, sold_at: listing.soldAt ?? null };
+}
+export function listingFactsBody(listing: Listing, changes: Record<string, unknown>): ListingFactsBody {
+  const baseline = listingFactValues(listing), expected: Record<string, unknown> = {};
+  for (const key of Object.keys(changes)) {
+    if (!(key in baseline)) throw new Error("This property field cannot be saved here.");
+    expected[key] = baseline[key];
+  }
+  return { expected, changes, details_expected: {}, details_changes: {} };
+}
+export function listingFormValues(listing: Listing): Record<string, string | number> {
+  return { address: listing.address ?? "", tagline: listing.tagline ?? "", space_type: listing.spaceType, price: listing.priceCents == null ? "" : listing.priceCents / 100, beds: listing.beds ?? "", baths: listing.baths ?? "", sqft: listing.sqft ?? "", ...detailInputs(listing.details) };
+}
+export function listingFactsPayload(values: FormData, listing: Listing): ListingFactsBody {
+  const original: Record<string, unknown> = { ...listingFactValues(listing), address: listing.address?.trim() || null, tagline: listing.tagline?.trim() || null };
+  const desired = listingPayload(values, listing);
+  const changes = Object.fromEntries(Object.entries(desired).filter(([key, value]) => value !== original[key]));
+  const details = detailChanges(values, listing.details);
+  return { ...listingFactsBody(listing, changes), details_expected: details.expected, details_changes: details.changes };
+}
+export function listingFactsConfirmed(saved: Listing, body: ListingFactsBody): boolean {
+  const actual = listingFactValues(saved);
+  return Object.entries(body.changes).every(([key, value]) => key === "sold_at" && value !== null && actual[key] !== null
+    ? Date.parse(String(actual[key])) === Date.parse(String(value))
+    : actual[key] === value) && Object.entries(body.details_changes).every(([key, value]) => value === null ? !Object.hasOwn(saved.details, key) : saved.details[key] === value);
 }
 export function parseChapterText(text: string, durationSeconds?: number | null): Chapter[] {
   const lines = text.split("\n").filter((line) => line.trim());
@@ -78,4 +123,16 @@ export function formatChapters(chapters: Chapter[]) {
 export function tourLinks(slug: string): { branded: string; unbranded: string } | null {
   if (!/^[a-zA-Z0-9_-]{1,160}$/.test(slug)) return null;
   return { branded: `https://rendprop.com/f/${encodeURIComponent(slug)}`, unbranded: `https://rendprop.com/u/${encodeURIComponent(slug)}` };
+}
+/** The three property-website designs tour-host can render. A preview link
+ * (`?preview_theme=`) is presentation only: it never changes the published
+ * website or grants a paid design — purchase happens in the iPhone app. */
+export const WEBSITE_DESIGNS = [
+  { theme: "basic", name: "Classic", paid: false },
+  { theme: "signature-estate", name: "Signature Estate", paid: true },
+  { theme: "coastal-luxe", name: "Coastal Luxe", paid: true },
+] as const;
+export function websiteDesignPreviews(slug: string): { theme: string; name: string; paid: boolean; href: string }[] | null {
+  const links = tourLinks(slug);
+  return links && WEBSITE_DESIGNS.map(design => ({ ...design, href: `${links.branded}?preview_theme=${design.theme}` }));
 }

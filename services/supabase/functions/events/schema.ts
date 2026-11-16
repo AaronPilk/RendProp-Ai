@@ -251,6 +251,17 @@ export function scrubMeta(input: unknown): string | null {
   return s.length === 0 ? null : s;
 }
 
+// Diagnostic props emit "marketing version (build)". The broader batch
+// metadata version syntax would also admit dotted phone numbers such as
+// 415.555.0132. Keep this exception restricted to the actual app format.
+const DIAGNOSTIC_VERSION_RE = /^\d{1,3}(?:\.\d{1,3}){1,2} \(\d{1,8}\)$/;
+
+function scrubDiagnosticVersion(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.length <= MAX_META_STRING && DIAGNOSTIC_VERSION_RE.test(trimmed)) return trimmed;
+  return scrubString(input, MAX_META_STRING);
+}
+
 export interface SanitizedProps {
   props: Record<string, string | number | boolean>;
   /** How many keys were thrown away (unknown key, or a value we won't store). */
@@ -280,7 +291,10 @@ export function sanitizeProps(name: string, raw: unknown): SanitizedProps {
     if (!allowed.includes(key)) { dropped++; continue; }
     const value = source[key];
     if (typeof value === "string") {
-      const scrubbed = scrubString(value);
+      // MetricKit reports the original crash build here, which can differ
+      // from the reporting launch's batch version. Only the exact diagnostic
+      // format is exempt; other values retain generic PII scrubbing.
+      const scrubbed = key === "app_version" ? scrubDiagnosticVersion(value) : scrubString(value);
       if (scrubbed.length === 0) { dropped++; continue; }
       props[key] = scrubbed;
     } else if (typeof value === "number") {

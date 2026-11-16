@@ -1,0 +1,14 @@
+import assert from'node:assert/strict';import{build}from'esbuild';import{Miniflare}from'miniflare';import{mkdtemp,rm,readFile}from'node:fs/promises';import{tmpdir}from'node:os';import path from'node:path';
+const dir=await mkdtemp(path.join(tmpdir(),'rendprop-photo-workerd-'));let runtime;
+try{
+ const file=path.join(dir,'worker.mjs');await build({entryPoints:['src/index.ts'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:workers'],outfile:file});
+ const check='00000000-0000-4000-8000-000000000001';let calls=0,done;const observed=new Promise(resolve=>done=resolve);
+ runtime=new Miniflare({workers:[{config:{name:'photo-renderer',compatibilityDate:'2026-10-14',manifest:{mainModule:'worker.mjs',modules:{'worker.mjs':{type:'esm',contents:await readFile(file,'utf8')}}},env:{ENABLED:{type:'text',value:'true'},RENDER_TRIGGER_KEY:{type:'text',value:'private-test'},EDGE_SERVICE_ROLE_KEY:{type:'text',value:'fixture-authority-secret'},EDGE_WORKER_URL:{type:'text',value:'https://authority.test.supabase.co/functions/v1/property-video-worker'},MEDIA_HOSTS:{type:'text',value:'owned.example'},CPU:{type:'durable-object',worker:'photo-renderer',exportName:'PropertyVideoCPU'}},exports:{PropertyVideoCPU:{type:'durable-object',storage:'sqlite'}}},dev:{outboundService:{type:'fetcher',async handler(request){calls++;assert.equal(new URL(request.url).pathname,'/functions/v1/photo-quality-worker/tick');assert.equal(request.headers.get('apikey'),'fixture-authority-secret');assert.equal(request.headers.get('authorization'),'Bearer fixture-authority-secret');const body=await request.json();assert.deepEqual(body,{check_id:check,worker_id:'slot-0'});done();return Response.json({check_id:check,action:'done',state:'hold'});}}}}]});
+ const request=(body,authorization)=>runtime.dispatchFetch('https://private-renderer.test/photo-quality/start',{method:'POST',headers:{'Content-Type':'application/json',...(authorization?{Authorization:authorization}:{})},body:JSON.stringify(body)});
+ assert.equal((await request({check_id:check})).status,403);assert.equal(calls,0);
+ assert.equal((await request({check_id:check,job_id:check},'Bearer private-test')).status,400);assert.equal(calls,0);
+ const response=await request({check_id:check},'Bearer private-test');assert.equal(response.status,202);assert.deepEqual(await response.json(),{accepted:true,check_id:check});
+ let timer;try{await Promise.race([observed,new Promise((_,reject)=>timer=setTimeout(()=>reject(Error('actual photo alarm did not reach authority')),5000))]);}finally{clearTimeout(timer);}
+ assert.equal(calls,1,'one kickoff is one exact photo claim; no video queue or supplier');
+ console.log('Actual workerd private photo kickoff→SQLite alarm→exact authenticated photo authority claim passed; no Container/provider activated.');
+}finally{await runtime?.dispose();await rm(dir,{recursive:true,force:true});}

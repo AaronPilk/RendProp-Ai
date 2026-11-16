@@ -31,7 +31,7 @@ import Foundation
  var isSignedIn=true; var signsOut=0; var refreshes=0
  static var reads=0; static var refresh:String?=nil; static var tokenExpiresAt:Date?=Date(timeIntervalSince1970:0)
  static func storedRefreshToken()->String? { reads += 1; return refresh }
- func signOut() { signsOut += 1; isSignedIn=false }
+ func signOut(preservingAdoption:Bool=false) { signsOut += 1; isSignedIn=false }
  func runRefresh() async -> Bool { refreshes += 1; return true }
  METHODS
 }
@@ -76,7 +76,7 @@ def main():
     out = Path(tempfile.mkdtemp(prefix="rendprop-mock-auth-"))
     source = SOURCE.read_text()
     assert "if Config.enableAuth && !offlineWalk" in source
-    assert "let hasToken = !offlineWalk && Self.storedAccessToken() != nil" in source
+    assert "let cachedToken = offlineWalk ? nil : Self.storedAccessToken()" in source
     for name in ("refreshIfNeeded", "forceRefresh", "scheduleAutoRefresh", "retryPendingAdoptionIfNeeded"):
         assert "guard !Config.isUITesting || Config.isSessionNetworkTesting" in extract(source, name)
     baseline = subprocess.check_output(["git", "show", "dc2ee7a:apps/ios/Rendprop/Auth/AuthStore.swift"], cwd=ROOT, text=True)

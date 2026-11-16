@@ -1,0 +1,7 @@
+import{assert}from'../_shared/http.ts';
+import type{OutboxRow,DeviceRow}from'./deliver.ts';
+const UUID=/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+type Reader={rpc(name:string,args:Record<string,unknown>):PromiseLike<{data:unknown;error:unknown}>;from(name:string):any};
+export function propertyVideoJob(row:OutboxRow):string|null{const data=row.payload?.data as Record<string,unknown>|undefined;const raw=data?.property_video_job_id;if(raw===undefined)return null;assert(row.category==='render_ready'&&typeof raw==='string'&&UUID.test(raw)&&typeof row.user_id==='string'&&UUID.test(row.user_id),403,'Invalid private video notification identity.');return raw;}
+export async function propertyVideoNoticeCurrent(db:Reader,row:OutboxRow){const job=propertyVideoJob(row);if(!job)return true;const result=await db.rpc('property_video_notification_current',{p_job:job,p_actor:row.user_id});assert(!result.error,503,'Private video notification state could not be read.');return result.data===true;}
+export async function propertyVideoDeviceCurrent(db:Reader,row:OutboxRow,device:DeviceRow){if(!await propertyVideoNoticeCurrent(db,row))return false;const result=await db.from('notification_devices').select('device_token').eq('user_id',row.user_id).eq('device_token',device.device_token).eq('environment',device.environment).is('disabled_at',null).maybeSingle();assert(!result.error,503,'Current notification enrollment could not be read.');return result.data?.device_token===device.device_token;}

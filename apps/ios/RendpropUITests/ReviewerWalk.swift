@@ -10,7 +10,7 @@
 //  reopens onboarding on a rerun. No uninstall/erase/clear occurs.
 //
 //  This is NOT the UI walk and NOT the store-shot set. The other two both pass
-//  `-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v2 YES` so they
+//  `-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v3 YES` so they
 //  land straight on Home with every gate already answered. That is exactly the
 //  part a reviewer never gets. This test leaves onboarding unset and pins consent NO:
 //
@@ -92,12 +92,12 @@ final class ReviewerWalk: XCTestCase {
         // Do not pin hasOnboarded=false: argument-domain precedence would
         // prevent its persisted completion from being read after Get started.
         //   RendpropApp.swift  @AppStorage("hasOnboarded")  → NOT set: the intro shows
-        //   AIConsent          "ai.thirdPartyProcessing.consent.v2" → NOT set: r11 shows
+        //   AIConsent          "ai.thirdPartyProcessing.consent.v3" → NOT set: r11 shows
         //   RendpropApp.swift  @AppStorage("appearance") / Appearance.light == "light"
         app.launchArguments += [
             "-uiTesting",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v2", "NO",
+            "-ai.thirdPartyProcessing.consent.v3", "NO",
             "-space.type", "real_estate",
         ]
         if name.contains("testAIConsentDecisions") || name.contains("testAskAILabelOnLongTitle") {
@@ -128,7 +128,7 @@ final class ReviewerWalk: XCTestCase {
         // what Home and the Homes tab look like. Every "fresh install" shot
         // above is already taken by the time it runs.
         step11AIConsent()
-        let required = Set(["r01-onboarding-1", "r02-first-home", "r03-homes",
+        let required = Set(["r01-onboarding-1", "r01-role", "r02-first-home", "r03-homes",
                             "r04-sample-detail", "r05-sample-player", "r06-profile",
                             "r07-settings-legal", "r08-delete-account", "r09-delete-confirm",
                             "r11-ai-consent"])
@@ -177,8 +177,8 @@ final class ReviewerWalk: XCTestCase {
     /// The view is four feature cards in a paged `TabView` followed by the
     /// "What do you showcase?" business-type picker (`choosingType`). The card
     /// pages carry a "Continue" button until the last one, where it becomes
-    /// "Get started" and flips to the picker; the picker's own "Get started"
-    /// sets `hasOnboarded = true` and swaps the root for `RootTabView`.
+    /// "Get started" and flips to the picker. Real estate then requires the
+    /// actual agent/photographer role picker before onboarding can complete.
     ///
     /// The loop below does not hard-code four: it screenshots whatever is on
     /// screen, taps whichever of the two buttons is there, and stops as soon as
@@ -196,7 +196,7 @@ final class ReviewerWalk: XCTestCase {
                 tap(intro)
                 info("Rerun: opened onboarding through Settings; existing synthetic projects were preserved")
             }
-            guard waitForAny(ids: [], labels: ["Continue", "Get started", "RENDPROP"],
+            guard waitForAny(ids: [], labels: ["Continue", "Get started", "REAL ESTATE AGENT", "RENDPROP"],
                              timeout: screenTimeout) else {
                 note("SKIPPED: no onboarding on launch. Either `hasOnboarded` survived from a "
                      + "previous run (uninstall the app first — bridge-cmd-reviewerwalk.sh does) "
@@ -218,13 +218,36 @@ final class ReviewerWalk: XCTestCase {
 
                 if onTypePicker {
                     photographedPicker = true
-                    // Accept the pre-selected "Real estate" the way a reviewer
-                    // would, and leave the intro.
-                    if let start = find(ids: [], labels: ["Get started"], timeout: shortTimeout) {
-                        tap(start)
-                    } else {
-                        note("The type picker had no \"Get started\" button — onboarding cannot be left.")
+                    // Accept the pinned real-estate type, then complete its
+                    // role choice through the production onboarding controls.
+                    guard let start = find(ids: ["onboarding.explore"], labels: ["Explore the app first"], timeout: shortTimeout) else {
+                        note("The type picker has no Explore control — onboarding cannot continue.")
+                        return
                     }
+                    tap(start)
+                    let agent = app.buttons["realEstateRole.agent"]
+                    let photographer = app.buttons["realEstateRole.photographer_videographer"]
+                    guard agent.waitForExistence(timeout: screenTimeout),
+                          photographer.waitForExistence(timeout: shortTimeout) else {
+                        note("Real-estate onboarding did not show both agent and photographer/videographer choices")
+                        return
+                    }
+                    XCTAssertTrue(agent.isHittable && photographer.isHittable,
+                                  "Both actual role choices must be reachable")
+                    shot("r01-role")
+                    screens += 1
+                    tap(agent)
+                    let explore = app.buttons["onboarding.role.explore"]
+                    guard explore.waitForExistence(timeout: shortTimeout), explore.isHittable else {
+                        note("Role picker has no reachable Explore control")
+                        return
+                    }
+                    tap(explore)
+                    // The guide video is onboarding's last step; skip it.
+                    let skipGuide = app.buttons["onboarding.guide.skip"]
+                    if skipGuide.waitForExistence(timeout: shortTimeout) { tap(skipGuide) }
+                    XCTAssertTrue(waitForHome(timeout: screenTimeout),
+                                  "Completing role onboarding must reveal the actual Home root")
                     break
                 }
 
@@ -446,13 +469,13 @@ final class ReviewerWalk: XCTestCase {
 
     // MARK: r10 — the sign-in gate
 
-    /// The Sign in with Apple sheet a reviewer meets when they try to publish
-    /// or open an AI tool without an account.
+    /// The account sheet a reviewer meets when they try to publish or open an
+    /// AI tool without an account. It offers Apple and existing email sign-in.
     ///
     /// EXPECTED TO SKIP under this walk, and that is not a defect. `AuthStore`
     /// reads `Config.isUITesting` and reports `isSignedIn == true` for the
     /// whole run (Auth/AuthStore.swift), so `FlythroughDetailView.needsSignIn`
-    /// is false, Settings draws "Sign out" instead of "Sign in with Apple", and
+    /// is false, Settings draws "Sign out" instead of "Sign in", and
     /// no path raises `SignInView`. Signing in for real needs an Apple ID on
     /// the simulator, which no automated walk can supply.
     ///
@@ -467,7 +490,7 @@ final class ReviewerWalk: XCTestCase {
                 return
             }
             scrollToTop()
-            guard let signIn = scrollTo(ids: [], labels: ["Sign in with Apple"], swipes: 8) else {
+            guard let signIn = scrollTo(ids: ["settings.signIn"], labels: ["Sign in"], swipes: 8) else {
                 scrollToTop()
                 guard app.launchArguments.contains("-uiTesting"),
                       scrollTo(ids: [], labels: ["Sign out"], swipes: 8) != nil else {
@@ -479,9 +502,9 @@ final class ReviewerWalk: XCTestCase {
             }
             tap(signIn)
             guard waitForAny(ids: [],
-                             labels: ["Sign in to publish", "Sign in to use", "Sign in with Apple"],
+                             labels: ["Use Rendprop on your other devices", "Sign in with email", "Sign in with Apple"],
                              timeout: screenTimeout) else {
-                note("SKIPPED: tapped \"Sign in with Apple\" but no sign-in sheet appeared.")
+                note("SKIPPED: tapped \"Sign in\" but no sign-in sheet appeared.")
                 dismissTopScreen()
                 return
             }
@@ -618,16 +641,14 @@ final class ReviewerWalk: XCTestCase {
     // MARK: - Navigation helpers
 
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
-    /// CAREFUL with the confirming labels: "Add a home" and "My Homes" appear
-    /// on BOTH the Home dashboard and the Homes tab, so either would make
-    /// `openTab` report success without switching tab. Only `home.addHome` and
-    /// "Make something" are unique to the dashboard.
+    /// Confirm the dashboard with its unique Get started action or tool heading,
+    /// never the collection tab's unchanged Add action.
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: ["home.addHome"], confirmedBy: ["Make something"])
+        openTab("Home", ids: ["home.getStarted"], confirmedBy: ["Create Something Amazing"])
     }
 
     @discardableResult
@@ -641,16 +662,15 @@ final class ReviewerWalk: XCTestCase {
     }
 
     /// The second tab. Its title is the current business type's plural
-    /// (`SpaceType.spaceNounCap + "s"`), which is "Homes" on the real-estate
-    /// default this walk accepts — but every other type is tried so a run that
-    /// picked something else still works.
+    /// (`SpaceType.spaceNounCap + "s"`), except real estate uses "Listings".
+    /// Every other type is tried so a run that picked something else still works.
     ///
     /// Tapped directly rather than through `openTab`: every label this screen
     /// shows also exists on the Home dashboard, so no text could confirm the
     /// switch really happened.
     @discardableResult
     private func openSpacesTab() -> Bool {
-        for title in ["Homes", "Venues", "Places", "Stores", "Studios", "Spaces"] {
+        for title in ["Listings", "Venues", "Places", "Stores", "Studios", "Spaces"] {
             let tab = app.tabBars.buttons[title]
             if tab.waitForExistence(timeout: 1.0) {
                 tab.tap()

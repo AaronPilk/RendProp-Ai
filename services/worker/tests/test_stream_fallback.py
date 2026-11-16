@@ -75,6 +75,16 @@ class StreamFallbackTests(unittest.TestCase):
         self.request.assert_not_called()
         self.send.assert_not_called()
 
+    def test_url_copy_requires_signed_playback_before_acceptance(self):
+        with patch.object(stream, "_request", return_value=self.response) as request:
+            self.assertEqual(stream.copy_from_url("https://fixture.invalid/private.mp4", "Synthetic tour"), "fixture-uid")
+        args = request.call_args
+        self.assertEqual(args.args[0], "POST")
+        self.assertTrue(args.args[1].endswith("/stream/copy"))
+        self.assertIs(args.kwargs["json"]["requireSignedURLs"], True)
+        self.assertEqual(args.kwargs["json"]["url"], "https://fixture.invalid/private.mp4")
+        self.send.assert_not_called()
+
     def test_over_budget_never_opens_reads_or_requests(self):
         self.assert_rejected_without_read_or_network(BUDGET + 1)
 
@@ -95,6 +105,8 @@ class StreamFallbackTests(unittest.TestCase):
         self.assertEqual(stream.direct_upload("fixture.mp4", name="named.mp4"), "fixture-uid")
         self.assertIn(b'filename="named.mp4"', self.prepared.body)
         self.assertIn(b"tiny-video", self.prepared.body)
+        self.assertIn(b'name="requireSignedURLs"', self.prepared.body)
+        self.assertIn(b"\r\ntrue\r\n", self.prepared.body)
         self.assertEqual(self.request.call_count, 1)
         self.send.assert_not_called()
 

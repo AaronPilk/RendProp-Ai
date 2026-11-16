@@ -42,3 +42,18 @@ test("repeated source photos with different local identities remain repeated sho
   const raw = recipe(); raw.photos[1].sourcePhotoId = raw.photos[0].sourcePhotoId;
   assert.equal(nativeReelShots(decodeNativeReel(raw)).length, 2);
 });
+
+test("iPhone camera preset survives Studio decoding; unknown presets are refused", () => {
+  for (const motionPreset of ["fly_through", "push_in", "side_glide", "pull_back"] as const) {
+    const raw = { ...recipe(), motionPreset };
+    assert.equal(decodeNativeReel(raw).motionPreset, motionPreset);
+  }
+  assert.throws(() => decodeNativeReel({ ...recipe(), motionPreset: "invent-new-room" }));
+});
+
+
+test("automatic scene order preference survives semantic recipe sync; malformed values are refused",()=>{
+ for(const automaticOrder of [true,false])assert.equal(decodeNativeReel({...recipe(),automaticOrder}).automaticOrder,automaticOrder);
+ assert.equal(Object.hasOwn(decodeNativeReel(recipe()),"automaticOrder"),false);
+ for(const automaticOrder of ["true",1,{},[]])assert.throws(()=>decodeNativeReel({...recipe(),automaticOrder}));
+});

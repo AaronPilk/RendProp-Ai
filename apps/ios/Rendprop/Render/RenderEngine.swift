@@ -2,19 +2,20 @@ import AVFoundation
 import CoreGraphics
 import Vision
 
-/// On-device render engine v2 — turns a raw walkthrough into a smooth,
-/// drone-style, instantly-scrubbable tour with zero server cost.
+/// On-device render engine v2 — reduces measurable translational shake and
+/// encodes a retimed, instantly-scrubbable HD tour with zero server cost.
 ///
 ///   • STABILIZE — the drone feel. A first pass measures frame-to-frame camera
 ///                 jitter (Vision translational registration on downscaled
 ///                 frames), smooths the camera path with a Gaussian low-pass,
 ///                 and derives a per-frame correction. A small adaptive crop-in
-///                 hides the moving borders. Handheld footage that came in shaky
-///                 goes out gliding. Drone clips skip this (already smooth).
+///                 hides moving borders. Drone footage uses a gentler profile.
+///                 Global translation cannot remove walking parallax, rotation
+///                 or rolling-shutter distortion.
 ///   • RETIME    — handheld walks glide at 2×; drone clips a gentle 1.25×.
 ///                 Very short clips are sped less so they don't feel frantic.
 ///   • 60 FPS    — output frame cadence for a fluid scroll-scrub.
-///   • SCRUB     — ≤720p H.264, ALL-INTRA (every frame a keyframe) → the player
+///   • HD MASTER — ≤1920 long edge H.264, ALL-INTRA (every frame a keyframe) → the player
 ///                 seeks any position instantly.
 ///   • COLOR     — both compositions RENDER into Rec.709 SDR and the writer tags
 ///                 the result the same way, so an HDR (HLG / Dolby Vision)
@@ -28,7 +29,8 @@ import Vision
 /// still ship the retimed/encoded tour — never worse than v1.
 ///
 /// OUTPUT SAFETY: the encode writes to a unique temp file next to the final
-/// path and is moved into place only after the writer reports `.completed`.
+/// path and is moved into place only after the writer reports `.completed`
+/// and the saved video track covers the requested duration.
 /// The existing tour (if any) is never deleted first, so a failed or cancelled
 /// re-render can't take the live tour with it (audit F-D-01).
 ///
@@ -41,10 +43,11 @@ enum RenderEngine {
         let durationS: Double
         let speedFactor: Double
         let stabilized: Bool
+        let motionSmoothing: String
     }
 
     enum RenderError: LocalizedError {
-        case noVideoTrack, cannotBuild, cancelled
+        case noVideoTrack, cannotBuild, incompleteOutput, cancelled
         case badDimensions
         case tooShort
         case tooLong(Double)
@@ -52,6 +55,7 @@ enum RenderEngine {
             switch self {
             case .noVideoTrack:  return "The video has no usable video track."
             case .cannotBuild:   return "Could not prepare the render."
+            case .incompleteOutput: return "The render stopped before the full video was saved. Please try again."
             case .cancelled:     return "Render cancelled."
             case .badDimensions: return "The video reports no picture size, so it can't be rendered. Try re-exporting it."
             case .tooShort:      return "The video is too short to render — record at least a second."
@@ -105,7 +109,7 @@ enum RenderEngine {
 
     // Tuning
     private static let outputFPS: Int32 = 60
-    private static let encodeLongEdge: CGFloat = 1280
+    private static let encodeLongEdge: CGFloat = 1920
     private static let analyzeLongEdge: CGFloat = 384      // registration runs here — fast
     private static let maxRegistrationFailRatio = 0.4      // above this → skip stabilization
 
@@ -214,6 +218,7 @@ enum RenderEngine {
         var corrections = [CGPoint](repeating: .zero, count: frameCount)
         var cropZoom: CGFloat = 1.0
         var stabilized = false
+        var motionSmoothing = "unavailable"
         let profile: StabProfile = asset.isDrone ? .drone : .handheld
 
         do {
@@ -246,7 +251,9 @@ enum RenderEngine {
                                                renderSize: encode.renderSize,
                                                profile: profile,
                                                zoom: &cropZoom)
-                stabilized = cropZoom > 1.0001
+                // A safety crop alone is not evidence of corrected motion.
+                stabilized = corrections.contains { abs($0.x) > 0.01 || abs($0.y) > 0.01 }
+                motionSmoothing = stabilized ? "applied" : "steady"
             }
         }
 
@@ -269,6 +276,9 @@ enum RenderEngine {
                                  geo: encode, corrections: corrections, cropZoom: cropZoom,
                                  outURL: tempURL, queue: queue, cancelFlag: cancelFlag,
                                  progress: { p in encodeProgress.send(p) })
+            if cancelFlag.isCancelled { throw RenderError.cancelled }
+            try await verifyCompletedOutput(at: tempURL, expectedDuration: outDuration.seconds)
+            if cancelFlag.isCancelled { throw RenderError.cancelled }
         } catch {
             // Never leave a partial mp4 in Documents on failure/cancel — it
             // would linger (and get backed up) forever. The previous tour, if
@@ -277,7 +287,9 @@ enum RenderEngine {
             throw error
         }
 
-        // Move into place only now that the writer reported .completed.
+        // Move into place only after the writer completed and the temporary
+        // movie was independently checked. A completed writer can still leave
+        // a one-frame MP4 after an unexpectedly short reader run.
         do {
             try replaceItem(at: outURL, with: tempURL)
         } catch {
@@ -286,10 +298,37 @@ enum RenderEngine {
         }
 
         progress(1.0, "Done")
-        return Output(url: outURL, durationS: outDuration.seconds, speedFactor: speed, stabilized: stabilized)
+        return Output(url: outURL, durationS: outDuration.seconds, speedFactor: speed,
+                      stabilized: stabilized, motionSmoothing: motionSmoothing)
     }
 
     // MARK: - File plumbing
+
+    /// A writer may report `.completed` for a playable but truncated movie.
+    /// Inspect the finished file before replacing a previously saved tour.
+    /// The tolerance covers frame quantization and normal AVFoundation retime
+    /// rounding (two 60-fps frames minimum), capped at 500 ms for long tours.
+    /// This checks completeness, not visual taste or motion smoothness.
+    private static func verifyCompletedOutput(at url: URL, expectedDuration: Double) async throws {
+        guard expectedDuration.isFinite, expectedDuration > 0 else { throw RenderError.incompleteOutput }
+        do {
+            let movie = AVURLAsset(url: url)
+            let tracks = try await movie.loadTracks(withMediaType: .video)
+            guard let track = tracks.first else { throw RenderError.incompleteOutput }
+            let movieSeconds = try await movie.load(.duration).seconds
+            let trackSeconds = try await track.load(.timeRange).duration.seconds
+            let observedDuration = min(movieSeconds, trackSeconds)
+            let allowedShortfall = min(0.5, max(2.0 / Double(outputFPS), expectedDuration * 0.10))
+            guard observedDuration.isFinite,
+                  observedDuration + allowedShortfall >= expectedDuration else {
+                throw RenderError.incompleteOutput
+            }
+        } catch is CancellationError {
+            throw RenderError.cancelled
+        } catch {
+            throw RenderError.incompleteOutput
+        }
+    }
 
     /// Atomic-as-possible swap: `replaceItemAt` when a previous tour exists
     /// (an APFS rename), a plain move otherwise.
@@ -542,6 +581,9 @@ enum RenderEngine {
         reader.add(readerOutput)
 
         let writer = try AVAssetWriter(outputURL: outURL, fileType: .mp4)
+        // Put MP4 metadata before the video bytes so opening a published tour
+        // does not first require a range request to the end of a large file.
+        writer.shouldOptimizeForNetworkUse = true
         let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: Int(geo.renderSize.width),
@@ -556,18 +598,14 @@ enum RenderEngine {
                 // exactly and instantly → buttery, drone-smooth scrubbing (no
                 // stepping between sparse keyframes). Costs more bitrate/size, worth
                 // it for the scroll-scrub feel. Higher bitrate keeps it crisp.
-                // 9 Mbps, down from 14. ALL-INTRA at a 1280 long edge and 60 fps is
-                // visually near-identical at the two, because every frame is a
-                // keyframe and 720p intra is past diminishing returns well before 9 —
-                // but 14 made a 2-minute tour ~210 MB, which on LTE means the viewer
-                // downloads at about the speed they scroll. That is what "it lowers
-                // the quality and keeps loading" on the shared link actually was: a
-                // stalled mp4 falls back to adaptive HLS, which IS lower quality.
-                // The file drops ~36% and the start gate, the scroll-ahead margin,
-                // the storage bill and the upload off the phone all drop with it.
-                // Resolution, frame rate and the all-intra GOP are untouched — the
-                // thing that makes the scrub feel right was never the expensive part.
-                AVVideoAverageBitRateKey: 9_000_000,
+                // The published link uses this reviewed/stabilized master, not
+                // the camera original. Preserve up to a 1920 long edge rather
+                // than discarding detail at 1280; geometry never upscales.
+                // 24 Mbps supplies the larger all-intra frames at the same
+                // 60 fps. Target size is ~180 MB/output minute (actual rate
+                // varies). Keep every-frame seeking for existing embedded
+                // previews while the public page loads video only on request.
+                AVVideoAverageBitRateKey: 24_000_000,
                 AVVideoMaxKeyFrameIntervalKey: 1,          // keyframe every frame (all-intra)
                 AVVideoAllowFrameReorderingKey: false,     // no B-frames → every frame independent
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,

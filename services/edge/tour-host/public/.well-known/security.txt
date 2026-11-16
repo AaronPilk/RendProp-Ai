@@ -1,0 +1,4 @@
+Contact: mailto:aaron@pilk.ai
+Expires: 2027-04-06T00:00:00Z
+Canonical: https://rendprop.com/.well-known/security.txt
+Preferred-Languages: en

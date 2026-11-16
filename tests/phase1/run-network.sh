@@ -42,7 +42,8 @@ if [ "$FAIL" -eq 0 ]; then
         -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
         -derivedDataPath "$TEST_DIR/DerivedData" \
         -only-testing:RendpropUITests/SessionNetworkFlow -parallel-testing-enabled NO \
-        CODE_SIGNING_ALLOWED=NO -resultBundlePath "$TEST_DIR/results.xcresult" \
+        CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY=- \
+        -resultBundlePath "$TEST_DIR/results.xcresult" \
         test > "$TEST_DIR/tests.log" 2>&1; then FAIL=1; fi
 fi
 

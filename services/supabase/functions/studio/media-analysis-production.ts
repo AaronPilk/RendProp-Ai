@@ -1,3 +1,4 @@
+import { beginFundingOperation, fundedAttempt, TARIFF_VERSION, type FundingContext } from "../_shared/funded-serving.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import { assertMediaVisible } from "../_shared/media-source-access.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
@@ -104,14 +105,19 @@ export function analysisMovieDuration(bytes: Uint8Array): number {
 
 /** Matches the existing OpenAI adapter's Whisper multipart contract but bounds
  * the response stream and propagates cancellation. No SDK/HTTP retries. */
-export async function transcribeAnalysis(step: RouteStep, bytes: Uint8Array, signal: AbortSignal, fetcher: typeof fetch = fetch): Promise<unknown> {
+export async function transcribeAnalysis(step: RouteStep, bytes: Uint8Array, signal: AbortSignal, fetcher: typeof fetch = fetch, onFetchAttempt?: () => void): Promise<unknown> {
   assert(step.provider === "openai" && step.model === "whisper-1", 503, "The speech service is not configured for word timing.");
   const key = Deno.env.get("OPENAI_API_KEY")?.trim(); assert(key, 503, "The speech service is not configured.");
   signal.throwIfAborted();
   const form = new FormData(); form.set("file", new Blob([bytes as BlobPart], { type: "video/mp4" }), "source.mp4");
   form.set("model", step.model); form.set("response_format", "verbose_json"); form.append("timestamp_granularities[]", "word");
   let response: Response;
-  try { response = await fetcher("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form, redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) }); }
+  try {
+    const init: RequestInit = { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form, redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) };
+    init.signal?.throwIfAborted();
+    onFetchAttempt?.();
+    response = await fetcher("https://api.openai.com/v1/audio/transcriptions", init);
+  }
   catch { throw new HttpError(502, "Speech analysis did not finish. No automatic retry was started."); }
   if (!response.ok) { await response.body?.cancel(); throw new HttpError(502, "The speech service could not analyze this video. No automatic retry was started."); }
   const data = await readAnalysisBytes(response, MEDIA_ANALYSIS_LIMITS.responseBytes, "The speech service returned too much data.");
@@ -162,6 +168,9 @@ export async function loadAnalysisProject(row: ProjectMediaRow, signal: AbortSig
 
 export function mediaAnalysisProduction(context: StudioContext): MediaAnalysisDependencies {
   const { admin, db, userId, orgId } = context;
+  let requestKey: string | null = null;
+  // Per-request transport evidence, not confirmation of supplier acceptance.
+  let fetchAttempted = false;
   const limit = () => Number(Deno.env.get("STUDIO_MEDIA_ANALYSIS_MAX_ESTIMATED_CENTS") ?? "0");
   const enabled = () => Deno.env.get("STUDIO_MEDIA_ANALYSIS_ENABLED") === "true" && Number.isFinite(limit()) && limit() > 0 && limit() <= 10;
   const writable = editPlanProduction(context).writable;
@@ -207,6 +216,7 @@ export function mediaAnalysisProduction(context: StudioContext): MediaAnalysisDe
       return { bytes, duration: analysisMovieDuration(bytes) };
     },
     async reserve(id) {
+      requestKey = id;
       const bump = async (key: string, max: number, seconds: number) => {
         const value = await admin.rpc("bump_rate", { p_key: key, p_max: max, p_window_seconds: seconds, p_cost: 1 });
         assert(!value.error, 503, "Speech analysis limits could not be checked."); return value.data === true;
@@ -216,9 +226,18 @@ export function mediaAnalysisProduction(context: StudioContext): MediaAnalysisDe
       assert(await bump("media-analysis:global", 100, 86400), 429, "Today's speech analysis allowance has been reached.");
       assert(await bump(`media-analysis:request:${orgId}:${userId}:${id}`, 1, 86400), 409, "This analysis was already submitted. No automatic retry was started.");
     },
-    transcribe: transcribeAnalysis,
+    async transcribe(step, bytes, signal) {
+      fetchAttempted = false;
+      assert(requestKey, 503, "The speech request has no budget reservation.");
+      const funding: FundingContext = {actorId:userId,orgId,requestKey,rpc:(name,args)=>admin.rpc(name,args)};
+      const seconds = analysisMovieDuration(bytes);
+      await beginFundingOperation(funding, "stt.captions", {bytes:bytes.length,seconds});
+      const quote = step.provider === "openai" && step.model === "whisper-1" ? {cents: Math.ceil(seconds) / 60 * .6,version:TARIFF_VERSION} : null;
+      return await fundedAttempt(funding, "stt.captions", step, {bytes:bytes.length,seconds}, quote, () => transcribeAnalysis(step,bytes,signal,fetch, () => { fetchAttempted = true; }));
+    },
     async record(step, seconds, outcome) {
-      await recordRoutedAiCost(admin, { orgId, feature: "speech_captions", step, seconds, meta: { kind: "studio_media_analysis", attempts: 1, outcome, price_estimated: true } });
+      if (!fetchAttempted) return;
+      await recordRoutedAiCost(admin, { orgId, feature: "speech_captions", step, seconds, meta: { kind: "studio_media_analysis", attempts: 1, outcome, price_estimated: true, request_key: requestKey, stage: "stt.captions" } });
     },
   };
 }

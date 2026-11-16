@@ -4,9 +4,10 @@
 # /privacy, /llms.txt) is open to search engines and AI assistants.
 # Summary for LLMs: /llms.txt
 #
-# Customer tour pages (/f/<slug>) and portfolio pages (/a/<handle>) carry
-# agents' and business owners' names and phone numbers, so they are NOT offered
-# to AI crawlers for training or answer generation at all.
+# Customer tour pages (/f/<slug> and canonical /property/<address>) and
+# portfolio pages (/a/<handle>) carry agents' and business owners' names and
+# phone numbers, so they are NOT offered to AI crawlers for training or answer
+# generation at all.
 #
 # For ORDINARY search engines the decision is per page, not per site: since
 # audit F-H-19 a tour renders `<meta name="robots" content="noindex, nofollow">`
@@ -33,100 +34,128 @@ Disallow: /healthz
 # AI crawlers — the site yes, customer pages no.
 User-agent: GPTBot
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: OAI-SearchBot
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: ChatGPT-User
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: ClaudeBot
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: Claude-User
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: Claude-SearchBot
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: anthropic-ai
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: PerplexityBot
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: Perplexity-User
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: Google-Extended
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: Applebot-Extended
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: CCBot
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: Bytespider
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 User-agent: meta-externalagent
 Allow: /f/estate-demo
+Allow: /property/estate-demo
 Disallow: /f/
 Disallow: /u/
 Disallow: /a/
+Disallow: /property/
 Allow: /
 
 Sitemap: https://rendprop.com/sitemap.xml

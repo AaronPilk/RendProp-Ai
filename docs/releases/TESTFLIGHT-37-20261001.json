@@ -1,0 +1,222 @@
+{
+  "kind": "Internal TestFlight and published listing delivery receipt",
+  "verifiedAt": "2026-10-01T21:04:33.103748+00:00",
+  "source": {
+    "branch": "fix/listing-first-tour-20261001",
+    "nativeCommit": "512fb8b710625615259d6ece9323220312288e29",
+    "webCommit": "a87834cd44c39e37178cfc8fe91684aa623ccde3",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/14",
+    "pullRequestBase": "fix/room-tour-photo-delivery-20261001",
+    "draftAtDelivery": true,
+    "note": "The final documentation commit is separate from both runtime sources. The web-only follow-up changes the existing contact verification widget size from flexible to compact. Shared main was not advanced or force-pushed."
+  },
+  "ci": {
+    "native": {
+      "sourceCommit": "512fb8b710625615259d6ece9323220312288e29",
+      "passedJobs": 12,
+      "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36921783108"
+    },
+    "web": {
+      "sourceCommit": "a87834cd44c39e37178cfc8fe91684aa623ccde3",
+      "passedJobs": 12,
+      "runURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36924574346"
+    },
+    "requiredJobNames": [
+      "Cloudflare Worker (tour-host)",
+      "Cloudflare Worker (upload-gateway, deno check + tests)",
+      "Disposable PostgreSQL publication, invariant and deletion regression",
+      "Offline audit evidence, consent and adoption source gates",
+      "Offline reel-style preservation and blind-evaluation contracts",
+      "Python workers (render, spatial, training adapter)",
+      "Secret scan",
+      "Studio contracts, build and property workflows (offline)",
+      "Supabase edge functions (deno check + tests)",
+      "Supabase migrations (fresh replay + invariants)",
+      "Web parity inventory and design-token contracts (offline)",
+      "iOS static gates"
+    ],
+    "positiveHDRToneMapRegression": "Passed in native-source CI; local FFmpeg lacks zscale and its recorded prerequisite failure is not a positive pass."
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "37",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "createdAt": "2026-10-01T20:29:19+00:00",
+    "scheme": "RendpropSpatialTestFlight",
+    "explicitArchiveBuildOverride": "37",
+    "sourceInputs": 197,
+    "compiledTrackedSwiftInputs": 133,
+    "compiledGeneratedSwiftInputs": 1,
+    "signatureVerified": true,
+    "executableSHA256": "e59ca3dd5c21cd59a5189bc23e74a28d18be6dc80fe3deb0241e7a102adbee92",
+    "arm64UUID": "D78C3EC6-EDAF-31F7-B8BF-5A57AEF50E49",
+    "allUUIDsMatch": true,
+    "derivedDataAndArchiveDSYMBytesMatch": true,
+    "sourceManifestSHA256": "77faaaa3df3154bc12dfe254079432e4f3d4d64699f9a312e6222cbf9531b7fa",
+    "note": "Xcode moved the separate DerivedData app product while archiving; binding uses captured inputs, compiler/linker records, signed archive and surviving dSYMs. No separate surviving executable byte-match claim."
+  },
+  "upload": {
+    "attempts": 1,
+    "internalOnly": true,
+    "startedAt": "2026-10-01T20:42:50.677185+00:00",
+    "finishedAt": "2026-10-01T20:44:09.411146+00:00",
+    "exitCode": 0,
+    "publicAppStoreReviewSubmitted": false,
+    "publicAppStoreVersionAttached": false,
+    "subscriptionPricesChanged": false,
+    "testersOrGroupsChanged": false
+  },
+  "appleReadback": {
+    "checkedAt": "2026-10-01T20:50:00.972875+00:00",
+    "available": true,
+    "buildID": "a79ce937-05df-4b69-809e-1fdd05951e9d",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "internalBuildState": "IN_BETA_TESTING",
+    "expired": false,
+    "uploadedDate": "2026-10-01T13:44:58-07:00",
+    "existingGroup": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    },
+    "note": "Apple does not expose the local archive binary hash; immutable source/archive/upload records bind the one attempted artifact."
+  },
+  "testingInstructions": {
+    "locale": "en-US",
+    "verifiedAt": "2026-10-01T20:54:55.583837+00:00",
+    "readbackVerified": true,
+    "buildID": "a79ce937-05df-4b69-809e-1fdd05951e9d"
+  },
+  "production": {
+    "worker": "rendprop-tour-host",
+    "sourceCommit": "a87834cd44c39e37178cfc8fe91684aa623ccde3",
+    "version": "8268c7a9-aad9-43a7-89ac-f1769e75896b",
+    "deploymentID": "d2731eed-30ad-47d1-9ff6-3d03c716c5b0",
+    "trafficPercent": 100,
+    "deploymentReadbackAt": "2026-10-01T20:53:03.025681+00:00",
+    "liveVerifiedAt": "2026-10-01T20:53:48.174Z",
+    "liveAssertions": 153,
+    "routes": [
+      "rendprop.com/*",
+      "www.rendprop.com/*"
+    ],
+    "pageVariants": [
+      "/f/:slug",
+      "/u/:slug"
+    ],
+    "inlineRendererAndCSSMatched": true,
+    "closeRestoredScrollFocusAndEmptyDecoder": true,
+    "geometryFailures": 0,
+    "unknownApplicationErrors": 0,
+    "baselineRoutesUnchanged": [
+      "/",
+      "/pricing",
+      "/terms",
+      "/privacy",
+      "/healthz"
+    ],
+    "baselineComparison": "Known varying Cloudflare-injected challenge script removed for normalized HTML comparison; raw health response also unchanged.",
+    "productionMutations": 0,
+    "dispatchedBrowserWrites": 0,
+    "blockedWriteAttempts": 9,
+    "boundedMediaBytes": 10584458,
+    "completeRemoteVideoArtifacts": 0,
+    "existingMasterDimensions": [
+      720,
+      1280
+    ],
+    "backendFunctionsDeployed": false,
+    "migrationsApplied": false,
+    "serverWorkerFleetDeployed": false,
+    "spatialActivated": false
+  },
+  "renderPolicy": {
+    "maxLongEdge": 1920,
+    "upscale": false,
+    "targetBitrateMbps": 24,
+    "nominalCadence": 60,
+    "everyFrameKeyframe": true,
+    "standardTourAudio": "silent-unchanged",
+    "fastStart": true
+  },
+  "softwareVerification": {
+    "tourHostStaticAssertions": 2766,
+    "listingBrowserAssertionsWithSyntheticSpatialDraw": 138,
+    "listingBrowserAssertionsDefaultSpatialFailurePath": 134,
+    "legacySpatialBrowserAssertions": 69,
+    "negativeControlsRejected": [
+      "eager-media",
+      "retain-media",
+      "queued-close",
+      "legacy720-render-output",
+      "missing-confirmation-fence"
+    ],
+    "actualEncodedOutputCount": 8,
+    "nativeAndWorkerSourceDimensionsTested": [
+      [
+        1920,
+        1080
+      ],
+      [
+        3840,
+        2160
+      ],
+      [
+        1080,
+        1920
+      ],
+      [
+        640,
+        480
+      ]
+    ],
+    "reviewFenceAssertions": 33,
+    "workerResourceLimitChecks": 19,
+    "syntheticLumaPSNRdB": {
+      "newHD": 46.407613922960856,
+      "legacy720EnlargedToHD": 21.237768842534095
+    },
+    "nativeTimingExactlyMatchesOldPolicy": true,
+    "workerBT709TagsPreserveDecodedLuma": true,
+    "realCameraQualityVerified": false
+  },
+  "limitations": [
+    "Existing low-resolution published files are unchanged. Re-render from the original local recording in build37 and publish a new sharing link; old links retain their earlier video.",
+    "1920-pixel maximum long edge with aspect preserved and no upscaling is full-HD output, not 4K. At target 24 Mbps, output is approximately 180 MB per minute; actual rate, render time, thermal behavior, storage and upload depend on footage/device/network.",
+    "Synthetic encoded-output metrics do not establish real-house camera or visual-quality acceptance. Physical iPhone and Safari checks remain pending.",
+    "No actual HLS stream was used in the live check; the inspected existing tour has only its R2 master.",
+    "Live verification blocked every browser write, including Cloudflare challenges and view beacons; challenge-token validation, analytics receipts and lead delivery were intentionally not exercised.",
+    "Capped byte ranges alter transfer behavior. Bounded live verification is not a full-bandwidth benchmark and saved no complete customer video.",
+    "Optional server-worker defaults changed in source only; fleet deployment and environment overrides were not changed or verified.",
+    "Spatial reconstruction remains off. Prior camera, StoreKit purchase/restore and representative two-account acceptance remain physical-device checks."
+  ],
+  "evidenceSHA256": {
+    "ci-success.json": "ddba4cbf0c3cc120b4a9095597c513f372a792d33ca67bd7eedc65f2659a1267",
+    "ci-web-success.json": "9499a8e465c4ea474b5426a858bbb88ab0afc75b12854084b30ce20241f4f7d4",
+    "render-quality-receipt.json": "316f8e3a854a77a25752b7fc1465d70bf748f6e5be8ba9ff11554d01134d5d9c",
+    "video-quality-final.json": "4e8a0af682639aaa57cc517fa6d4591c2b80362c70239d1bce3faaa46458cfa5",
+    "render-review-fences-receipt.json": "068a6a07461962db3a5fb4728a530dae9f18d9fa167e6ffa6eea648cb120b23a",
+    "browser/verification-summary.json": "0e02bc1d4e05e33e56fc5d58c0b52c3a5b9c61f5022605cee2bb423bb838239e",
+    "testflight37/source-manifest.json": "77faaaa3df3154bc12dfe254079432e4f3d4d64699f9a312e6222cbf9531b7fa",
+    "testflight37/archive-preflight.json": "e2ac0caf108e9c58a180a164e00ec0efde0e5c0cc1187036bdb18a0e8c1d7891",
+    "testflight37/archive-independent-preflight.json": "e16175d4f96736edc7d316ab9acadd90a5246d269298aebafd8e5017d1275c44",
+    "testflight37/archive-source-binding.json": "5a799bcdd4c90b7f0887e473e46952b2104c29c60e078be3af65e36531789920",
+    "testflight37/owner-release-gate.json": "de6ef14bd9146e8cb6731afb4a5c2cc5027ffb8417560bf4fe8f239a588df262",
+    "testflight37/upload-attempt.json": "2a65590c34eb157604e7d72ceac6fa5de7a87e5a7c585c8d4f93567ac29ae8a0",
+    "testflight37/upload-result.json": "01473eccefe5b7dd10fb765e79612cb85eab23c8baf020a32db01f7a1bfc55da",
+    "testflight37/export-sanitized.log": "dc4e55bed5d91f438d1271209336329bd141480fce84e7dfb806b945f7666109",
+    "testflight37/testflight-ready.json": "0c9c0eef7289d65ced024d991f6211518879b00eb4cd9ba131586f1aae7b4454",
+    "testflight37/test-notes-receipt.json": "88029a5a96dc61c0bae1f7849e6128aadba9726b183120c4d5f2ef7d85ce8ee9",
+    "tour-host-compact-deployment-receipt.json": "98a1423e150e3995b6a5055219ada9defb9bcb1c63294f882f169cae5fd63c74",
+    "deployments-after-compact.json": "dc56db04a35cf0b786cce05f9e69c5c2729aed76487d69a72dd7cb082bfa2323",
+    "live/receipt.json": "5cbd465be7e756bbbd85c3dc02451097da9363d661616edd9d7e18d819461e27",
+    "live/public-safe-summary.json": "ead8613e365e0c2739802ce7c1e925545aeffcde4642ff2806dbf5fcba4985f2"
+  },
+  "evidenceNotes": [
+    "Frozen early archive/preflight and deployment receipts retain pending fields from their original checkpoints. Later exact-source CI, owner release gate, one upload, Apple availability and final live readback complete those gates."
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "recordedUTC": "2026-10-14T14:47:19.269483+00:00",
+  "version": "1.0.4",
+  "build": "76",
+  "sourceCommit": "7a8c08a84030dbf26d38c53eabd2c554837e08d1",
+  "branch": "testflight/spatial76-20261014",
+  "Apple": {
+    "buildID": "ea569a4c-b1e9-4616-a5fc-7911134baec5",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "NOT_APPLICABLE",
+    "groupID": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+    "membershipVerified": true,
+    "testingNotesVerified": true,
+    "available": true
+  },
+  "protectedAppStore74": {
+    "checkedUTC": "2026-10-14T14:43:42.017200+00:00",
+    "attachedBuild": "74",
+    "attachedBuildID": "0d6dfeeb-9ecb-49bf-a1bc-33e8d9115901",
+    "releaseType": "AFTER_APPROVAL",
+    "storeState": "WAITING_FOR_REVIEW",
+    "reviewID": "cdd8edb2-1b4b-4a46-a06e-08376f9b9d1a",
+    "reviewState": "WAITING_FOR_REVIEW",
+    "noAppleWrites": true
+  },
+  "scope": "Unified Floor plans & measurements and 3D tours entries; local guided and walking tests available independently of cloud reconstruction; manual room-entry instructions. No new reconstruction provider or backend activation.",
+  "nativeValidation": {
+    "archivePassed": true,
+    "signatureVerified": true,
+    "labCompilerFlagVerified": true,
+    "actualAppSwiftDEBUGAbsent": true,
+    "UUID": "533CA483-A22C-314B-B1D5-8E28316E9C6D",
+    "introductionAssets": {
+      "RendpropQuickStart.mp4": "8ccd867b223e36b4f42348fac8fe3e75b288850dbc463fcfbab0422ed5d6dfb1",
+      "RendpropQuickStart.txt": "ff66150cc9caeb4f28942f87729176fd46906e627bdde0585a367ba05282a3f2"
+    },
+    "requiredGates": [
+      {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-taxonomy-boundary/shipping-boundaries/receipt.json",
+        "sha256": "a6ece0779e37cf18c618f310f7aaab825aa41dc87f5fedd28b5919d8f935cd7b",
+        "rootScopeReviewed": true
+      },
+      {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-taxonomy-boundary/shipping-boundaries/floor-plan/receipt.json",
+        "sha256": "941ad6a5bd8a1f5825872a42cd217f1bd839785b0216aec2822dc491a6afcf1a",
+        "rootScopeReviewed": true
+      },
+      {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/independent-route-review/receipt.json",
+        "sha256": "e825b1469dd45130cbdcade228f76495fdda93d290cd55274e1d1e813fdde88a",
+        "rootScopeReviewed": true
+      },
+      {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/measurement-ui-preservation.json",
+        "sha256": "9cc16f18244aa27d5bd28e88e2025d73808ce8b9401c768c4b602e6095a9a21b",
+        "rootScopeReviewed": true
+      },
+      {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/native-ux-root-scope.json",
+        "sha256": "87811f492e6bf8b2318422a0ac229d3ccdff4b884d31736e944352f1542bdaaf",
+        "rootScopeReviewed": true
+      }
+    ],
+    "measurementPositiveAssertions": 628
+  },
+  "delivery": {
+    "uploadSucceeded": true,
+    "XcodeInternalOnlyExportCompleted": true,
+    "retainedExportIPAAvailable": false,
+    "AppStoreWrites": 0,
+    "betaActivationWrites": [
+      "notes"
+    ]
+  },
+  "physicalAcceptance": {
+    "passed": false,
+    "pending": true,
+    "reason": "iPhone Mirroring failed to capture with ScreenCaptureKit -3811. No installed build76 screen, capture or room/model quality acceptance claimed."
+  },
+  "limitations": [
+    "Local test captures are device-wide and not yet attached to listings or published.",
+    "A photographic look-around preview and a walking dataset do not establish complete photorealistic 3D reconstruction.",
+    "Cloud test remains subject to the existing server availability and consumer gates."
+  ],
+  "evidence": {
+    "source-preflight.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/source-preflight.json",
+      "sha256": "4c9ed1a4f2c2aa336269a225ddf27660d9211cd919d6768ed0467c75785445e7"
+    },
+    "archive-verified.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/archive-verified.json",
+      "sha256": "f036137210b8869db5215cb8c209b9fdd5e83858be5953f1a96eff7d15b77979"
+    },
+    "upload-once.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/upload-once.json",
+      "sha256": "cb9801974a5e6f9711b9ebebf9e371038c94e2686b808222958874f122d7d16b"
+    },
+    "activation-once.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/activation-once.json",
+      "sha256": "6eb6dea4de90bbda3ffa8e491635fbacb140a2a8f6bb40741a16a73f55bff468"
+    },
+    "testflight-availability.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/testflight-availability.json",
+      "sha256": "b85c360194d02001843860d2994501e3f6337178757b11144ea8dd1f2a4bb897"
+    },
+    "closed-proof/receipt.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/closed-proof/receipt.json",
+      "sha256": "d9d84bd9bcdc3fe7fa08cf09d2bfe8dbddd0fe88e8767d171f5301e858f92403"
+    },
+    "measurement-ui-preservation.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/measurement-ui-preservation.json",
+      "sha256": "9cc16f18244aa27d5bd28e88e2025d73808ce8b9401c768c4b602e6095a9a21b"
+    },
+    "native-ux-root-scope.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/native-ux-root-scope.json",
+      "sha256": "87811f492e6bf8b2318422a0ac229d3ccdff4b884d31736e944352f1542bdaaf"
+    },
+    "independent-route-review/receipt.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/independent-route-review/receipt.json",
+      "sha256": "e825b1469dd45130cbdcade228f76495fdda93d290cd55274e1d1e813fdde88a"
+    },
+    "TESTING-ORDER.md": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build76-spatial-testflight/TESTING-ORDER.md",
+      "sha256": "25a5fc826f9e675fbbd4c9b2bf091295b14c04d446d1a85e65eb82281dcb2a06"
+    }
+  }
+}

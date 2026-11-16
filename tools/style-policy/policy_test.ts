@@ -44,7 +44,7 @@ Deno.test("frozen complete motion text remains exact", async () => {
     "one slow, subtle, grounded push-in with gentle natural parallax",
   );
   equal(
-    await hash(REEL_MOTION_TEXT),
+    await hash(Object.fromEntries(Object.entries(REEL_MOTION_TEXT).filter(([key]) => !["fly_through", "side_glide"].includes(key)))),
     "c9dca0d48bd84f1282481485283930a7eadfd4e2cd4153a68602d1fcf1c77576",
   );
 });

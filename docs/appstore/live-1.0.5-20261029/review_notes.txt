@@ -1,0 +1,19 @@
+Rendprop helps agents prepare property photos, make videos, publish a property website and manage enquiries.
+
+ACCESS: The entry screen offers Sign in with Apple and Sign in with email for an existing account. Email uses a password; there is no email sign-up or guest skip. For paid-feature review, sign in with email using the demo account in App Review Information. Its workspace has paid (Pro-level) access for the review period, so paid features can be tested without buying; Sandbox purchases made with it are recorded as test purchases. A new Apple ID does not inherit that workspace. After sign-in, a short introduction and the in-app guide video appear; tap Skip for now to go straight to the app (replay: Settings). Terms, Privacy and help are available before sign-in. Delete account: Account > Settings & plan > Your data.
+
+PRO SUBSCRIPTION (new in this version): Signed in with the demo account, open the plans from Account > Settings & plan > Plan & usage. Choose Pro ($29.99/month), tap Check trial availability, then Continue with Apple. The demo account holds one reserved free week for Pro, so please test Pro with it; for another plan the app explains that this account's free week is committed to Pro. A Sandbox Apple ID that has already used its free week can buy any plan directly. The free week is offered in the United States.
+
+REVIEW PATH: Home > See it in action opens a hosted sample. For your own listing, choose Home > Get started, enter details and add photos. Review edits before use. A paid owner can publish a website with a landscape Listing video or a recorded/uploaded walkthrough; the walkthrough is optional if a Listing video is selected. Camera capture needs a physical device.
+
+VIDEO AND AERIAL: In a listing, Make a video offers landscape Listing and portrait Social media. Choose photos, framing and optional audio, then review the result. Photo Motion animates photos; it is not drone footage or a 3D tour. Aerial intro can generate an opening from a front exterior photo for eligible paid accounts with consent. Activity shows saved work.
+
+ONE-TIME PURCHASES: Account > Settings & plan > Credits & extra usage shows the workspace balance. The demo account sees Add 100 credits and can complete it in the Sandbox; for other accounts it appears only when its server gate and StoreKit product are active. This $39.99 U.S. consumable adds nonexpiring credits to that workspace; Check pending purchase recovers interrupted transactions. On a saved listing, Website design shows Classic and the Signature Estate and Coastal Luxe samples. Upgrade this property appears when the property is eligible; the $25 U.S. Luxury Property Website consumable unlocks both luxury designs for that property, adding no credits or hosting. When a production gate is off, its purchase control is absent. Apple shows localized prices before confirmation.
+
+SUBSCRIPTIONS: Four monthly StoreKit 2 products: Pro, Max and Ultra (one seat each) and Team (three seats); each step up includes more monthly AI usage. U.S. prices are $29.99, $49.00, $99.99 and $249.99; Apple's Product.displayPrice controls the charge. Annual products are not offered. Team 4 to 9 seat variants are prepared but gated and unavailable in this review path. An eligible seven-day free week permits one draft listing and five AI photo edits; video, aerial and website publication begin with the first paid period. Restore purchases and Manage subscription are at Account > Settings & plan > Plan & usage. Apple manages cancellation; deleting the app or account does not cancel a subscription.
+
+AI AND PRIVACY: Consent names providers before media is sent; revoke it in Your data > AI processing. Review altered media; exports carry disclosure.
+
+NOT IN THIS BUILD: Floor plans, measurements and 3D tours are Coming soon. No RoomPlan or LiDAR capture is reachable.
+
+Contact: aaron@pilk.ai

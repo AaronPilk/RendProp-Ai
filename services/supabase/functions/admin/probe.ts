@@ -45,16 +45,18 @@ import {
 // ── Vocabulary ───────────────────────────────────────────────────────────────
 
 /**
- * Why a probe failed, in the four words the console can act on:
+ * Why a probe failed or could not validate access:
  *   auth       — the vendor answered, and rejected the key (401/403, or the
  *                two documented off-spec equivalents above). Fix: the key.
+ *   permission — a scoped key cannot access this diagnostic endpoint. It
+ *                proves neither invalid credentials nor generation access.
  *   network    — fetch threw, or the 8-second abort fired. We never reached
  *                them. Fix: nothing, probably; try again.
  *   rate_limit — 429. The key is fine; we asked too often.
  *   other      — the vendor answered with something else (5xx, a 404 on a
  *                route we expected, a malformed body).
  */
-export type ProbeErrorClass = "auth" | "network" | "rate_limit" | "other";
+export type ProbeErrorClass = "auth" | "permission" | "network" | "rate_limit" | "other";
 
 /** Scalars only — a number or a short label. Never a body, never an id. */
 export type ProbeDetail = Record<string, string | number>;
@@ -332,7 +334,7 @@ export const PROBES: Probe[] = [
   {
     key: "fal",
     env_names: ["FAL_KEY"],
-    how: "GET api.fal.ai/v1/models?limit=1 — model index, no generation. Public without a key, but a key that IS sent gets validated (bad key ⇒ 401), and this probe always sends one",
+    how: "GET api.fal.ai/v1/models?limit=1 — validates the key only. Balance, account lock and generation access remain unverified; no generation is submitted",
     doc: "https://fal.ai/docs/platform-apis/v1/models",
     async run(signal) {
       const { status, json } = await getJson(
@@ -343,8 +345,12 @@ export const PROBES: Probe[] = [
       if (status === 200) {
         const models = field(json, "models");
         return {
-          ok: true,
-          detail: Array.isArray(models) ? { models_visible: models.length } : null,
+          // A valid key can belong to a locked/exhausted account. A $0 catalog
+          // read cannot prove this account can generate; never display green.
+          ok: null,
+          message: "Key authenticated; check fal Billing for balance and account lock status.",
+          detail: { key_authenticated: 1, generation_verified: 0,
+            ...(Array.isArray(models) ? { models_visible: models.length } : {}) },
         };
       }
       return httpFailure(status, field(json, "error.message") ?? field(json, "detail"));
@@ -419,6 +425,15 @@ export const PROBES: Probe[] = [
         { "xi-api-key": envValue("ELEVENLABS_API_KEY")! },
         signal,
       );
+      if ((status === 401 || status === 403) && field(json, "detail.status") === "missing_permissions") {
+        // This account-read scope is separate from voice generation. The
+        // vendor's typed result cannot validate either key rejection or TTS.
+        return {
+          ok: null,
+          error_class: "permission",
+          message: "Subscription probe lacks permission; voice access was not tested",
+        };
+      }
       if (status !== 200) {
         return httpFailure(status, field(json, "detail.message") ?? field(json, "detail"));
       }
@@ -832,7 +847,9 @@ async function runOne(probe: Probe): Promise<ProbeResult> {
       configured: true,
       ok: outcome.ok,
       latency_ms: Date.now() - started,
-      error_class: outcome.ok === false ? (outcome.error_class ?? "other") : null,
+      error_class: outcome.ok === null && outcome.error_class === "permission"
+        ? "permission"
+        : outcome.ok === false ? (outcome.error_class ?? "other") : null,
       message: outcome.message ? sanitize(outcome.message) : null,
       detail: outcome.detail ?? null,
     };

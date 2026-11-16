@@ -6,6 +6,7 @@ import { scopeKey, type PlanItem } from "../src/workspace";
 import type { StudioServices, Workspace } from "../src/data";
 import type { CloudDocument } from "../src/data/documents";
 import "../src/styles.css";
+import "../src/design/studio.css";
 const user = "11111111-1111-4111-8111-111111111111", org = "22222222-2222-4222-8222-222222222222", other = "33333333-3333-4333-8333-333333333333";
 const workspace: Workspace = { user: { id: user, email: "agent@example.invalid", name: "Agent", avatarUrl: null }, org: { id: org, name: "Fixture office", handle: "office", spaceType: "real_estate" }, memberships: [{ orgId: org, orgName: "Fixture office", role: "owner", spaceType: "real_estate" }], plan: "team", planRaw: "team", planDegraded: false, planExpiresAt: null, trialEndsAt: null, usage: { listings: 1, leads: 1, leadsNew: 1, renders: 1 } };
 const plan = (title: string): PlanItem => ({ id: "existing-plan", title, caption: "A property worth seeing", date: "2026-09-15T10:00", createdAt: "2026-09-14T12:00:00Z", channel: "Instagram" });
@@ -44,4 +45,4 @@ function Fixture() {
   } });
   return <main style={{ padding: 20 }}><p role="status" aria-label="Planner notice">{notice}</p>{visible ? <CloudPlanner key={activeOrg} services={services} workspace={{ ...workspace, org: { ...workspace.org, id: activeOrg } }} onNotice={setNotice} /> : <p>Planner closed</p>}</main>;
 }
-createRoot(document.getElementById("root")!).render(<Fixture />);
+createRoot(document.getElementById("root")!).render(<div className="studio-shell" style={{display:"block"}}><Fixture /></div>);

@@ -9,10 +9,10 @@ AI/Stream-hosted tours look identical to the free instant path:
              (<12s) are sped less (≤1.5×) so they don't feel frantic — identical
              rule to RenderEngine.render(). (ffmpeg `setpts=PTS/speed`.)
   • 60 FPS   output cadence for fluid scroll-scrub (`fps=60`).
-  • SCALE    ≤1280 long edge, aspect-preserved, never upscaled, even dims.
+  • SCALE    ≤1920 long edge, aspect-preserved, never upscaled, even dims.
   • ALL-INTRA H.264: EVERY frame a keyframe (`-g 1 -bf 0`, x264 keyint=1) so any
              scrub position decodes exactly and instantly — the buttery scrub
-             feel. Costs bitrate (~14M) but that's the whole point.
+             feel. The HD master targets 24 Mbps (actual rate varies).
   • COLOR    the source is PROBED for HDR (PQ / HLG transfer, BT.2020 primaries).
              HDR sources get a real tone-map to Rec.709 SDR (zscale → linear →
              hable → bt709); SDR sources are passed through untouched. Output is
@@ -392,8 +392,10 @@ def _encode_cmd(input_path: str, output_path: str, speed: float, info: SourceInf
         "-pix_fmt", "yuv420p",
         # ALL-INTRA: keyframe every frame, no B-frames → every frame independent.
         "-g", "1", "-keyint_min", "1", "-bf", "0",
-        "-x264-params", "keyint=1:min-keyint=1:scenecut=0:bframes=0:ref=1",
-        "-b:v", br,                              # ~14M average (mirrors RenderEngine)
+        # Explicit VUI tags preserve the existing Rec.709 SDR contract even
+        # with FFmpeg builds whose generic color options omit two H.264 tags.
+        "-x264-params", "keyint=1:min-keyint=1:scenecut=0:bframes=0:ref=1:colorprim=bt709:transfer=bt709:colormatrix=bt709",
+        "-b:v", br,                              # 24M default (mirrors RenderEngine)
         # Output really is Rec.709 SDR now (tone-mapped when the source was HDR).
         "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
         "-movflags", "+faststart",
