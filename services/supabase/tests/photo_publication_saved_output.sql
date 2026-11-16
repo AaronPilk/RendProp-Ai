@@ -1,7 +1,13 @@
 \set ON_ERROR_STOP on
+\if :{?native_output}
+\else
+\set native_output false
+\endif
 begin;
 do $$begin if inet_server_addr()is not null or current_database()not in('photo_publication_saved_output','rendprop_audit','rendprop_replay')then raise exception'Owned socket fixture only';end if;end$$;
 create temp table checks(label text primary key);
+create temp table fixture_mode as select :'native_output'::boolean native_output;
+grant select on fixture_mode to service_role,authenticated;
 grant all on checks to service_role,authenticated;
 create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception'PUBLICATION FAIL: %',label;end if;insert into checks values(label);end$$;
 create function pg_temp.no(command text,label text,needle text default'RP404:')returns void language plpgsql as $$declare msg text;begin begin execute command;exception when others then msg:=sqlerrm;end;perform pg_temp.ok(position(needle in coalesce(msg,''))>0,label);end$$;
@@ -11,14 +17,20 @@ grant select on f to service_role,authenticated;
 update orgs set plan='starter',plan_source='manual'where id=(select org from f);
 insert into listings(id,org_id,agent_id,address)select listing,org,actor,'Synthetic accepted publication'from f;
 update app_config set value=jsonb_set(value,'{enabled}','true')where key='photo_quality';
-create function pg_temp.upload(original boolean,sha text,n bigint)returns uuid language plpgsql as $$declare a uuid:=gen_random_uuid();op jsonb;claim uuid;begin
- perform reserve_upload_assets((select actor from f),jsonb_build_array(jsonb_build_object('id',a,'listing_id',(select listing from f),'kind','photo','bucket','renders','storage_key','renders/'||(select org from f)||'/'||(select listing from f)||'/'||case when original then'original-'else'gallery-'end||a||'.jpg','bytes',n,'content_type','image/jpeg','content_type_declared',true,'sha256',sha,'idem_key','studio-upload:'||a)));
+create function pg_temp.upload(original boolean,sha text,n bigint,native_role boolean default false)returns uuid language plpgsql as $$declare a uuid:=gen_random_uuid();op jsonb;claim uuid;begin
+ perform reserve_upload_assets((select actor from f),jsonb_build_array(jsonb_build_object('id',a,'listing_id',(select listing from f),'kind','photo','bucket','renders','storage_key','renders/'||(select org from f)||'/'||(select listing from f)||'/'||case when original then'original-'when native_role then''else'gallery-'end||a||'.jpg','bytes',n,'content_type','image/jpeg','content_type_declared',true,'sha256',sha,'idem_key','saved-upload:'||a)));
  op:=plan_upload_operation(a,'single');claim:=gen_random_uuid();perform claim_upload_operation((op->>'id')::uuid,claim);perform finish_upload_operation((op->>'id')::uuid,claim,'stored','synthetic-single',null,'image/jpeg');
  op:=plan_upload_operation(a,'copy');claim:=gen_random_uuid();perform claim_upload_operation((op->>'id')::uuid,claim);perform finish_upload_operation((op->>'id')::uuid,claim,'stored','synthetic-copy',null,'image/jpeg');
  perform settle_upload_reservation(a,true,(op->>'id')::uuid,jsonb_build_object('sha256',sha));return a;end$$;
 set local role service_role;
-create temp table ids as select pg_temp.upload(true,repeat('a',64),60000)original,pg_temp.upload(false,repeat('b',64),80000)output;
+-- Native default-role uploads may precede publication preparation. Freeze
+-- the empty listing selection through the same existing upload helper that
+-- the Studio gallery upload invokes, so later assertions measure selection
+-- mutations by publication rather than legacy implicit upload discovery.
+select freeze_listing_gallery_for_upload(actor,org,listing)from f where(select native_output from fixture_mode);
+create temp table ids as select pg_temp.upload(true,repeat('a',64),60000)original,pg_temp.upload(false,repeat('b',64),80000)output,case when(select native_output from fixture_mode)then pg_temp.upload(false,repeat('b',64),80000,true)end native_alias;
 grant select on ids to service_role,authenticated;
+select pg_temp.ok((select spec->>'key_role'=case when(select native_output from fixture_mode)then'default'else'gallery'end from upload_reservations where asset_id=(select coalesce(native_alias,output) from ids)),'fixture binds the actual native or Studio upload role');
 select serving_operation_begin(actor,org,'publication-saved-output','photo_edit',repeat('d',64))from f;
 create temp table evidence as select photo_quality_begin(actor,org,'publication-saved-output',listing,'stage',null,(select original from ids),jsonb_build_object('sha256',repeat('a',64),'bytes',60000,'mime','image/jpeg','width',1024,'height',768))x from f;
 grant select,update on evidence to service_role,authenticated;
@@ -32,9 +44,9 @@ create temp table before_save as select (select to_jsonb(e)from photo_edit_evide
 reset role;
 select set_config('request.jwt.claim.sub',(select actor::text from f),true);
 set local role authenticated;
-select set_provenance_media((select(x#>>'{evidence,provenance_id}')::uuid from evidence),null,(select output from ids),null);
+select set_provenance_media((select(x#>>'{evidence,provenance_id}')::uuid from evidence),null,(select coalesce(native_alias,output) from ids),null);
 reset role;
-select pg_temp.ok((select m.altered_key=a.storage_key from media_provenance m join capture_assets a on a.id=(select output from ids)where m.id=(select(x#>>'{evidence,provenance_id}')::uuid from evidence)),'normal compliance RPC retains exact completed output alias');
+select pg_temp.ok((select m.altered_key=a.storage_key from media_provenance m join capture_assets a on a.id=(select coalesce(native_alias,output) from ids)where m.id=(select(x#>>'{evidence,provenance_id}')::uuid from evidence)),'normal compliance RPC retains exact completed output alias');
 create function pg_temp.source()returns jsonb language sql as $$select photo_publication_source(actor,org,org,(select(x#>>'{evidence,id}')::uuid from evidence))from f$$;
 set local role service_role;
 select pg_temp.ok(pg_temp.source()#>>'{evidence,id}'=(select x#>>'{evidence,id}'from evidence),'saved alias accepted by source authority');
@@ -43,21 +55,25 @@ select pg_temp.no('select photo_publication_target(actor,org,org,gen_random_uuid
 create temp table proof as select jsonb_build_object('sha256',repeat('b',64),'bytes',80000,'mime','image/jpeg','etag',x#>>'{target,etag}')t from target;
 grant select on target,proof to service_role;
 select pg_temp.ok((select photo_publication_resolve(actor,org,org,listing,(select output from ids),(select(x#>>'{evidence,provenance_id}')::uuid from evidence),(select t from proof))#>>'{evidence,id}'=(select x#>>'{evidence,id}'from evidence)from f),'real target and resolve preserve exact evidence');
+select pg_temp.no('select photo_publication_resolve(actor,org,org,listing,(select output from ids),(select(x#>>''{evidence,provenance_id}'')::uuid from evidence),jsonb_set((select t from proof),''{bytes}'',''80001''))from f','wrong verified target byte count refuses','RP409:');
 reset role;
 -- Each mutation is rolled back even after a source refusal; errors in the
 -- mutation itself do not count as the source guard rejecting missing proof.
 create function pg_temp.missing(command text,label text)returns void language plpgsql as $$declare passed boolean:=false;begin
  begin execute command;begin perform pg_temp.source();exception when others then if sqlerrm like'RP404:%'then passed:=true;else raise;end if;end;raise exception using errcode='PZ001',message='rollback synthetic mutation';exception when sqlstate'PZ001'then null;end;
  perform pg_temp.ok(passed,label);end$$;
-select pg_temp.missing('update capture_assets set sha256=null where id=(select output from ids)','NULL output hash refuses');
-select pg_temp.missing('update capture_assets set sha256=repeat(''f'',64)where id=(select output from ids)','wrong output hash refuses');
-select pg_temp.no('update capture_assets set bytes=80001 where id=(select output from ids)','completed output length is immutable','RP409: completed upload publication is immutable');
-select pg_temp.no('update capture_assets set content_type=''image/png''where id=(select output from ids)','completed output MIME is immutable','RP409: completed upload publication is immutable');
-select pg_temp.missing('update upload_reservations set actor_id=(select other from f)where asset_id=(select output from ids)','foreign reservation actor refuses');
-select pg_temp.missing('update upload_reservations set spec=jsonb_set(spec,''{key_role}'',''"original"'')where asset_id=(select output from ids)','non-gallery upload role refuses');
-select pg_temp.missing('update upload_operations set claim=null where asset_id=(select output from ids)and kind=''copy''','missing retained claim refuses');
-select pg_temp.missing('update upload_operations set etag=null where asset_id=(select output from ids)and kind=''copy''','missing retained ETag refuses');
-select pg_temp.no('update capture_assets set upload_aborted=true where id=(select output from ids)','completed output cannot be marked aborted','RP409: completed upload publication is immutable');
+select pg_temp.missing('update capture_assets set sha256=null where id=(select coalesce(native_alias,output) from ids)','NULL output hash refuses');
+select pg_temp.missing('update capture_assets set sha256=repeat(''f'',64)where id=(select coalesce(native_alias,output) from ids)','wrong output hash refuses');
+select pg_temp.no('update capture_assets set bytes=80001 where id=(select coalesce(native_alias,output) from ids)','completed output length is immutable','RP409: completed upload publication is immutable');
+select pg_temp.no('update capture_assets set content_type=''image/png''where id=(select coalesce(native_alias,output) from ids)','completed output MIME is immutable','RP409: completed upload publication is immutable');
+select pg_temp.missing('update upload_reservations set actor_id=(select other from f)where asset_id=(select coalesce(native_alias,output) from ids)','foreign reservation actor refuses');
+select pg_temp.missing('update upload_reservations set spec=jsonb_set(spec,''{key_role}'',''"original"'')where asset_id=(select coalesce(native_alias,output) from ids)','original-only upload role refuses');
+select pg_temp.missing('update upload_operations set state=''rejected'' where asset_id=(select coalesce(native_alias,output) from ids)and kind=''copy''','rejected copy receipt refuses');
+select pg_temp.no('update upload_operations set expected_bytes=80001 where asset_id=(select coalesce(native_alias,output) from ids)and kind=''copy''','retained copy byte identity is immutable','RP409: Stored upload identity is immutable');
+select pg_temp.missing('update upload_operations set content_type=''image/png'' where asset_id=(select coalesce(native_alias,output) from ids)and kind=''copy''','wrong copy receipt MIME refuses');
+select pg_temp.missing('update upload_operations set claim=null where asset_id=(select coalesce(native_alias,output) from ids)and kind=''copy''','missing retained claim refuses');
+select pg_temp.missing('update upload_operations set etag=null where asset_id=(select coalesce(native_alias,output) from ids)and kind=''copy''','missing retained ETag refuses');
+select pg_temp.no('update capture_assets set upload_aborted=true where id=(select coalesce(native_alias,output) from ids)','completed output cannot be marked aborted','RP409: completed upload publication is immutable');
 select pg_temp.no('select photo_publication_source((select other from f),(select org from f),(select org from f),(select(x#>>''{evidence,id}'')::uuid from evidence))','foreign source actor refuses');
 select pg_temp.no('select photo_publication_source((select actor from f),(select org from f),gen_random_uuid(),(select(x#>>''{evidence,id}'')::uuid from evidence))','foreign source library refuses');
 set local role service_role;
@@ -95,7 +111,7 @@ select pg_temp.ok((select count(*)=1 from media_provenance where photo_publicati
 select pg_temp.ok((select to_jsonb(e)=b.evidence from photo_edit_evidence e cross join before_save b where e.id=(select(x#>>'{evidence,id}')::uuid from evidence))and(select to_jsonb(q)=b.check_row from photo_quality_checks q cross join before_save b where q.id=(select(x#>>'{check,id}')::uuid from evidence)),'paid evidence and pending advisory check remain byte-identical');
 select pg_temp.ok((select gallery_asset_ids='{}'::uuid[]and main_photo_key is null from listings where id=(select listing from f)),'attachment does not silently select or publish photo');
 set local role service_role;
-select pg_temp.ok((select count(*)=2 from media_provenance where listing_id=(select listing from f)and altered_key=(select storage_key from capture_assets where id=(select output from ids))),'saved compliance source and prepared publication retain exactly two historical rows');
+select pg_temp.ok((select count(*)=case when(select native_output from fixture_mode)then 1 else 2 end from media_provenance where listing_id=(select listing from f)and altered_key=(select storage_key from capture_assets where id=(select output from ids))),'prepared target retains only its exact expected provenance rows');
 select pg_temp.ok((select published.photo_publication#>>'{source,provenance_id}'=(select x#>>'{evidence,provenance_id}'from evidence)
  and photo_publication_metadata_valid(published.id) from media_provenance published where published.id=(select(x#>>'{publication,id}')::uuid from finished)),'prepared publication links the accepted source and complete retained proof');
 select pg_temp.ok((select item->>'can_use'='true'and item->>'review_required'='true'and item->>'asset_id'=(select output::text from ids)
@@ -120,13 +136,24 @@ declare studio_refused boolean:=false;native_refused boolean:=false;native_error
 begin
  begin
   execute command;
-  select (public.studio_gallery_photo_choice(f.org,f.listing,(select output from ids))->>'can_use')='false'
-   into studio_refused from f;
+  -- Exercise the actual service-role entrypoints. Their security-definer
+  -- wrappers own the private helpers; JWT role hints cannot provide this scope.
+  perform set_config('role','service_role',true);
+  select item->>'can_use'='false' into studio_refused from f
+   cross join lateral jsonb_array_elements(public.studio_gallery_selection_snapshot(f.actor,f.org,f.listing)->'photos')item
+   where item->>'photo_id'=(select output::text from ids);
   begin
-   perform public.native_gallery_selection_target(f.org,f.listing,(select output from ids),repeat('b',64),80000,false)from f;
+   perform public.native_gallery_selection_change(f.actor,f.org,f.org,f.listing,gen_random_uuid(),
+    jsonb_set(jsonb_set((select body from selection_request),'{expected_selection}',
+     (select jsonb_build_object('gallery_asset_ids',l.gallery_asset_ids,'main_photo_key',l.main_photo_key)
+      from public.listings l where l.id=f.listing)),'{follow_family_cover}','true'::jsonb))from f;
   exception when others then native_error:=sqlerrm;
   end;
-  native_refused:=position('RP409: This photo has ambiguous edit evidence' in coalesce(native_error,''))>0;
+  native_refused:=case when(select native_output from fixture_mode)
+   then native_error='RP409: This photo or its original was withdrawn'
+   else native_error='RP409: This photo has ambiguous edit evidence'end;
+  raise notice 'Rejected malformed pair (%): %',label,native_error;
+  perform set_config('role','none',true);
   raise exception using errcode='PZ001',message='rollback synthetic pair mutation';
  exception when sqlstate 'PZ001' then null;
  end;
@@ -161,7 +188,7 @@ select pg_temp.ok((select item->>'can_use'='true'from f cross join lateral jsonb
  where item->>'photo_id'=(select output::text from ids)),'canonical selection recovers when unrelated duplicate is removed');
 reset role;
 select pg_temp.ok(not has_function_privilege('authenticated','photo_publication_reserve(uuid,uuid,uuid,uuid,uuid,uuid,jsonb,jsonb,jsonb,uuid)','execute')and not has_function_privilege('anon','photo_publication_finish(uuid,uuid,uuid,uuid,uuid,jsonb,jsonb)','execute'),'publication orchestration remains service-only');
-select jsonb_build_object('passed',true,'suite','photo-publication-saved-output','assertions',(select count(*)from checks),'chain','upload/early-release/compliance/source/target/resolve/reserve/finish/attach/gallery-choice/native-choice/readability/replay');
-do $$begin if(select count(*)from checks)<>50 then raise exception'Incomplete publication fixture inventory';end if;end$$;
-select 'PASS saved-output publication: 50 assertions';
+select jsonb_build_object('passed',true,'suite','photo-publication-saved-output','native_output',(select native_output from fixture_mode),'assertions',(select count(*)from checks),'chain','upload/early-release/compliance/source/target/resolve/reserve/finish/attach/gallery-choice/native-choice/readability/replay');
+do $$begin if(select count(*)from checks)<>55 then raise exception'Incomplete publication fixture inventory';end if;end$$;
+select 'PASS saved-output publication: 55 assertions';
 rollback;

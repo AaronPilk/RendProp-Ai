@@ -9,11 +9,13 @@ SQL = ROOT / 'services/supabase'
 MIG = SQL / 'migrations/20261113213000_photo_publication_saved_output_compat.sql'
 AUTH_MIG = SQL / 'migrations/20261113222000_photo_publication_authenticated_read.sql'
 GALLERY_MIG = SQL / 'migrations/20261113223202_gallery_canonical_prepared_publication.sql'
+NATIVE_MIG = SQL / 'migrations/20261116202000_photo_publication_native_saved_output_compat.sql'
 FIX = SQL / 'tests/photo_publication_saved_output.sql'
 PG = Path('/opt/homebrew/opt/postgresql@17/bin')
 EXPECTED = '8c487dce9151ddaba5d721b3514ef83c4ff9d5430f4e7420a5464c7d473736dc'
 EXPECTED_AUTH = '6441321c2c6d646eab5fe5e920148f12b49e2654ea058d945fbce3686b0d3cc3'
 EXPECTED_GALLERY = 'fbff0b86d412ed147c2571a3880c45489e447351e4d3d6542f809b18e13d1286'
+EXPECTED_NATIVE = 'c8f27e69ac90a8b791bda8d0bccfaca813a10aca5ffb4f36ae576712814f5886'
 REFUSAL = 'Review changed accepted-photo publication source before saved-output compatibility'
 os.umask(0o077)
 p = argparse.ArgumentParser(); p.add_argument('--evidence-dir', required=True, type=Path); args = p.parse_args()
@@ -39,7 +41,7 @@ def run(name, argv, body=None, refuses=None):
 def query(name, body): return run(name,[*PSQL,'-Atq'],body)
 def catalog(name): return query(name,"select md5(string_agg(oid::regprocedure::text||pg_get_functiondef(oid)||proowner::text||coalesce(proacl::text,'')||coalesce(proconfig::text,''),'|' order by oid::regprocedure::text))from pg_proc where pronamespace='public'::regnamespace and prokind='f';")
 try:
-    assert sha(MIG)==EXPECTED and sha(AUTH_MIG)==EXPECTED_AUTH and sha(GALLERY_MIG)==EXPECTED_GALLERY, 'Frozen migration changed'
+    assert sha(MIG)==EXPECTED and sha(AUTH_MIG)==EXPECTED_AUTH and sha(GALLERY_MIG)==EXPECTED_GALLERY and sha(NATIVE_MIG)==EXPECTED_NATIVE, 'Frozen migration changed'
     r['runtime']={n:{'path':str(PG/n),'sha256':sha((PG/n).resolve())}for n in ['initdb','pg_ctl','createdb','psql','postgres']}
     r['postgresVersion']=run('pg-version',[PG/'postgres','--version']).strip(); assert ' 17.11 ' in r['postgresVersion']
     schema,live=partition_fresh_migrations(MIGRATIONS); r['excludedLiveStateOnly']=[m.name for m in live]
@@ -51,7 +53,7 @@ try:
     assert query('owned-identity',"select current_setting('data_directory')||'|'||current_setting('listen_addresses');").strip()==str(DATA)+'|'
     run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
     for i,m in enumerate(schema):
-        if m in (MIG,AUTH_MIG,GALLERY_MIG): continue
+        if m in (MIG,AUTH_MIG,GALLERY_MIG,NATIVE_MIG): continue
         run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
         if i%60==0: print(f'Applied {i+1}/{len(schema)} schema migrations',flush=True)
     r['predecessorMd5']=query('predecessor-md5',"select md5(prosrc)from pg_proc where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;").strip()
@@ -78,7 +80,7 @@ try:
     original=query('current-source',"select pg_get_functiondef('public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure);")
     for stage in ['fresh','repeat']:
         out=run(stage+'-full-chain',[*PSQL,'-Atq','-f',FIX]); rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'"suite": "photo-publication-saved-output"'in x]
-        assert len(rows)==1 and rows[0]['passed'] and rows[0]['assertions']==50; r[stage]=rows[0]
+        assert len(rows)==1 and rows[0]['passed'] and rows[0]['assertions']==55 and rows[0]['native_output'] is False; r[stage]=rows[0]
     current=catalog('catalog-before-replay')
     run('exact-gallery-replay',[*PSQL,'-q','-f',GALLERY_MIG]); assert catalog('catalog-after-gallery-replay')==current
     run('exact-authenticated-replay',[*PSQL,'-q','-f',AUTH_MIG]); assert catalog('catalog-after-auth-replay')==current
@@ -89,6 +91,28 @@ try:
     run('hash-omission-detected',[*PSQL,'-Atq','-f',FIX],refuses='PUBLICATION FAIL: NULL output hash refuses')
     query('restore-hash-guard',original); assert catalog('catalog-after-control')==current
     r['compiledGuardOmissionDetected']=True
+    # Reproduce the actual native default-role refusal before applying the
+    # compatibility seam, then run the same physical-receipt and selection
+    # chain in both supported output roles.
+    run('native-default-baseline-refused',[*PSQL,'-Atq','-v','native_output=true','-f',FIX],refuses='RP404: This saved photo is unavailable for publication')
+    native_before=json.loads(query('native-metadata-before',"select (to_jsonb(p)-'prosrc'-'prosqlbody')::text from pg_proc p where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;"))
+    run('apply-native-saved-output',[*PSQL,'-q','-f',NATIVE_MIG])
+    assert query('native-body-md5',"select md5(prosrc)from pg_proc where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;").strip()=='21c9e4e699d371f2a2c1c66b02eb99a4'
+    assert json.loads(query('native-metadata-after',"select (to_jsonb(p)-'prosrc'-'prosqlbody')::text from pg_proc p where oid='public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure;"))==native_before
+    r['nativeOwnerAclSecurityConfigUnchanged']=True
+    for stage,native in [('native-fresh',True),('native-repeat',True),('gallery-after-native',False)]:
+        out=run(stage+'-full-chain',[*PSQL,'-Atq','-v','native_output='+str(native).lower(),'-f',FIX])
+        rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'"suite": "photo-publication-saved-output"'in x]
+        assert len(rows)==1 and rows[0]['passed'] and rows[0]['assertions']==55 and rows[0]['native_output'] is native; r[stage]=rows[0]
+    current=catalog('catalog-before-native-replay')
+    run('exact-native-replay',[*PSQL,'-q','-f',NATIVE_MIG]); assert catalog('catalog-after-native-replay')==current
+    r['nativeExactReplayPreservesCatalog']=True
+    native_source=query('native-current-source',"select pg_get_functiondef('public.photo_publication_source(uuid,uuid,uuid,uuid)'::regprocedure);")
+    assert native_source.count(needle)==1
+    query('compile-native-hash-guard-omission',native_source.replace(needle,''))
+    run('native-hash-omission-detected',[*PSQL,'-Atq','-v','native_output=true','-f',FIX],refuses='PUBLICATION FAIL: NULL output hash refuses')
+    query('restore-native-hash-guard',native_source); assert catalog('catalog-after-native-control')==current
+    r['nativeCompiledGuardOmissionDetected']=True
     assert hashes()==r['sourceBefore'],'Consumed source changed'
     r['status']='passed'
 except BaseException as e:
