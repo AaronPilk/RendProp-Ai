@@ -1,0 +1,40 @@
+{
+  "slug": "photographing-a-vacant-home-so-virtual-staging-looks-right",
+  "title": "Photographing a vacant home so virtual staging looks right",
+  "description": "Shoot from chest height, level, from the corner that shows the most floor, at 1x. Staging needs floor, straight walls and clear light to look real.",
+  "category": "photos",
+  "keywords": [
+    "photograph vacant home for virtual staging",
+    "empty house listing photos",
+    "camera angle for virtual staging",
+    "shoot empty room for staging",
+    "vacant property photography tips"
+  ],
+  "tldr": "Shoot a vacant home from chest height, with the camera level, from the corner that shows the most floor, and leave the floor in the bottom third of the frame. Staging needs floor to put furniture on, straight walls to align with, and clear light. A doorway shot at 0.5x gives it none of that.",
+  "html": "<p>Shoot a vacant home from chest height, with the camera level, from the corner that shows the most floor, and leave the floor in the bottom third of the frame. Virtual staging, whether a vendor or an AI edit, needs floor to put furniture on, straight walls to align it against, and a clear sense of where the light comes from. Give the frame those three things and the staged version looks like a furnished room. Shoot it from the doorway at eye level with a wide lens and the furniture will float.</p><h2>What staging needs from the frame</h2><p>A real sofa sits on a real floor, casts a shadow away from the window, and lines up with the walls. For an added sofa to do the same, the photo has to show enough floor for it to sit on, enough wall for it to align with, and clear light so the shadow lands right. Every staging failure you have seen, the floating rug, the sofa through the wall, the lamp lit from the wrong side, comes from a frame that was missing one of those.</p><h2>Camera position, in order of importance</h2><ol><li><strong>Height.</strong> Chest height, around 4 feet. Higher shows more floor but tilts the walls. Lower hides the floor and the staging has nowhere to go.</li><li><strong>Level.</strong> Verticals must be vertical. A tilted camera means every added piece either leans or looks wrong against walls that lean.</li><li><strong>Corner, not doorway.</strong> From a corner you see two walls and the floor between them, which is a room. From the doorway you see one wall and a strip of floor, which is a hallway.</li><li><strong>Lens.</strong> The standard 1x lens by default. The wide 0.5x lens stretches the floor so an added sofa looks the wrong size for the room. Use it only where 1x cannot show the space, and warn whoever is staging.</li></ol><h2>Light and the empty room</h2><p>Open every blind and turn on every ceiling light, even in daylight. An empty room with one window and no lamps has a single hard light source and the staged furniture will be lit from that side only, which is fine if the staging matches it and wrong if it does not. Mixed light gives the staging a softer base to work with.</p><p>Shoot the room so the window is to the side, not behind you and not straight ahead. Behind you, the room is flat. Straight ahead, the window blows out and the furniture gets placed in front of a white rectangle.</p><h2>A worked example: the empty 2-bed townhouse</h2><p>New paint, new carpet, nothing in it. The agent shoots the living room from the corner by the front door, chest height, level, 1x lens, window on the left. The frame shows carpet across the bottom third, the back wall with the fireplace, and the opening to the dining area on the right.</p><p>The staged version puts a sofa facing the fireplace, a rug under it, a side table by the window and a lamp. Shadows fall right, the rug sits on carpet that was visible in the original, and the sofa is scaled to a wall whose length the frame showed. It gets the Virtually staged label and goes in the gallery next to the original.</p><p>The same room shot from the doorway at 0.5x came back with a sectional the size of the room and a rug that ran under the baseboard. That frame was discarded.</p><h2>Frames to shoot, and frames to skip</h2><p>Stage the rooms that look smallest empty: living room, primary bedroom, dining area. A kitchen rarely needs it, because the cabinets give it scale. Bathrooms do not need it. Hallways cannot use it.</p><p>For each room you plan to stage, shoot two frames from slightly different corners so the stager, or you, has a choice. Keep both originals.</p><h2>Staging a vacant listing in Rendprop</h2><p>The add furniture edit in the <a href=\"/features#photo-studio\">photo studio</a> works from the photo you give it, so the camera position above is what makes the difference. The result is saved as a separate version labelled Virtually staged, and the untouched original stays in the photo history, so both can go in the gallery on the property page. Compare the staged version against the original before you choose it, and count the windows, outlets and fixtures, because AI can change or invent details. If the furniture is the wrong scale, a custom prompt naming the piece and the wall usually fixes it. Check your MLS rules on staged photo disclosure before publishing.</p><h2>Walk it at chest height first</h2><p>Before the next vacant listing, walk the empty house once with the phone held at chest height and level, and look at each room from its corners rather than its doorways. The frames you want will be obvious from there. The rules on labelling are in <a href=\"/blog/virtual-staging-rules-what-to-label-and-what-your-mls-expects\">virtual staging rules</a>, and <a href=\"/blog/add-furniture-to-an-empty-living-room-photo-styles-that-read-as-real\">staging an empty living room photo</a> covers which styles look real once the frame is right.</p>",
+  "faq": [
+    {
+      "q": "What camera height is best for photos that will be virtually staged?",
+      "a": "Chest height, around 4 feet, with the camera level. Higher tilts the walls and lower hides the floor. The staging needs visible floor in the bottom third of the frame to put furniture on."
+    },
+    {
+      "q": "Should I use the wide 0.5x lens on an empty room?",
+      "a": "Only when the 1x lens cannot show the room from any corner. The wide lens stretches the floor, so added furniture comes back the wrong scale for the room. Shoot at 1x from the corner for any frame you plan to stage."
+    },
+    {
+      "q": "Which rooms in a vacant home should be staged?",
+      "a": "The ones that look smallest empty: the living room, the primary bedroom and the dining area. Kitchens have cabinets for scale and rarely need it. Bathrooms and hallways do not."
+    },
+    {
+      "q": "Why does the staged furniture look like it is floating?",
+      "a": "Usually because the frame did not show enough floor, the camera was tilted, or the light direction in the staging does not match the window. Reshoot from the corner, level, with the window to the side, and the staging has something to sit on."
+    }
+  ],
+  "related": [
+    "virtual-staging-rules-what-to-label-and-what-your-mls-expects",
+    "add-furniture-to-an-empty-living-room-photo-styles-that-read-as-real",
+    "vacant-versus-occupied-shooting-plans-for-each",
+    "shooting-listing-photos-at-0-5x-wide-when-the-wide-lens-helps-and-when-i"
+  ],
+  "published": "2026-10-28"
+}

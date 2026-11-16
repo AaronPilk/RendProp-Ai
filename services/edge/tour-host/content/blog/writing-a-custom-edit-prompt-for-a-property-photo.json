@@ -1,0 +1,40 @@
+{
+  "slug": "writing-a-custom-edit-prompt-for-a-property-photo",
+  "title": "Writing a custom edit prompt for a property photo",
+  "description": "Name the one thing to change, name what must stay the same, and say what not to add. Three sentences in that order beat one vague line.",
+  "category": "photos",
+  "keywords": [
+    "AI photo edit prompt real estate",
+    "custom prompt listing photo",
+    "how to write prompt for photo edit",
+    "prompt for removing objects from photo",
+    "AI property photo prompt examples"
+  ],
+  "tldr": "A good custom edit prompt names the one thing to change, names what must stay the same, and says what not to add. Three sentences in that order get a usable edit far more often than one line that says make the room look nicer.",
+  "html": "<p>A good custom edit prompt names the one thing to change, names what must stay the same, and says what not to add. Remove the laundry basket from the floor. Keep the walls, the window, the outlets and the carpet exactly as they are. Do not add any furniture or plants. Three sentences, in that order, get a usable edit far more often than one sentence that says make the room look nicer.</p><h2>Why vague prompts produce invented rooms</h2><p>An image model fills gaps with the most likely thing. Tell it to clean up a bedroom and it decides what clean means, which might include removing the radiator, repainting the trim and swapping the ceiling light. None of that was asked for. None of it was forbidden either. The prompt left a gap and the model filled it.</p><p>A prompt that is specific about the change and explicit about the constraints leaves fewer gaps. It will not stop every invention, which is why you still compare against the original, but it cuts the number of retries.</p><h2>The three-part structure</h2><ol><li><strong>The change.</strong> One edit, named by object and place. Remove the cardboard boxes stacked against the left wall. Replace the grey sky with a clear mid-morning sky. Add a sofa, a rug and a floor lamp to the empty living room.</li><li><strong>The keep list.</strong> The permanent features in the frame, by name. Keep the fireplace, the built-in shelves, both windows, the outlets and the oak floor exactly as they are.</li><li><strong>The do-not list.</strong> The additions the model is likely to make unprompted. Do not add plants, artwork, curtains or any furniture that is not listed.</li></ol><p>Order matters a little. The change first, then the constraints, reads to the model as a task with rules rather than a list of rules with a task buried in it.</p><h2>Three prompts, side by side</h2><p><strong>Weak:</strong> Make this kitchen look clean and modern.</p><p>The model may repaint cabinets, change the countertop and remove the vent hood. Clean and modern are opinions.</p><p><strong>Better:</strong> Remove the dish rack, the mail and the paper towel roll from the counter.</p><p>Good change, no constraints. The model might clear the counter and then simplify the backsplash because it was in the way.</p><p><strong>Usable:</strong> Remove the dish rack, the mail and the paper towel roll from the counter. Keep the cabinets, countertop, backsplash, faucet, range hood, window and all outlets exactly as they are. Do not add anything to the counter.</p><p>This one comes back as the same kitchen with a clear counter most of the time, and when it does not, the comparison against the original tells you which constraint to strengthen.</p><h2>Words that help and words that hurt</h2><p>Helpful words name materials and positions: oak, brushed nickel, left wall, under the window, same colour. Unhelpful words are adjectives about feeling: bright, cosy, inviting, luxurious. The model has a view on what luxurious means and it probably involves a chandelier.</p><p>Avoid asking for two unrelated edits in one prompt. Fix the sky and stage the deck is two jobs. Run them as two edits so a failure in one does not cost you the other.</p><h2>A worked example: the bedroom with the boxes</h2><p>A seller is half moved out. The primary bedroom photo shows a made bed, a dresser and six moving boxes along the wall under the window. The agent writes: Remove the six moving boxes from the floor under the window. Keep the bed, the dresser, the window, the blinds, the outlets, the carpet and the ceiling light exactly as they are. Do not add any furniture, rugs or decoration where the boxes were.</p><p>The edit comes back with the boxes gone and carpet in their place. The count on windows, outlets and fixtures matches. The agent keeps it, labelled as AI-altered. The alternative prompt, tidy this bedroom, had returned a room with a different headboard.</p><h2>Custom prompts in Rendprop</h2><p>In the <a href=\"/features#photo-studio\">photo studio</a>, a custom prompt sits alongside the optional edits: blue sky, twilight, green lawn, tidy the room and add furniture. Two helpers do part of this work for you: Suggest proposes edits for a photo, and Improve my prompt sharpens wording you have already written, which is useful for turning a one-line idea into the three-part structure above. Every result is a separate version with an AI-alteration disclosure, the untouched original stays in the photo history, and you compare before choosing which version the listing uses. AI can change or invent details, so the compare step is not optional, however good the prompt.</p><h2>Keep a prompt file</h2><p>Save the prompts that worked, with the room type and the edit. After ten listings you will have a short library that covers most of what comes up, and a new listing starts from a prompt that has already passed a comparison once. For the guardrails side of this, <a href=\"/blog/custom-ai-prompts-guardrails-that-keep-edits-inside-the-room\">custom AI prompts: guardrails that keep edits inside the room</a> goes further on the do-not list, and <a href=\"/blog/how-to-use-suggest-and-improve-my-prompt-in-rendprops-photo-studio\">how to use Suggest and Improve my prompt</a> covers the two helpers.</p>",
+  "faq": [
+    {
+      "q": "What should an AI photo edit prompt include?",
+      "a": "Three things in order: the one change, named by object and place; the keep list of permanent features in the frame; and the do-not list of additions the model is likely to make on its own. Materials and positions help, adjectives about feeling do not."
+    },
+    {
+      "q": "Can I ask for two edits in one prompt?",
+      "a": "You can, but it is better not to. A sky swap and a staging job in one prompt means a failure in one costs you the other. Run them as separate edits and compare each against the original."
+    },
+    {
+      "q": "What does Improve my prompt do in Rendprop?",
+      "a": "It sharpens wording you have already written. A one-line idea such as clear the counter can be turned into a prompt that names the objects, the keep list and the do-not list. Suggest is the other helper and proposes edits for a photo."
+    },
+    {
+      "q": "Does a good prompt mean I can skip comparing the result?",
+      "a": "No. A good prompt reduces retries, but AI can still change or invent details. Compare every result against the original and count windows, outlets and fixtures before choosing it."
+    }
+  ],
+  "related": [
+    "custom-ai-prompts-guardrails-that-keep-edits-inside-the-room",
+    "how-to-use-suggest-and-improve-my-prompt-in-rendprops-photo-studio",
+    "tidy-the-room-decluttering-a-listing-photo-without-misleading-buyers",
+    "what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room"
+  ],
+  "published": "2026-10-28"
+}

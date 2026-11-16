@@ -1,0 +1,40 @@
+{
+  "slug": "ai-photo-edits-and-fair-housing-what-to-think-about-before-you-stage",
+  "title": "AI photo edits and fair housing: think before you stage",
+  "description": "Keep AI staging to furniture, keep prompts about objects rather than people, and market every listing to the same standard. Questions for your broker.",
+  "category": "ai-trust",
+  "keywords": [
+    "AI staging fair housing",
+    "virtual staging fair housing considerations",
+    "AI photo edits real estate fair housing",
+    "staging prompts people",
+    "ask broker about AI edits"
+  ],
+  "tldr": "Before you stage with AI, decide three things: the edit adds furniture and nothing that suggests who lives there, the prompt describes objects rather than people, and every listing you market gets the same quality of treatment. Fair housing is a legal area; this is practice and judgement, not legal advice, so ask your broker and check your MLS's current rules.",
+  "html": "<p>Before you stage with AI, settle three things: the edit adds furniture and nothing that suggests who lives there or who should, the prompt describes objects rather than people, and every listing you market gets the same quality of treatment regardless of neighbourhood or price. Fair housing is a legal area with rules that differ by state and are enforced by people who are not reading this post. What follows is practice and judgement, not legal advice; ask your broker and check your MLS's current rules.</p><h2>Why AI staging raises the question at all</h2><p>A physical stager brings furniture in a van. An AI stager draws whatever the prompt and its training suggest a “nice living room” contains. Left alone, it may add family photos on the mantel, a particular style of religious art, a wheelchair ramp or the absence of one, children's toys, a specific cuisine on the dining table. Each of those is a cue about the kind of person the room is for. You did not ask for the cue. It arrived anyway, and it is now in your listing photo.</p><p>The same goes for custom prompts. “Make this feel like a young professional's apartment” or “stage for a family” sounds like a style note. It is also an instruction about people. The safer habit is to describe furniture, not occupants.</p><h2>Three habits that keep staging neutral</h2><h3>Describe objects, not people</h3><p>Compare two prompts for the same empty living room:</p><ul><li>“Stage this for a growing family.”</li><li>“Add a three-seat sofa, a low coffee table, a neutral rug and a floor lamp. No personal items, no photos, no text on walls.”</li></ul><p>The second prompt gives you a usable room and nothing else. It also produces a better edit, because the tool has less to guess at.</p><h3>Review for cues, not just for accuracy</h3><p>When you compare the staged version with the original, you are already checking that walls and windows did not move. Add one more pass: is there anything in the furniture or decor that says who this home is for? Framed photos of people, flags, religious items, text on art, toys, mobility equipment. If yes, run the edit again with those excluded in the prompt.</p><h3>Treat every listing the same way</h3><p>If a listing in one part of town gets staged, labelled, video and a property page, and a comparable listing in another part of town gets six phone photos, that gap is the kind of pattern that gets noticed. The fix is a standard. Every listing gets the same checklist. The <a href=\"/blog/honest-listing-marketing-a-checklist-for-the-ai-era\">honest marketing checklist</a> is one place to start.</p><h2>A worked example: the two-bed near the school</h2><p>A vacant two-bed, two streets from a primary school. The seller says “stage it for a family, that is who buys here.” The agent instead prompts for a sofa, a dining table with four chairs, a rug and two lamps, excluding personal items and toys. The result shows a room that works for anyone. The caption reads “Virtually staged”. The remarks describe the home and the room sizes, not the buyer.</p><p>The seller still gets a staged, labelled, good-looking living room. Nobody looking at the listing is told who it is for. That is the outcome you want, and it took one sentence of prompt discipline.</p><h2>Edits beyond staging that deserve a second look</h2><ul><li><strong>Tidy the room on an occupied home.</strong> Removing a seller's personal items is normal. Make sure the edit removed the clutter and not, say, a grab bar in the bathroom, which is a fixture.</li><li><strong>Custom prompts about “the right buyer.”</strong> Any prompt that names a kind of person should be rewritten to name furniture instead.</li><li><strong>Exterior edits that change the street.</strong> A blue sky is weather. Removing the neighbouring building or the bus stop changes the context the buyer is evaluating. Leave the street alone.</li></ul><h2>Questions to put to your broker</h2><p>The useful conversation is short. Ask:</p><ol><li>Does the office have a written position on AI staging and prompts?</li><li>What label wording does the office want on staged and altered photos?</li><li>Is there a marketing standard that every listing gets, regardless of price or area?</li><li>Who reviews edited photos before they go to the MLS, and who signs off?</li></ol><p>If the answers do not exist yet, the <a href=\"/blog/a-disclosure-policy-for-a-brokerage-using-ai-edits\">brokerage disclosure policy post</a> outlines what one could cover.</p><h2>How this works in Rendprop</h2><p>Rendprop's photo studio offers add furniture as an AI edit and saves the result as a separate version labelled “Virtually staged”, with the untouched original kept in photo history. Custom prompts are yours to write, and “Improve my prompt” sharpens wording; neither changes the need to describe objects rather than people. Compare each edit with the original before choosing it, because AI can change or invent details, and check your own MLS rules before posting altered images. Every edit the studio offers is on the <a href=\"/features#photo-studio\">photo studio</a> page.</p><p>Next step: rewrite your default staging prompt so it names furniture only and excludes personal items, then use that same prompt on every listing. Bring the questions above to your broker this week.</p>",
+  "faq": [
+    {
+      "q": "Is it a problem to prompt AI staging for a specific kind of buyer?",
+      "a": "It is a habit to avoid. Prompts that name a kind of person tend to add cues about who the home is for. Describe furniture instead: sofa, table, rug, lamps, no personal items. Ask your broker about office policy; this is practice, not legal advice."
+    },
+    {
+      "q": "What should I look for in a staged photo beyond accuracy?",
+      "a": "Anything that suggests an occupant: framed photos of people, flags, religious items, text on art, toys, mobility equipment. If the edit added any of those, run it again with them excluded in the prompt."
+    },
+    {
+      "q": "Does the same thinking apply to decluttering and exterior edits?",
+      "a": "Yes. Decluttering should remove loose items, not fixtures like grab bars. Exterior edits should change weather or light, not the street, the neighbours or anything that tells a buyer about the area."
+    },
+    {
+      "q": "Who decides what is acceptable in my office?",
+      "a": "Your broker. Rules differ by MLS and state, and fair housing is a legal area. Bring specific questions about prompts, labels, a per-listing marketing standard and sign-off, and ask an attorney for anything beyond office practice."
+    }
+  ],
+  "related": [
+    "virtually-staged-the-two-words-that-keep-a-listing-honest",
+    "a-disclosure-policy-for-a-brokerage-using-ai-edits",
+    "custom-ai-prompts-guardrails-that-keep-edits-inside-the-room",
+    "honest-listing-marketing-a-checklist-for-the-ai-era"
+  ],
+  "published": "2026-10-28"
+}

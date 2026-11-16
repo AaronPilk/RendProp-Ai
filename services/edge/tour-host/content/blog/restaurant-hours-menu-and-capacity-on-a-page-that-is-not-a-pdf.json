@@ -1,0 +1,40 @@
+{
+  "slug": "restaurant-hours-menu-and-capacity-on-a-page-that-is-not-a-pdf",
+  "title": "Restaurant hours, menu and capacity on a page that is not a PDF",
+  "description": "Type the hours, menu and capacity onto a page that reads on a phone. A PDF menu is a download, a pinch and a zoom; a typed menu is an answer in one scroll.",
+  "category": "industries",
+  "keywords": [
+    "restaurant menu not pdf",
+    "restaurant hours on website",
+    "restaurant page on a phone",
+    "restaurant capacity for groups",
+    "mobile restaurant menu page"
+  ],
+  "tldr": "Hours, menu and capacity should be typed onto a page that reads on a phone, not attached as a PDF. A diner on a phone wants to know if you are open, what you serve and whether you can seat their group, and they want it in one scroll. A PDF is a download, a pinch and a zoom; a typed page is the answer.",
+  "html": "<p>Type the hours, the menu and the capacity onto the page rather than attaching them as a PDF. A diner on a phone at 6:40pm wants to know whether you are open tonight, what you serve and whether you can seat eight, and they want all three in one scroll without downloading anything.</p><p>A PDF menu is a tap, a wait, a pinch and a zoom; by the time it has opened, a competitor's typed page has already answered. Hours by day, the menu as text, capacity for the room and the largest table: that is the page.</p><h2>The PDF menu problem, stated plainly</h2><p>The PDF exists because it is what the printer needed. It was designed for a sheet of paper at arm's length, not a phone at 11pm. On a phone it opens in a viewer, sometimes in a new tab, sometimes as a download that goes nowhere. The text is too small. The back button does not go back. And it is out of date, because the one on the website is the version from before the autumn change, and nobody remembers which file is live.</p><p>A typed menu has none of those problems. It reads at phone size, it is searchable, it loads with the page, and when the Tuesday special changes you edit a line rather than exporting a file.</p><h2>What to type, and in what order</h2><ol><li><strong>Hours by day.</strong> Including the days you are closed, the kitchen's last order, and any difference between the bar and the kitchen. If Sunday is brunch only, say it.</li><li><strong>The menu as text.</strong> Sections in the order a diner reads them. Dish name, a short line, the price if you are prepared to keep it current. Mark what is vegetarian and what changes daily.</li><li><strong>Capacity.</strong> For the whole room and for the largest single table. 'Seats 48, largest table 10' answers the group question before it is asked. If you have a private room, give its number separately.</li><li><strong>The practical lines.</strong> Walk-ins welcome, reservations recommended on Friday and Saturday, step-free access, parking. One line each.</li></ol><h2>Worked example: a 60-seat trattoria with a daily specials board</h2><p>A trattoria with 60 seats and a ten-seat round in the back used to link a PDF menu from the home page and list hours in the footer. The owner rebuilt the page: hours by day at the top, with Monday closed and Sunday open from noon to 8; the menu typed in four sections with the specials section headed 'changes daily, ask'; capacity typed as 60 seats, largest table 10, private room 18; a gallery of the room and a short video; a contact card with the reservations line and a form that asks for the date. The next Friday a message arrives: 'Table for nine, Saturday the 22nd at 7, is the round free.' The diner read the capacity, saw the ten-seat round in the video, and asked for exactly what she wanted. The owner replied from the phone in a minute. The PDF is still on a laptop somewhere, and that is where it should stay.</p><h2>Keeping the page current</h2><p>The page only works if it is true. Put the menu edit on the same checklist as the printed menu: when one changes, both change. If a price list will not stay current, leave prices off and keep the dish lines. Seasonal hours change twice a year; put a reminder in the calendar for the day they do. A page that says you are open on a day you are closed costs more than the page gains.</p><h2>What goes wrong when restaurants move off the PDF</h2><ul><li><strong>Pasting the whole menu as a wall of text.</strong> Use sections and short lines. The reader is on a phone.</li><li><strong>Typing hours once and forgetting.</strong> The autumn change is the one that catches people.</li><li><strong>Prices that drift.</strong> Either keep them current or leave them off; a stale price is an argument at the table.</li><li><strong>Capacity as a single number.</strong> The group organiser needs the largest table, not the room total.</li><li><strong>Leaving the PDF link up as well.</strong> Two versions means one is wrong. Remove the old link.</li><li><strong>Forgetting the form.</strong> The diner who has just read all this wants to ask about a date. Give them the form on the same page.</li></ul><h2>How the typed details work in Rendprop</h2><p>Create the restaurant in the restaurants and bars mode and the page asks for hours, menu and capacity as typed details, so they read on a phone with no file to open. Sections appear when filled in and hide when empty, so a bar with no food menu does not show an empty menu line. The page also shows your main photo, the gallery, the selected video on request, a contact card and an enquiry form that asks for the date the visitor wants; enquiries land in the app inbox. Edit the details when the specials change rather than exporting a new file. See the <a href=\"/features#industries\">industries section</a> for the restaurant mode, the <a href=\"/features#listing-site\">website section</a> for what the page shows, and <a href=\"/blog/restaurant-marketing-with-a-walkthrough-the-room-before-the-reservation\">restaurant walkthrough video</a> for the video that sits above the details.</p><h2>Tonight, after service</h2><p>Open the current menu, type it into the page in sections, add the hours by day and the capacity with the largest table, and take the PDF link down. Then text the new link to the next person who asks whether you can do a table for eight.</p>",
+  "faq": [
+    {
+      "q": "Why not just link the PDF menu?",
+      "a": "Because on a phone a PDF is a download, a pinch and a zoom, and it is usually the version from before the last change. A typed menu reads at phone size, loads with the page, and takes a one-line edit when a dish changes."
+    },
+    {
+      "q": "Should prices be on the typed menu?",
+      "a": "Only if you will keep them current. A stale price is an argument at the table. If you cannot promise to update them, keep the dish names and descriptions and leave prices for the printed menu."
+    },
+    {
+      "q": "How should restaurant capacity be stated?",
+      "a": "As the room total and the largest single table, and a private room separately if you have one. 'Seats 48, largest table 10' answers the group question before anyone writes."
+    },
+    {
+      "q": "What does the restaurants and bars mode ask for?",
+      "a": "Hours, menu and capacity as typed details rather than price and beds. Sections you leave empty are hidden, and the page shows the gallery, the video on request, a contact card and a form that asks for the date."
+    }
+  ],
+  "related": [
+    "restaurant-marketing-with-a-walkthrough-the-room-before-the-reservation",
+    "bar-and-lounge-marketing-light-seats-and-the-view-from-the-door",
+    "a-property-page-that-works-on-a-phone-what-buyers-tap-first",
+    "rendprop-for-event-venues-restaurants-and-gyms-what-changes"
+  ],
+  "published": "2026-10-28"
+}

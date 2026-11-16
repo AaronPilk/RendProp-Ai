@@ -9,7 +9,10 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "October 27, 2026";
+const EFFECTIVE_DATE = "October 29, 2026";
+// The privacy policy gained the website-analytics disclosure on this date; the
+// terms did not change, so they keep EFFECTIVE_DATE.
+const PRIVACY_EFFECTIVE_DATE = "November 12, 2026";
 // Prospective 90-day hosting grace was approved by the owner on October 6.
 // Deploy only with matching retention/read/export contracts; the legal draft
 // and handoff separate tested behavior from account-specific provider evidence.
@@ -98,6 +101,8 @@ function legalShell(opts: {
   otherHref: string;
   /** Canonical path of this page — `/terms` or `/privacy`. */
   path: string;
+  /** Date shown as "Effective …". Defaults to EFFECTIVE_DATE. */
+  effective?: string;
 }): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -117,7 +122,7 @@ function legalShell(opts: {
   <div class="wrap">
     <div class="mark"><a href="https://rendprop.com">RENDPROP</a></div>
     <h1>${opts.heading}</h1>
-    <div class="updated">Effective ${EFFECTIVE_DATE}</div>
+    <div class="updated">Effective ${opts.effective ?? EFFECTIVE_DATE}</div>
     <p class="lede">${opts.lede}</p>
     ${opts.body}
     <footer>
@@ -143,7 +148,7 @@ ${BUSINESS} ("we", "us") and apply whenever you use the app or any page we host 
 
 <h2><span class="num">2.</span>Your account</h2>
 <p>Rendprop is an account-based workspace. You sign in with Apple to create or open your
-account; that account owns your listings, hosted pages, AI usage and team membership, and lets
+account, or sign in with the email address and password of an existing Rendprop account; that account owns your listings, hosted pages, AI usage and team membership, and lets
 you sync across devices and recover your workspace if you delete the app. Capturing and editing
 work offline once you are signed in; cloud uploads, hosted publication and AI tools need a
 connection. The app shows the features and included usage available with each current plan;
@@ -207,7 +212,7 @@ your original photo before using or publishing it.</p>
 the App Store</b>. The optional paid AI Aerial opening is available only with eligible paid access,
 a remaining Aerial allowance, available processing capacity and separate permission for the listed
 processors. The older free-form Aerial generator remains private and closed; previously saved
-aerial clips remain accessible. Launch plans and included usage are being finalized. <b>The app is the source of
+aerial clips remain accessible. Current monthly plans and their U.S. prices are listed at rendprop.com/pricing. <b>The app is the source of
 truth</b> for current plan features and included usage. Apple shows the price, billing period, and any
 introductory offer eligibility, duration, renewal price, and terms before confirmation.</p>
 <ul>
@@ -291,8 +296,10 @@ export function privacyPage(): string {
 <h2><span class="num">1.</span>What we collect</h2>
 <p>Rendprop collects the minimum it needs to run:</p>
 <ul>
-  <li><b>Account details</b> — you sign in with Apple to use Rendprop; Apple provides the name
-  and email or private-relay address you choose to share. Apple-linked sign-in and account deletion
+  <li><b>Account details</b> — you sign in with Apple, or with the email address and password of an
+  existing Rendprop account. With Apple, Apple provides the name and email or private-relay address
+  you choose to share; with email, we keep your email address and our authentication provider stores
+  your password only as a one-way hash. Apple-linked sign-in and account deletion
   can exchange tokens with Apple. Installs from before October 2026 may hold an older guest session
   until they sign in; its data transfers to the account you sign in with.</li>
   <li><b>Your content</b> — the listings you create and the video, photos, tours, and related
@@ -358,7 +365,7 @@ also depend on the provider's applicable terms and the account settings for that
 <table role="table" aria-label="Service providers and data processing">
   <tr role="row"><th role="columnheader" scope="col">Provider</th><th role="columnheader" scope="col">What it does</th><th role="columnheader" scope="col">What it receives</th></tr>
   <tr role="row"><td role="cell">Supabase</td><td role="cell">Authentication, database, and the app's API</td><td role="cell">Your account, listings, leads, and tour engagement counts. Inputs sent through Rendprop's API, including media and text supplied for AI processing</td></tr>
-  <tr role="row"><td role="cell">Cloudflare</td><td role="cell">Media storage (R2), video delivery (Stream), hosting of your tour pages, and Turnstile bot protection on lead forms</td><td role="cell">Your uploaded and generated media; requests to your tour pages, including viewers' IP addresses</td></tr>
+  <tr role="row"><td role="cell">Cloudflare</td><td role="cell">Media storage (R2), video delivery (Stream), hosting of your tour pages, Turnstile bot protection on lead forms, and Web Analytics on the rendprop.com marketing pages</td><td role="cell">Your uploaded and generated media; requests to your tour pages, including viewers' IP addresses; aggregate page-view data from visits to the marketing pages (section 4)</td></tr>
   <tr role="row"><td role="cell">Apple</td><td role="cell">Sign in with Apple; App Store subscriptions; crash and performance summaries (MetricKit); ad attribution (SKAdNetwork); Speech recognition for captions</td><td role="cell">Sign-in and account-deletion tokens; Apple gives us the email (or private relay address) and name you choose to share, and a signed record of any subscription you buy (never your card details). Recorded voiceover audio may be processed by Apple when on-device recognition is unavailable or a recognition attempt falls back to the server</td></tr>
   <tr role="row"><td role="cell">GoHighLevel (LeadConnector)</td><td role="cell">Cleanup of legacy CRM contacts; automatic export of new inquiries is disabled</td><td role="cell">Older versions sent lead names, phones and emails with listing and workspace tags. Contact identifiers or matching contact details can be used to request cleanup</td></tr>
   <tr role="row"><td role="cell">Resend</td><td role="cell">Transactional emails, inquiry delivery and email-address verification</td><td role="cell">Recipient addresses and message contents, including inquiry details sent to verified listing contacts</td></tr>
@@ -400,9 +407,9 @@ Rendprop download-link lifetime is not evidence that Kie deleted its copy. You c
 processing or withdraw permission for future requests in Settings; already accepted work may finish.</p>
 
 <h2><span class="num">4.</span>Analytics, crash reports, and ads</h2>
-<p>All of this is <b>first-party</b>: our own code, sending to our own servers, read only by us.
+<p>The app analytics below are all <b>first-party</b>: our own code, sending to our own servers, read only by us.
 There is no third-party analytics SDK, no advertising SDK, no advertising identifier (IDFA), no
-App Tracking Transparency prompt, and no pixel in the Rendprop app — and none of what follows is
+App Tracking Transparency prompt, and no pixel in the Rendprop app — and none of the app data below is
 ever combined with data from another company's app or website, or given to a data broker.</p>
 <ul>
   <li><b>Product analytics.</b> The app records a short, fixed list of event names so we can see
@@ -436,6 +443,11 @@ ever combined with data from another company's app or website, or given to a dat
 </ul>
 <p>This is separate from the engagement counts on your tour pages (section 1): those measure your
 tours for you, and you see them in the app.</p>
+<p><b>Website analytics.</b> The rendprop.com marketing pages (the home page and the features,
+pricing, comparison, support and blog pages) use <b>Cloudflare Web Analytics</b>. It uses no
+cookies, no local storage and no fingerprinting. It reports aggregate page views, the referring
+site, country, browser and device type, and how fast pages load. It is not used on the property
+websites or portfolio pages that agents publish, and it is not in the app.</p>
 
 <h2><span class="num">5.</span>How long we keep it</h2>
 <p>New subscriptions covered by the October 6, 2026 hosting policy have a 90-day hosting
@@ -490,7 +502,8 @@ the change takes effect. The date at the top always shows the current version.</
       "from Apple if you choose to sign in, the content and " +
       "listing details you upload (your listing's address or business name is published on its " +
       "tour page), the leads viewers send you (stored for the listing team and emailed to verified contacts), " +
-      "engagement counts on your tour pages, and our own app-usage and crash statistics. We use " +
+      "engagement counts on your tour pages, our own app-usage and crash statistics, and cookie-free " +
+      "page-view statistics for our marketing website (section 4). We use " +
       "them only to run and improve the service. There is no third-party analytics SDK, no ad " +
       "SDK and no advertising identifier in the app, we never track you across other companies' " +
       "apps or websites, Apple handles payments so we never see your card, and account deletion " +
@@ -499,5 +512,6 @@ the change takes effect. The date at the top always shows the current version.</
     otherLabel: "Terms of Service",
     otherHref: "/terms",
     path: "/privacy",
+    effective: PRIVACY_EFFECTIVE_DATE,
   });
 }

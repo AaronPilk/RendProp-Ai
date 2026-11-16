@@ -1,0 +1,40 @@
+{
+  "slug": "fixing-dark-rooms-in-listing-photos-without-flash",
+  "title": "Fixing dark rooms in listing photos without flash",
+  "description": "More ambient light, a braced phone and the right hour fix a dark room. The flash does not. Five fixes in order and where an AI edit fits.",
+  "category": "photos",
+  "keywords": [
+    "dark room listing photo",
+    "photograph dark room without flash",
+    "fix underexposed real estate photo",
+    "low light interior photography phone",
+    "brighten listing photo"
+  ],
+  "tldr": "Fix a dark room with more ambient light, a steadier camera and a longer exposure, not with the phone flash. Open every blind, turn on every lamp, shoot at the hour the window is brightest, brace the phone, and expose for the room. An AI edit can lift a dim frame afterward but cannot invent detail a dark exposure threw away.",
+  "html": "<p>Fix a dark room with more ambient light, a steadier camera and a longer exposure, not with the phone flash. Open every blind, turn on every lamp and ceiling light, shoot at the time of day when the window is brightest, brace the phone against a doorframe or use a small tripod, and let the camera expose for the room rather than the window. An AI edit can lift a slightly dim frame afterward, but it cannot invent the detail a dark exposure threw away.</p><h2>Why the flash makes it worse</h2><p>The phone flash sits an inch from the lens, so it lights the room from the camera's point of view. The result is a bright wall in front of you, hard shadows behind every piece of furniture, a hot spot on anything glossy and a dark hole where the far corner used to be. The room looks smaller and flatter than it is. A buyer may not know why the photo looks like a rental inspection, but it does.</p><h2>Five fixes, in the order to try them</h2><ol><li><strong>Add light at the source.</strong> Every lamp on, every ceiling light on, the closet light on if the door is open. Bring a spare lamp from another room and put it just out of frame on the dark side.</li><li><strong>Open everything.</strong> Blinds up, curtains back, the door to the hall open so light spills in. If the window faces a fence, open it anyway; a bright fence is better than a dark window.</li><li><strong>Pick the hour.</strong> A north-facing room is dim all day but evenly. An east-facing room is bright until late morning. Shoot each room at its time if the schedule allows, and if it does not, shoot the dark rooms when the sky is brightest overall, usually midday.</li><li><strong>Hold still.</strong> In low light the camera uses a longer exposure and any movement blurs the frame. Brace your elbows, lean on the doorframe, or use a pocket tripod. Use the volume button or a timer to fire the shutter instead of tapping the screen.</li><li><strong>Expose for the room.</strong> Tap on a mid-tone wall, not on the window. The window may go bright, which is fine. The room is what the buyer is buying.</li></ol><h2>A worked example: the north-facing bedroom</h2><p>A second bedroom in a 3-bed, one north window looking at the neighbour's hedge, beige walls, one overhead fixture. At 2pm with the overhead on it is gloomy. The agent brings in a floor lamp from the living room, puts it in the corner opposite the window just out of frame, opens the door to the lit hallway, braces the phone against the doorframe and taps on the wall beside the bed to set the exposure. The frame comes back even, with the window a little bright and the corners visible. No flash, no edit.</p><p>The frame shot an hour earlier with the flash had a bright headboard, a black corner and a reflection in the mirror. It was deleted.</p><h2>Where an AI edit fits</h2><p>A custom prompt in a photo studio can brighten a frame that is a touch underexposed and even out a room where one side is darker than the other. What it cannot do is recover detail that the camera did not capture. A corner that is pure black in the original has nothing for the edit to brighten, so the model invents something, and an invented corner is a detail that is not in the room. Light the room, shoot it properly, then use the edit for the last small lift.</p><p>If you do run a brightening edit, compare it against the original and check the corners and any reflective surface. Models that lift shadows sometimes also change the colour of a wall or add a window where a bright patch suggested one. The edit is still an alteration and carries a disclosure.</p><h2>What to avoid</h2><ul><li>The phone flash, for the reasons above</li><li>Shooting at dusk indoors with the lights off, which gives you blue rooms</li><li>Over-processed HDR that turns a dark room into a glowing one with halos around the window</li><li>Mixed bulbs: one warm lamp and one cool overhead make half the room orange and half blue; swap the bulb or turn one off</li><li>Pushing the exposure so far that the window is a white block and the view is gone</li></ul><h2>Dark frames and Rendprop</h2><p>Rendprop's <a href=\"/features#photo-studio\">photo studio</a> accepts a custom prompt, so a mild brighten-and-even-out instruction is possible, with the result saved as a separate version carrying an AI-alteration disclosure and the untouched original kept in the photo history. Improve my prompt can tighten a vague instruction into one that names the wall and the corner you want lifted. Compare before choosing, because AI can change or invent details, and a dark corner is exactly where it tends to. If a frame is too dark to use, reshoot it rather than edit it; the shot is a few minutes and the edit is a guess.</p><h2>Walk the house at the hour you will shoot</h2><p>Before the shoot, walk through at the planned time and note which rooms are dim. Those are the rooms that get a spare lamp and an extra minute. For the rest of the house, the window light will do most of the work, and the frames will be ready for the video without a rescue. <a href=\"/blog/preparing-iphone-photos-for-a-listing-video\">Preparing iPhone photos for a listing video</a> covers the rest of the shooting checklist, and <a href=\"/blog/window-pull-and-view-photos-showing-what-is-outside\">window pull and view photos</a> covers the opposite problem, where the window is too bright and the view matters.</p>",
+  "faq": [
+    {
+      "q": "Why should I not use the phone flash for listing photos?",
+      "a": "The flash lights the room from the camera's position, so you get a bright near wall, hard shadows behind furniture, a hot spot on glossy surfaces and a dark far corner. The room looks smaller and flatter. Ambient light from lamps and windows looks like the room a buyer will walk into."
+    },
+    {
+      "q": "What is the quickest fix for a dark bedroom photo?",
+      "a": "Bring a lamp from another room and place it just out of frame on the dark side, open the door to a lit hallway, brace the phone and tap on a mid-tone wall to set the exposure. That combination fixes most dim rooms without any edit."
+    },
+    {
+      "q": "Can an AI edit brighten a dark listing photo?",
+      "a": "It can lift a frame that is slightly underexposed, with a disclosure. It cannot recover detail the camera did not capture, so a black corner becomes an invented corner. Compare the edit against the original and check the corners and reflections before using it."
+    },
+    {
+      "q": "What time of day is best for photographing dark rooms?",
+      "a": "When the window in that room is brightest: morning for east-facing rooms, afternoon for west-facing. North-facing rooms are dim all day but even, so shoot them when the sky is brightest overall and add lamps."
+    }
+  ],
+  "related": [
+    "preparing-iphone-photos-for-a-listing-video",
+    "window-pull-and-view-photos-showing-what-is-outside",
+    "photo-mistakes-that-make-a-900-000-home-look-like-a-rental",
+    "kitchen-photos-that-sell-angles-light-and-what-to-remove"
+  ],
+  "published": "2026-10-28"
+}

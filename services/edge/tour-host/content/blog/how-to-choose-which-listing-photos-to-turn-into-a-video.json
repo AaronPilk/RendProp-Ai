@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-choose-which-listing-photos-to-turn-into-a-video",
+  "title": "How to choose which listing photos to turn into a video",
+  "description": "Pick one photo per space, lead with the exterior and kitchen, and stop around 12 to 18 frames. A three-pass cull with a worked example from a real shoot.",
+  "category": "photos",
+  "keywords": [
+    "which photos for listing video",
+    "choose photos for property video",
+    "listing video photo selection",
+    "how many photos listing video",
+    "cull listing photos"
+  ],
+  "tldr": "Pick one photo per space, lead with the front exterior, keep the kitchen and main living room near the top, and stop around 12 to 18 photos. A listing video is a short tour, not a gallery, so every extra frame is time a buyer has to sit through before the room that sells the house.",
+  "html": "<p>Pick one photo per space, lead with the front exterior, keep the kitchen and the main living room near the top, and stop somewhere around 12 to 18 photos. A listing video is not a gallery. It is a short tour, and every photo you add is a few more seconds a buyer has to sit through before they see the room that sells the house.</p><h2>Start from the buyer's walk, not the photographer's folder</h2><p>The folder from the shoot has 30 to 45 frames in the order the photographer moved through the house. Two of the kitchen from the island, one from the doorway, a detail of the range, three of the living room because the light changed. That order is fine for the MLS gallery. It is wrong for a video.</p><p>Lay the photos out and ask what a buyer would see on a walk-through: the house from the street, the entry, the main living space, the kitchen, dining, the primary bedroom, the primary bath, the yard. Then the secondary spaces if they earn it. A second bedroom gets a frame if it is a real room with a window. A hallway does not.</p><h2>The cull in three passes</h2><ol><li><strong>Pass one, remove the duplicates.</strong> Where there are two angles of the same room, keep the one that shows the most floor and the most light. Floor shows size. Light shows condition.</li><li><strong>Pass two, remove the frames that need explaining.</strong> A photo of a laundry closet, a utility room, a wall of closet doors or the garage interior slows a video and tells the buyer nothing they will use to decide on a showing. Keep those in the gallery.</li><li><strong>Pass three, check the spread.</strong> Count the frames by space. If the kitchen has four and the primary bedroom has none, swap. The video should feel like the whole home, not the room the photographer liked best.</li></ol><h2>A worked example: a 3-bed in a cul-de-sac with 38 photos</h2><p>The shoot came back with 38 frames: 5 exterior, 2 entry, 6 living room, 7 kitchen, 2 dining, 4 primary bedroom, 3 primary bath, 2 each of the other bedrooms, 2 hall bath, 3 backyard.</p><p>The cut for the video:</p><ul><li>Front exterior, the three-quarter angle, not the straight-on</li><li>Living room from the entry, showing the fireplace and the window wall</li><li>Kitchen from the dining side, island in the foreground</li><li>Kitchen detail, only because the range and hood are the upgrade the seller paid for</li><li>Dining room with the slider to the deck</li><li>Primary bedroom from the door</li><li>Primary bath, the shot with the tub and the double vanity in one frame</li><li>Bedroom two, the one with the window seat</li><li>Bedroom three, the wide angle</li><li>Hall bath</li><li>Deck looking back at the house</li><li>Backyard from the deck</li></ul><p>Twelve frames from 38. The other 26 go in the gallery on the property page, where a buyer who wants the laundry room can find it.</p><h2>Which photos to leave out even when they are good</h2><p>Three kinds of frame cause trouble in a video even when they look fine on their own.</p><p>Tight details. A photo of a faucet or a cabinet pull is pleasant in a gallery and confusing in motion. The camera move has nowhere to go and the buyer loses their place in the house.</p><p>Portrait orientation. A listing video runs in landscape orientation. A portrait photo dropped into it gets cropped or lands with blank space on either side. Save the portrait frames for the social cut.</p><p>Edits you have not checked. If a photo has a twilight sky or added furniture, compare it against the original before it goes into the video. An invented detail in a still is a problem. The same detail on the opening scene of a video that gets shared is a bigger one. There is more on that in <a href=\"/blog/how-to-compare-an-ai-edited-listing-photo-against-the-original\">how to compare an AI-edited listing photo against the original</a>.</p><h2>Choosing photos inside Rendprop</h2><p>In Rendprop you add the photos to the listing first, then choose which ones go into the video at the video step. Landscape photos feed the listing video and portrait photos feed the vertical social video, so you can bring the whole shoot in and pick a different set for each. Scene order and camera motion are planned automatically, so your job is the cull, not the edit. If you have used the <a href=\"/features#photo-studio\">photo studio</a> on a frame, the saved versions you chose are what you pick from, and the untouched original stays in the photo history.</p><p>The <a href=\"/f/estate-demo\">demo listing</a> shows a finished video sitting on a property page next to its full gallery, which is the point: the video is the short version, the gallery is the long one.</p><h2>Write the list before you open anything</h2><p>Go through the folder once and write down the twelve to fifteen frames you would show a buyer on a walk. That list is the video. Everything else is the gallery, and <a href=\"/blog/listing-photo-order-the-sequence-that-keeps-buyers-scrolling\">listing photo order</a> covers how to arrange that side. If the shoot has not happened yet, hand the list to the photographer and the frames you need will come back on purpose.</p>",
+  "faq": [
+    {
+      "q": "How many photos should go into a listing video?",
+      "a": "Between 12 and 20 for a listing video and 6 to 10 for a vertical social video. One frame per space, with a second frame only for the two or three rooms that sell the house. The rest of the shoot belongs in the gallery."
+    },
+    {
+      "q": "Should I include detail shots in a listing video?",
+      "a": "Only when the detail is the upgrade the seller paid for, such as a new range or a tiled shower. Tight details give the camera nowhere to move and make the buyer lose their place in the house. Most details work better in the gallery."
+    },
+    {
+      "q": "Can I use portrait photos in a landscape video?",
+      "a": "Keep them separate. A portrait photo in a landscape video gets cropped or padded, and either way the seam shows. In Rendprop, landscape photos feed the listing video and portrait photos feed the vertical social video."
+    },
+    {
+      "q": "Do I need to pick the photos before I open the app?",
+      "a": "It helps. Writing down the twelve to fifteen frames you would show on a walk, before you open anything, makes the choice in the app a confirmation rather than a debate. Add the whole shoot and pick from it at the video step."
+    }
+  ],
+  "related": [
+    "how-many-photos-does-a-listing-video-need",
+    "listing-photo-order-the-sequence-that-keeps-buyers-scrolling",
+    "landscape-or-portrait-shooting-photos-for-listing-video-and-social-video",
+    "scene-order-for-a-listing-video-start-outside-or-start-in-the-kitchen"
+  ],
+  "published": "2026-10-28"
+}

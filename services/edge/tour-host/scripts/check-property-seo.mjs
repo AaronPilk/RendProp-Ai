@@ -69,6 +69,7 @@ globalThis.fetch=async(url,init)=>{
 response=await get('/sitemap.xml');let xml=await response.text();
 check(response.status===200&&xml.includes('<sitemapindex'),'Actual Worker emits a sitemap index');
 check(xml.includes('https://rendprop.com/sitemap-site.xml')&&xml.includes('sitemap-properties.xml?cursor='+cursor),'Index has marketing and each bounded customer page');
+check(xml.includes('<loc>https://rendprop.com/sitemap-blog.xml</loc>'),'Index also lists the static blog sitemap, so one submitted URL covers the site');
 check(response.headers.get('cache-control')==='no-store','Customer index cannot cache revoked publications');
 response=await get('/sitemap-properties.xml?cursor='+cursor);xml=await response.text();
 check(response.status===200&&xml.includes('<loc>'+canonical+'</loc>'),'Child emits readable current public identity');

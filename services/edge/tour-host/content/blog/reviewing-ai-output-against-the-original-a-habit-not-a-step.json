@@ -1,0 +1,40 @@
+{
+  "slug": "reviewing-ai-output-against-the-original-a-habit-not-a-step",
+  "title": "Reviewing AI output against the original: a habit, not a step",
+  "description": "A step gets skipped when you are busy; a habit does not. How to make the side-by-side comparison automatic and what to look at in ten seconds.",
+  "category": "ai-trust",
+  "keywords": [
+    "review AI edits against original",
+    "compare AI edited photo original",
+    "AI photo review habit real estate",
+    "checking AI edits before publishing",
+    "side by side photo comparison listing"
+  ],
+  "tldr": "Compare every AI edit against its original at the moment you accept it, not in a batch at the end. A step at the end of the process gets skipped on a busy Friday; a habit tied to the accept button does not. Ten seconds per photo: count openings, scan surfaces, look out the window, then choose.",
+  "html": "<p>Compare every AI edit against its original at the moment you decide whether to keep it, not in a batch at the end. A review step at the end of the process gets skipped on a busy Friday with three listings going live; a habit tied to the moment of choosing does not. Ten seconds per photo: count the openings, scan the surfaces, look out the window, then keep or reject.</p><h2>Why a step fails and a habit holds</h2><p>Most people set up their workflow like this: run all the edits, build the video, write the details, publish, and “review” somewhere near the end. By the time the review arrives, the photos look familiar, the deadline is close, and the edits have already been used in the video. The review becomes a glance.</p><p>A habit works differently. The comparison is the way you decide. You do not accept an edit and review it later; the comparison is how you accept it. There is nothing to skip because there is no separate thing to do. This is the same reason a pilot's checklist is read before take-off, not after.</p><h2>The ten-second comparison</h2><p>Side by side, original on one side, edit on the other. Same order every time so it becomes mechanical.</p><ol><li><strong>Count the openings.</strong> Windows, doors, closets. Same number, same place, same size.</li><li><strong>Scan the fixed surfaces.</strong> Ceiling, walls, floor. Anything appear or vanish: a vent, an outlet, a crack, a beam, a radiator, a thermostat.</li><li><strong>Check the materials.</strong> Floor still the same floor. Counter still the same counter. Appliances the same colour.</li><li><strong>Look out the window.</strong> Same view, same neighbour, same fence, same sky unless you asked for sky.</li><li><strong>Check the thing you asked for.</strong> Did the edit do the job, and only the job?</li></ol><p>If all five pass, keep it. If one fails, reject it and run again with a tighter prompt. Do not keep an edit that fails and plan to explain it in a caption.</p><h2>A worked example: Tuesday evening, 28 photos</h2><p>An agent has 28 photos from a Monday shoot on a four-bed, and wants the listing live Wednesday morning. She runs blue sky on four exteriors, green lawn on two, tidy the room on the kitchen and both bathrooms, and staging on the empty family room. Ten edits.</p><p>Tied to the choosing moment, the review takes under two minutes for all ten. She rejects one: the tidy edit on the main bathroom removed the towel bar along with the towels. She runs it again with “remove loose items only; keep all fixtures,” and the second version passes. She also notices the staged family room added a ceiling fan. Rejected, re-run with “add furniture only; do not change ceiling, walls or floor.” Second version passes.</p><p>Two problems caught, two minutes spent, listing live on time. Neither problem would have been obvious in the finished video, because the video moves and the eye forgives. Both would have been obvious to the buyer standing in the bathroom on Saturday.</p><h2>What breaks the habit</h2><ul><li><strong>Reviewing in the video.</strong> Motion hides errors. Review the stills.</li><li><strong>Reviewing on a tiny thumbnail.</strong> Open the photo full-screen. The invented outlet is three pixels wide at thumbnail size.</li><li><strong>Reviewing the edit alone.</strong> Without the original next to it, you are judging whether the photo looks nice, which is not the question.</li><li><strong>Delegating without the originals.</strong> If an assistant or a photographer does the review, they need the originals too. A review of edits only is not a review.</li><li><strong>Batching for the end.</strong> The whole point of this post. If the comparison is a separate task, it will be the task that gets dropped.</li></ul><h2>Making it stick on a team</h2><p>If several people touch a listing, the habit has to be the same for everyone. Agree on the five checks above, agree that failed edits are re-run rather than captioned, and agree that whoever accepts an edit is the one who compared it. The <a href=\"/blog/a-disclosure-policy-for-a-brokerage-using-ai-edits\">brokerage policy post</a> shows where this fits in a written policy; photographers may prefer the <a href=\"/blog/a-photographers-checklist-before-sending-ai-edits-to-an-agent\">pre-delivery checklist</a>.</p><h2>How this works in Rendprop</h2><p>Rendprop's photo studio is built around this habit. Every AI edit is a separate version with a disclosure, the untouched original stays in photo history, and you compare each edit with the original and choose which saved versions to use. The comparison is how you choose, which is what makes it a habit rather than a step. AI can change or invent details, which is the reason the comparison exists; do it before publishing, and check your own MLS rules before posting altered images as well. Details of each edit are on the <a href=\"/features#photo-studio\">photo studio</a> page.</p><p>Next step: on your next listing, say the five checks out loud for the first three edits. By the fourth you will not need to, and that is the habit forming.</p>",
+  "faq": [
+    {
+      "q": "How long does it take to compare an AI edit with the original?",
+      "a": "About ten seconds per photo if you follow the same order each time: count openings, scan fixed surfaces, check materials, look out the window, confirm the edit did only what you asked. A listing with ten edits takes under two minutes."
+    },
+    {
+      "q": "Can I review the edits by watching the finished video instead?",
+      "a": "No. Motion hides errors and the eye forgives moving images. Review the still photos full-screen with the original beside each one, before the video is built."
+    },
+    {
+      "q": "What do I do when an edit fails one of the checks?",
+      "a": "Reject it and run it again with a tighter prompt that names what to leave alone, such as “remove loose items only; keep all fixtures.” Do not keep a failed edit and explain the problem in a caption."
+    },
+    {
+      "q": "How do I get a team to review the same way?",
+      "a": "Agree on the same five checks, agree that failed edits are re-run rather than captioned, and make whoever accepts an edit the person who compared it. Everyone reviewing needs access to the originals, not just the edits."
+    }
+  ],
+  "related": [
+    "can-ai-misrepresent-a-property-yes-here-is-how-to-keep-it-from-happening",
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "how-to-review-a-batch-of-ai-photo-edits-in-ten-minutes",
+    "why-the-untouched-original-is-the-most-valuable-photo-in-the-set"
+  ],
+  "published": "2026-10-28"
+}

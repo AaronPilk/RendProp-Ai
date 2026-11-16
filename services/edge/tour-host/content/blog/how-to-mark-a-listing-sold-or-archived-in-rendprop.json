@@ -1,0 +1,40 @@
+{
+  "slug": "how-to-mark-a-listing-sold-or-archived-in-rendprop",
+  "title": "How to mark a listing sold or archived in Rendprop",
+  "description": "Open the listing and mark it sold or archived; the published page says so. Use sold when it closes and archived when it is withdrawn or no longer for sale.",
+  "category": "howto",
+  "keywords": [
+    "mark listing sold rendprop",
+    "archive a listing rendprop",
+    "property page says sold",
+    "what happens to property website after sale",
+    "update listing status"
+  ],
+  "tldr": "Open the listing in Rendprop and mark it sold or archived. The published property page then says so, and the links on the sign, the flyer and the MLS keep working instead of going dead. Use sold when the sale closes; use archived when the listing is withdrawn, expired or otherwise no longer for sale.",
+  "html": "<p>Open the listing in Rendprop and mark it sold or archived. The published property page then says so to anyone who opens it, which means every link you put on a sign, a flyer, a post or the MLS keeps working and tells the truth instead of going dead. Mark it sold when the sale closes, and archived when the listing comes off the market for any other reason.</p><h2>Sold or archived: which one when</h2><ul><li><strong>Sold.</strong> The deal closed. The page becomes a record of the home and a public signal that you sold it. Buyers who still have the link learn it is gone; neighbours who scan the sign learn you are the agent who sold it.</li><li><strong>Archived.</strong> Withdrawn, expired, the seller changed their mind, the listing went to another agent, or you are tidying a listing you built as a rehearsal. The page says so, without claiming a sale.</li></ul><p>Under contract is not sold. Leave the listing as it is until closing; a contract can fall through, and a page that said sold for a week and then does not is confusing for everyone who saw it.</p><h2>Marking the listing, in order</h2><ol><li>Reply to any open enquiries first. Some of those people want your next listing, and they deserve a reply before the page changes.</li><li>Open the listing from Home.</li><li>Mark it sold or archived.</li><li>Open the branded link on your phone and confirm the page says so.</li><li>If the MLS still shows the unbranded link, open that too. It is the same listing and will say the same thing.</li><li>Decide what to do with the sign and the flyer. A sold rider on the sign now points at a page that confirms it.</li></ol><h3>What to check before you change the status</h3><p>That the enquiries are answered. That the close has actually happened, not just the signing. That you have saved any version of the video you want to reuse for a just-sold post; it stays in the listing, but it is easier to find the file now than later. The <a href=\"/blog/just-listed-under-contract-sold-three-videos-from-one-photo-set\">three-video post</a> shows how the same photo set carries the sold announcement.</p><h2>A worked example: the close on a Friday</h2><p>A 3-bed in a cul-de-sac closes Friday at noon. The agent has two enquiries from the week that were still unanswered because the home was under contract; she replies to both, thanks them, and tells them she has a similar listing coming in the same neighbourhood next month. Then she opens the listing and marks it sold.</p><p>She opens the branded link from her own texts to the seller; the page now says sold. She opens the MLS entry and clicks the virtual-tour link; same. She texts the seller a screenshot of the sold page as a thank-you, posts a just-sold vertical video built from the same portrait photos with a one-line script, and swaps the open house rider on the sign for a sold rider. The sign comes down Monday; the page stays up as her record of the sale.</p><h2>Why marking matters more than deleting</h2><p>Links outlive listings. The QR on the flyer sits in a kitchen drawer for months. The text to the seller's sister is still in her phone. A search result still points at the page. If the page vanished, every one of those would land on nothing. A page that says sold or archived turns a dead end into a small piece of credibility: this agent sells homes, and this is what their pages look like. The <a href=\"/blog/marking-a-listing-sold-on-its-property-page\">sold page post</a> goes through what the page should and should not keep showing.</p><h2>Mistakes around sold and archived</h2><ul><li><strong>Marking sold at contract.</strong> Wait for closing.</li><li><strong>Archiving a sold listing.</strong> If it sold, mark it sold. Archived gives away the win.</li><li><strong>Changing the status with unanswered enquiries.</strong> Reply first.</li><li><strong>Forgetting the MLS link.</strong> It is the same listing. Open it anyway and see what it shows.</li><li><strong>Marking the wrong listing.</strong> With several live, confirm the address before you tap. Check the page afterwards.</li></ul><h2>What the page shows afterwards</h2><p>It says the listing is sold or archived. The structure, with main photo, details, gallery, video on request and the contact card on the branded page, is the listing site described in the <a href=\"/features#listing-site\">features</a>. Enquiries, if anyone still sends one, land in the inbox as before.</p><p>Next step: find the last listing you closed and check its page. If it still reads as available, open the listing in Rendprop and mark it sold today.</p>",
+  "faq": [
+    {
+      "q": "What happens to the property page when I mark a listing sold?",
+      "a": "The page stays up and says sold. The branded and unbranded links keep working, so a sign, a flyer or an MLS link does not land on a dead page."
+    },
+    {
+      "q": "When should I use archived instead of sold?",
+      "a": "When the listing is no longer for sale for any reason other than a closed sale: withdrawn, expired, moved to another agent, or a rehearsal listing you no longer need. The page says so, without claiming a sale."
+    },
+    {
+      "q": "Should I mark a listing sold when it goes under contract?",
+      "a": "No. Wait for closing. Contracts fall through, and a page that said sold and then does not confuses everyone who saw it."
+    },
+    {
+      "q": "Do I still get enquiries after marking a listing sold?",
+      "a": "The page says sold, which stops most of them. Anything that does come in lands in the inbox under the listing, and those people are often worth a reply about your next listing."
+    }
+  ],
+  "related": [
+    "marking-a-listing-sold-on-its-property-page",
+    "just-listed-under-contract-sold-three-videos-from-one-photo-set",
+    "expired-listing-new-link-relaunching-a-property-page",
+    "where-enquiries-appear-in-rendprop-and-how-to-reply"
+  ],
+  "published": "2026-10-28"
+}

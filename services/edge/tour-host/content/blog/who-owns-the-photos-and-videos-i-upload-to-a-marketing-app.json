@@ -1,0 +1,40 @@
+{
+  "slug": "who-owns-the-photos-and-videos-i-upload-to-a-marketing-app",
+  "title": "Who owns the photos and videos I upload to a marketing app",
+  "description": "You should, and the app's terms should say so plainly. Read the licence clause, the marketing clause and the AI training clause before the first upload.",
+  "category": "questions",
+  "keywords": [
+    "who owns photos uploaded to app",
+    "real estate app photo ownership terms",
+    "app terms of service listing photos",
+    "AI training on my listing photos",
+    "content licence marketing app"
+  ],
+  "tldr": "You should, and the app's terms should say so in plain words. What to read before the first upload: whether the app takes a licence beyond what it needs to show your page, whether it can use your content in its own marketing, whether it trains AI on it, and whether photos leave the app for processing without asking. Your photographer agreement sits underneath all of that and decides what you were allowed to upload in the first place.",
+  "html": "<p>You should, and the app's terms should say so in plain words. Three clauses decide whether that is true: the licence the app takes in order to host and display your content, the marketing clause that says whether it can show your listing in its own promotion, and the AI clause that says whether your photos train its models or are sent to outside processors. Underneath all of that sits your photographer agreement, which decides what you were allowed to upload in the first place.</p><h2>The four questions the terms should answer</h2><ol><li><strong>Who owns the content?</strong> The answer should be you, or the photographer who licensed it to you, with no transfer of ownership to the app. A sentence like “you retain all rights to your content” is what you are looking for.</li><li><strong>What licence does the app take?</strong> Every hosting service needs some licence to store and display your files; otherwise it cannot show the page. The question is scope. A licence “to provide the service to you” is normal. A licence that is “perpetual, worldwide, sublicensable, for any purpose” is not.</li><li><strong>Can the app use your listing in its own marketing?</strong> Some terms allow the company to feature customer content on its website or ads. That should require your written permission, per listing, not a buried default.</li><li><strong>Does the app train AI on your photos, or send them to third parties?</strong> AI edits usually run on servers, sometimes at an outside processor. The terms should say whether your photos are used to train models and whether you are asked before anything is sent out.</li></ol><h2>A worked example: the Sunday evening read</h2><p>An agent is about to upload 26 photos of a listing shot by a photographer she has used for five years. Before she does, she spends ten minutes on two documents.</p><p>The photographer's invoice says the licence covers “marketing of the listed property by the agent and brokerage in any medium.” Good: that includes an app, a page and a video. It says nothing about AI edits, so she emails the photographer and asks whether sky and tidy edits are acceptable, and gets a yes in writing.</p><p>The app's terms say she owns her content, that the app takes a licence only to operate the service, that it does not use customer content in marketing or AI training without written permission, and that an optional outside processor asks for separate permission before photos are sent. She uploads. Ten minutes, and she can answer the seller's question about where the photos go.</p><h2>How agents lose control of their own photos</h2><ul><li><strong>Not reading the terms.</strong> The most common failure. The clause you did not read is the one that lets the app put your seller's living room in an advert.</li><li><strong>Uploading photos you do not have the right to alter.</strong> A licence to use is not always a licence to edit. If the photographer agreement is silent on edits, ask.</li><li><strong>Assuming the seller's permission covers everything.</strong> The seller allowed photos of their home for the sale. That is not permission for the app to use those photos in its own promotion, and it is not yours to give on their behalf.</li><li><strong>Confusing ownership with control.</strong> You can own a photo and still have granted a licence so broad that ownership means little. Read the licence clause as carefully as the ownership one.</li><li><strong>Losing the originals.</strong> Ownership is academic if the only copy of the untouched photo lives inside an app you might leave. Keep originals where you control them.</li></ul><p>The post on <a href=\"/blog/your-listing-content-and-ai-training-questions-to-ask-any-app\">questions to ask any app about AI training</a> goes deeper on the fourth question, and <a href=\"/blog/who-owns-an-ai-edited-listing-photo\">who owns an AI-edited listing photo</a> covers the separate question of edits.</p><h2>How this works in Rendprop</h2><p>You own your photos and videos. Rendprop does not use your content for its own marketing or AI training without written permission. Optional Kie photo-to-video processing asks for separate permission before photos are sent. Every AI edit is saved as a separate version with a disclosure, and the untouched original stays in photo history, so the record of what the room looked like is yours to keep. An account deletion request is available in Settings. See the <a href=\"/features\">features page</a> for what the workflow does and <a href=\"/support\">support</a> for account and data questions.</p><h2>Three words to search for in the terms</h2><p>Before the next upload to any app, find three phrases in its terms: “retain,” “marketing” and “train.” Read the sentence around each one. If any of the three is missing or vague, email the company and ask before you upload a client's photos.</p>",
+  "faq": [
+    {
+      "q": "Does uploading photos to an app transfer ownership?",
+      "a": "It should not, and reputable terms say you retain your rights. What you grant is a licence so the app can store and display the content. Read how wide that licence is, because a very broad licence can matter more than the ownership line."
+    },
+    {
+      "q": "Can an app use my listing in its own advertising?",
+      "a": "Only if its terms allow it or you agree. Look for a clause that requires your written permission for marketing use. Remember that your seller agreed to photos for the sale, not for a software company's promotion."
+    },
+    {
+      "q": "Are my listing photos used to train AI?",
+      "a": "That depends entirely on the app's terms. Look for an explicit statement about AI training and about sending photos to outside processors, and whether you are asked first. If the terms do not mention it, ask the company in writing."
+    },
+    {
+      "q": "What about the photographer's rights?",
+      "a": "Your photographer agreement decides what you may do with the photos, including whether you may upload, edit and reuse them. If it is silent on editing or on apps, get a written yes before you upload."
+    }
+  ],
+  "related": [
+    "your-listing-content-and-ai-training-questions-to-ask-any-app",
+    "who-owns-an-ai-edited-listing-photo",
+    "permission-before-processing-why-an-app-should-ask-before-sending-photos",
+    "how-rendprop-handles-your-photos-videos-and-ai-processing-permissions"
+  ],
+  "published": "2026-10-28"
+}

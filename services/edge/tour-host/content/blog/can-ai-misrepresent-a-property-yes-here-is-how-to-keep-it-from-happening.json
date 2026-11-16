@@ -1,0 +1,40 @@
+{
+  "slug": "can-ai-misrepresent-a-property-yes-here-is-how-to-keep-it-from-happening",
+  "title": "Can AI misrepresent a property? Yes. Here is how to stop it",
+  "description": "AI edits can add, remove or reshape things a buyer will check in person. Five ways it happens, and the review habit that catches each one first.",
+  "category": "ai-trust",
+  "keywords": [
+    "can AI misrepresent a property",
+    "AI real estate photo errors",
+    "AI edit invented detail listing",
+    "prevent misleading listing photos",
+    "AI photo review before publishing"
+  ],
+  "tldr": "Yes. An AI edit can add a window that does not exist, remove a defect, widen a room, swap a fixture or invent a view, and none of it looks like a mistake on a phone screen. You stop it by keeping the original, comparing every edit against it before publishing, writing prompts that stay inside the room, and labelling what you keep.",
+  "html": "<p>Yes. An AI edit can add a window that does not exist, remove a defect, widen a room, swap a fixture or invent a view beyond the fence, and none of it looks like a mistake on a phone screen, because the tool is not lying; it is filling in whatever makes the picture look finished. You stop it by keeping the original, comparing every edit against it before publishing, writing prompts that stay inside the room, and labelling what you keep.</p><h2>The five ways it happens</h2><p>Knowing the shape of each one makes it faster to spot.</p><h3>1. Added things</h3><p>Ask for a tidy kitchen and the edit adds a pendant light over the island because tidy kitchens in its training usually have one. Ask for furniture and the edit adds a fireplace behind the sofa. Added things are the easiest to catch if you look, and the easiest to miss if you do not, because they look like they belong.</p><h3>2. Removed things</h3><p>Decluttering is removal by design. The risk is the edit removing more than clutter: the thermostat, the outlet, the drain in the garage floor, the crack above the door. Fixed features and defects are part of the property. Loose objects are not.</p><h3>3. Reshaped space</h3><p>Some edits quietly straighten converging walls, stretch a wall to fit a new sofa, or shift a doorway to balance the composition. The room on the screen is now a different room. Buyers notice this one at the showing, often without being able to say why the room feels smaller.</p><h3>4. Swapped materials and fixtures</h3><p>Laminate becomes hardwood. A dated faucet becomes a modern one. White appliances turn stainless. A twilight edit replaces the actual porch light with a warmer, bigger one. Each is a material change to what is being sold.</p><h3>5. Invented surroundings</h3><p>A window pull that shows trees where there is a parking lot. A blue sky edit that also adds distant hills. A green lawn edit that extends the lawn over a gravel pad. The property did not change, but the buyer's idea of it did.</p><h2>A worked example: the added window</h2><p>A 1960s ranch with a dim dining room. The agent runs a custom prompt: “Brighten this dining room and make it feel more open.” The result is lovely. It also has a second window on the left wall, which in real life is a solid wall shared with the garage.</p><p>On a phone, scrolling at speed, the second window reads as correct. Side by side with the original, it is obvious in three seconds. The agent who skipped the comparison published it. The buyer who toured on Saturday asked where the window went. That is the whole problem in one room.</p><h2>How to keep it from happening</h2><ol><li><strong>Keep the untouched original.</strong> If you cannot put the original next to the edit, you cannot review the edit. This is the foundation; the <a href=\"/blog/why-the-untouched-original-is-the-most-valuable-photo-in-the-set\">post on originals</a> explains why.</li><li><strong>Compare every edit, side by side, before anything leaves your phone.</strong> Count windows, doors and outlets. Check walls, floors and ceilings for things that appeared or vanished. Look out the windows. Ten seconds per photo.</li><li><strong>Write prompts that stay inside the room.</strong> “Remove the items on the counter; change nothing else” is a better prompt than “make the kitchen look great.” The <a href=\"/blog/custom-ai-prompts-guardrails-that-keep-edits-inside-the-room\">prompt guardrails post</a> has patterns.</li><li><strong>Reject, do not patch.</strong> If an edit got one thing wrong, run it again with a tighter prompt rather than trying to explain the error in a caption.</li><li><strong>Label what you keep.</strong> Staging gets “Virtually staged”; other edits get an alteration note. Check your MLS's current rules on wording; rules differ by MLS and state.</li><li><strong>Get a second pair of eyes on the exterior.</strong> The front photo is the one every buyer sees. Have a colleague compare it against the original before it goes to the MLS.</li></ol><h2>What skipping the review costs</h2><p>The honest answer is that nothing happens most of the time, which is why people skip it. Then one buyer notices one invented detail and treats every other photo as suspect. Showing feedback turns into “the photos were misleading.” The seller hears that. The listing picks up days on market it did not need. In the worst case the buyer or the buyer's agent raises it formally. Ask your broker what the office expects; this is practice and judgement, not legal advice, and an attorney is the person to ask about exposure.</p><h2>How this works in Rendprop</h2><p>Rendprop keeps every AI edit as a separate version with a disclosure, and the untouched original stays in photo history. The photo studio is built around comparing each edit with the original and choosing which saved versions to use, so the review step is in the workflow rather than something you remember to do later. AI can change or invent details; that is the reason the comparison exists, so do it before publishing, and check your own MLS rules before posting altered images. The <a href=\"/features#photo-studio\">photo studio</a> page covers the available edits.</p><p>Next step: take the last five edited photos you published and put each next to its original. Count the windows. If they all match, your process works. If one does not, you know what to fix.</p>",
+  "faq": [
+    {
+      "q": "What kinds of details does AI most often get wrong in listing photos?",
+      "a": "Added windows and light fixtures, removed fixed features like outlets and vents, reshaped walls and doorways, swapped materials such as laminate turning into hardwood, and invented views outside windows. They look plausible on a phone and obvious side by side with the original."
+    },
+    {
+      "q": "How long should a review of an AI-edited photo take?",
+      "a": "About ten seconds per photo if the original is next to it. Count windows, doors and outlets, scan walls and floors for things that appeared or vanished, and look out the windows. A batch of thirty photos takes about five minutes."
+    },
+    {
+      "q": "If an edit got one small thing wrong, can I just explain it in the caption?",
+      "a": "Better to reject the edit and run it again with a tighter prompt. A caption that explains an invented window reads worse than a photo without the window. Keep captions for the label, not for corrections."
+    },
+    {
+      "q": "Who should I ask about my exposure if a buyer complains about an edited photo?",
+      "a": "Your broker first, and an attorney for anything beyond office policy. Rules differ by MLS and state, and this post is practice and judgement rather than legal advice."
+    }
+  ],
+  "related": [
+    "reviewing-ai-output-against-the-original-a-habit-not-a-step",
+    "custom-ai-prompts-guardrails-that-keep-edits-inside-the-room",
+    "what-to-do-when-an-ai-edit-invents-a-detail-that-is-not-in-the-room",
+    "why-the-untouched-original-is-the-most-valuable-photo-in-the-set"
+  ],
+  "published": "2026-10-28"
+}

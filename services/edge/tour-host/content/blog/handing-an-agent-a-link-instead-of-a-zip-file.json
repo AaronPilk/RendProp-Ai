@@ -1,0 +1,39 @@
+{
+  "slug": "handing-an-agent-a-link-instead-of-a-zip-file",
+  "title": "Handing an agent a link instead of a zip file",
+  "description": "Why a published property page beats a download folder: the agent gets something to share immediately, and you stop fielding re-export requests.",
+  "category": "photographers",
+  "keywords": [
+    "deliver listing photos as link",
+    "photographer delivery link vs zip",
+    "property page delivery for agents",
+    "real estate photo delivery method",
+    "share listing instead of download"
+  ],
+  "tldr": "A zip file gives the agent work to do. A published property page gives them something to share. Deliver the page with the gallery, the video and their contact card already on it, send two links, and keep the full-resolution files available for the MLS upload. The agent posts the same day and stops asking you for re-exports.",
+  "html": "<p>A zip file hands the agent a job. A published property page hands them a result. When you deliver a page with the gallery, the listing video, the property details and the agent's contact card already live, and you send the branded link and the unbranded MLS link in one message, the agent can share the listing within a minute of reading your email. Keep the full-resolution files available for the MLS upload, but make the link the delivery.</p><p>This is a small change in what you send and a large change in how the agent sees you. The photographer who sends a folder is a supplier. The photographer who sends a ready listing is part of the launch.</p><h2>What the agent does with a zip file</h2><p>Download it. Unzip it on a laptop they may not be near. Upload the photos to the MLS, which they need to do anyway. Then try to get the photos somewhere a buyer can see them properly: a single-property site tool, a social post, an email. Find the video file, which is too big for email. Ask you for a smaller export. Ask you for a vertical version. Build a page, or pay $9–150 a month at typical U.S. rates as of August 2026 for a tool that builds one. Two days pass.</p><p>None of that is your fault. All of it is time between your delivery and the listing being seen.</p><h2>What the agent does with a link</h2><p>Open it on their phone. See the main photo, the price, the beds and baths, the gallery in order, the video that plays when tapped, their own name and number on the contact card, and the enquiry form. Paste the unbranded link into the MLS virtual-tour field. Paste the branded link into the listing email, the social bio, the text to the seller. Done before lunch. The <a href=\"/f/estate-demo\">demo listing</a> is what that link opens to.</p><h2>The two links, and why both</h2><p>Every published Rendprop listing gets two addresses. The branded page at rendprop.com/f/ carries the contact card and the enquiry form, which the agent wants everywhere they control. The unbranded page at rendprop.com/u/ has no name, no contact details and no Rendprop branding, and it is made for the MLS virtual-tour field; the agent should check their MLS's current rules on what that field may contain. Send both in the delivery message, labelled, so the agent is not guessing which goes where. The <a href=\"/features#two-links\">two links page</a> sets out the split, and the <a href=\"/blog/branded-and-unbranded-listing-links-why-you-need-both\">branded and unbranded post</a> covers the reasons from the agent's side.</p><h2>The delivery message</h2><p>Keep it to the things the agent will act on:</p><ul><li>The property page link, labelled branded, for their marketing.</li><li>The unbranded link, labelled for the MLS virtual-tour field.</li><li>Where the full-resolution photos are for the MLS upload.</li><li>If a reel was ordered, the 9:16 export and two lines of suggested caption.</li><li>One line reminding them to verify their email so enquiries from the page reach them directly.</li></ul><p>That is five lines. The agent reads it on their phone and has nothing to ask.</p><h2>A worked handoff</h2><p>You shoot a split-level on Tuesday for an agent launching Thursday. Tuesday evening you add the photos to the listing, review the two AI edits she asked for against the originals, build the landscape video, type in the details, set the page to present her contact card, publish, and send the five-line message. Wednesday she pastes the unbranded link into the MLS and schedules the branded link in her listing email. Thursday morning the listing goes live with the page already receiving visitors from her email. She has not downloaded anything except the MLS photos, and you have not been asked for a single re-export.</p><h2>Keeping the files in the picture</h2><p>The link does not replace the full-resolution set. The MLS still needs the photos uploaded, and some agents want the files for print. Keep delivering them the way you do now, but as the second item in the message rather than the whole delivery. You still keep every original and every edited version on your own storage; the page is the agent's shareable copy, not your archive. The <a href=\"/blog/the-photographer-agent-handoff-files-links-and-who-posts-what\">photographer-agent handoff post</a> sets out who holds what after delivery.</p><h2>Where link delivery goes wrong</h2><ul><li><strong>Sending the link before the details are in.</strong> The page hides empty sections, so a page without a price looks unfinished. Get the price, beds, baths and square feet at booking.</li><li><strong>Your contact card on the page.</strong> Check the live page before sending. The card should carry the agent's details.</li><li><strong>Sending only the branded link.</strong> The agent then has nothing fit for the MLS virtual-tour field and comes back to ask. Send both, labelled.</li><li><strong>An AI edit nobody checked.</strong> A link travels fast. Compare each edit with its original before the page goes live, and leave the disclosure on.</li><li><strong>Leaving the page active after the sale.</strong> Mark the listing sold or archived when the agent tells you and the page says so.</li></ul><p>Next step: on the next listing you deliver, lead the message with the two links and move the download to the third line. Watch how fast the agent replies.</p>",
+  "faq": [
+    {
+      "q": "Does the agent still need the full-resolution photos?",
+      "a": "Yes, for the MLS upload and sometimes for print. Keep delivering them, but as a line in the message rather than the whole delivery. The link is what the agent shares; the files are what they upload."
+    },
+    {
+      "q": "What if the agent wants changes after I send the link?",
+      "a": "Make the change in the listing and publish it again. The two links belong to the listing, so anything already pasted into the MLS or an email keeps pointing at it."
+    },
+    {
+      "q": "Can buyers open the link without an app?",
+      "a": "Yes. The property page opens in any browser on a phone or a desktop. The video plays when the visitor taps it and does not autoplay."
+    },
+    {
+      "q": "Which link goes in the MLS?",
+      "a": "The unbranded one at rendprop.com/u/, which has no name, no contact details and no Rendprop branding. The branded one at rendprop.com/f/ with the contact card and enquiry form is for the agent's own channels. Check the current MLS rules."
+    }
+  ],
+  "related": [
+    "delivering-a-property-website-with-every-photo-shoot",
+    "the-photographer-agent-handoff-files-links-and-who-posts-what",
+    "branded-and-unbranded-listing-links-why-you-need-both"
+  ],
+  "published": "2026-10-28"
+}

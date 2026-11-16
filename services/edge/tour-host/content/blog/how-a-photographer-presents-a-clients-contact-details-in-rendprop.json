@@ -1,0 +1,40 @@
+{
+  "slug": "how-a-photographer-presents-a-clients-contact-details-in-rendprop",
+  "title": "How a photographer presents a client's details in Rendprop",
+  "description": "A photographer can put the agent's name, business and number on the listing page so buyers call the agent. Forwarding needs the agent's email verified.",
+  "category": "howto",
+  "keywords": [
+    "photographer client contact details rendprop",
+    "present agent details on listing page",
+    "enquiry forwarding photographer",
+    "real estate photographer property website",
+    "deliver listing page to agent"
+  ],
+  "tldr": "In Rendprop a photographer can present a client's contact details on a listing, so the property page shows the agent's name, business and number instead of the photographer's. Enquiries can be forwarded to the agent once the agent's email is verified. Set the details and the verification before the page goes live, then hand the agent the branded link and the unbranded link.",
+  "html": "<p>Build the listing in your own account, set the contact card to show the client's details, and have the client verify their email so enquiries are forwarded to them. That is the whole arrangement. The property page then shows the agent's name, business and number, a buyer who taps the contact card reaches the agent, and an enquiry through the form goes where the agent will see it.</p><p>You keep the listing, the originals and the versions in your workspace; the agent gets the page and the leads.</p><h2>Why the contact card should be the agent's, not yours</h2><p>A buyer opening a property page wants to book a showing. If the number on the page is the photographer's, the buyer either gives up or you spend Saturday forwarding calls. The agent is paying you for marketing that generates their enquiries, so the page should carry their details from the first minute. Your branding question is separate and smaller; the <a href=\"/blog/photographer-branding-on-a-property-page-what-is-allowed\">branding post</a> covers it.</p><h2>Setting it up, in order</h2><ol><li>Start the listing in your workspace from Home and choose real estate in the mode chooser.</li><li>Add the photos, review any edits against the originals, and build the video as usual.</li><li>When you set up the page, present the client's contact details on the listing: the agent's name, business and number as they want them shown.</li><li>Ask the agent to verify their email. Enquiry forwarding to the client needs the client's email verified; until that is done, forwarding does not happen.</li><li>Publish when you have a connection and a connected workspace.</li><li>Open the branded link on your phone and check the contact card shows the agent, not you.</li><li>Send the agent both links from the Share sheet: the branded link for their marketing and the unbranded link for the MLS virtual-tour field.</li></ol><h3>What to check before the page goes live</h3><ul><li>The agent's name is spelled the way it appears on their sign and the MLS.</li><li>The number is the one they answer, usually a cell, not a brokerage switchboard.</li><li>The email the agent verified is the one they actually read.</li><li>Any edited photos in the gallery are ones the agent has approved, and both of you have checked your own MLS rules on altered images.</li></ul><h2>A worked example: the Tuesday delivery</h2><p>A photographer shoots a 3-bed in a cul-de-sac Tuesday morning for an agent who wants the page live before the Saturday open house. The photographer starts the listing in the car, adds 22 landscape photos and 6 portrait photos, and runs blue sky on the front exterior. Back at the desk the photographer compares the edit with the original, keeps it, builds the landscape video with an AI voice reading the agent's 40-word script, and in the website step presents the agent's contact details: name, brokerage, cell.</p><p>The photographer texts the agent: \"Your page is ready to publish. Verify your email so enquiries forward to you, and send me the price and square feet.\" The agent verifies, replies with the details, the photographer types them in and publishes. Wednesday morning the agent has the branded link in a text, the unbranded link in an email with the subject line \"for the MLS\", and the first enquiry, asking for Saturday at eleven, forwarded to the verified address. The photographer did not take a single buyer call.</p><h2>Where the setup goes wrong</h2><ul><li><strong>Publishing before verification.</strong> The page is live, the contact card is right, but enquiries are not forwarded because the email is not verified. Ask for verification during onboarding, before the first listing.</li><li><strong>Verifying the wrong address.</strong> An old brokerage address that forwards nowhere. Confirm which email the agent reads.</li><li><strong>Your details on the card by default.</strong> Check the published page on your phone every time. It takes ten seconds.</li><li><strong>Sending one link.</strong> Agents need both. Label them in the message so the unbranded one ends up in the MLS and the branded one everywhere else.</li><li><strong>Agent not told enquiries exist.</strong> Tell them where the lead will arrive and that it includes the date the visitor asked for, so they reply with that date first.</li></ul><h2>What stays with you and what goes to the agent</h2><p>You keep the listing, the untouched originals in photo history, every edited version with its disclosure, and the videos. The agent gets the branded link, the unbranded link, the page with their details, and the enquiries forwarded to their verified email. Enquiries also land in your inbox under the listing, per listing and all together, so you can see what your work is producing. The <a href=\"/features#leads\">leads section</a> describes the form and the inbox, and the <a href=\"/blog/enquiry-forwarding-for-photographers-how-the-agent-gets-the-lead\">forwarding post</a> covers the enquiry path in detail.</p><p>Next step: pick the agent you shoot for most, get their name, business, cell and the email they read, and set those on their next listing before you publish. Ask for verification in the same message you send with the photos.</p>",
+  "faq": [
+    {
+      "q": "Does the agent need a Rendprop account to appear on the page?",
+      "a": "You present the client's contact details on the listing from your own account, so the page carries the agent's name, business and number. The agent needs to verify their email so enquiries can be forwarded to them."
+    },
+    {
+      "q": "What happens to an enquiry if the agent has not verified their email?",
+      "a": "It is not forwarded to the agent. It still lands in your inbox under the listing, so you can pass it on, but set up verification before the page goes live so you do not have to."
+    },
+    {
+      "q": "Can I still see enquiries on a listing I built for an agent?",
+      "a": "Yes. Enquiries land in the inbox in your account, per listing and all together, as well as being forwarded to the verified client email."
+    },
+    {
+      "q": "Which links do I send the agent?",
+      "a": "Both. The branded link for their texts, posts and emails, and the unbranded link for the MLS virtual-tour field. Label them so they go to the right places."
+    }
+  ],
+  "related": [
+    "presenting-the-agents-contact-details-on-a-listing-you-shot",
+    "enquiry-forwarding-for-photographers-how-the-agent-gets-the-lead",
+    "handing-an-agent-a-link-instead-of-a-zip-file",
+    "where-enquiries-appear-in-rendprop-and-how-to-reply"
+  ],
+  "published": "2026-10-28"
+}

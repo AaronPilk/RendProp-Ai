@@ -1,0 +1,39 @@
+{
+  "slug": "enquiry-forwarding-for-photographers-how-the-agent-gets-the-lead",
+  "title": "Enquiry forwarding for photographers: how the agent gets leads",
+  "description": "When you publish a page for a client, a buyer's enquiry should reach the agent, not sit in your inbox. How forwarding works and what to check first.",
+  "category": "photographers",
+  "keywords": [
+    "enquiry forwarding property page",
+    "photographer forward leads to agent",
+    "listing enquiry goes to agent",
+    "real estate lead routing photographer",
+    "property website enquiries"
+  ],
+  "tldr": "An enquiry from a property page you published for a client reaches the agent when the listing presents the agent's contact details and the agent's email is verified. Until that verification is done, enquiries land in the inbox of the workspace that published the listing, which is yours.",
+  "html": "<p>When a buyer fills in the enquiry form on a property page you published for a client, the enquiry reaches the agent once two things are true: the listing presents the agent's contact details, and the agent's email has been verified. Until then, enquiries land in the inbox of the workspace that published the listing, which is yours. The whole job is making sure that verification is done before the first buyer arrives.</p><p>This is the part of delivering a property page that photographers underestimate. The page is easy. The lead path is where trust is won or lost, because a lead that sits with the photographer for two days is worse than no form at all.</p><h2>What the form collects</h2><p>The enquiry form on a published page asks the visitor for their details and for the date they want to visit. That last field is the useful one. A buyer who writes a date has told the agent exactly what to do next: confirm the showing. The post on <a href=\"/blog/contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries\">contact form fields</a> explains why fewer fields and one concrete question get more real enquiries.</p><p>The branded page at rendprop.com/f/ is the one with the contact card, and it is the one the agent uses in their own marketing. The unbranded link at rendprop.com/u/ is made for the MLS virtual-tour field and carries no name, no contact details and no Rendprop branding. In practice the enquiries you see come from the agent's own channels: the listing email, the social post, the sign QR code.</p><h2>The path from form to agent</h2><ol><li>A buyer submits the form on the branded page.</li><li>The enquiry lands in the Rendprop inbox, where it is visible for that listing and in the view of all listings together.</li><li>If the listing presents the agent's details and the agent's email is verified, the enquiry is forwarded to the agent.</li><li>The agent replies to the buyer and confirms the date.</li></ol><p>You can read the chain in the <a href=\"/features#leads\">leads section</a> of the features page. The step that goes wrong is number three. If the email is not verified, the enquiry stops at step two, in your inbox.</p><h2>Set it up on the first listing</h2><p>Treat verification as part of onboarding a new agent, not something for the agent to do later. The sequence that works:</p><ul><li>At booking, ask for the email address the agent wants enquiries sent to. Not any address, the one they read.</li><li>Publish the listing with the agent's contact details presented.</li><li>Send the links with a short line asking them to verify that email before the listing goes to the MLS.</li><li>Check your own inbox for that listing after launch. If an enquiry has arrived there, verification has not happened, and you should chase it that day.</li></ul><p>On the second and third listing for the same agent, the verification is already in place and you skip the chase.</p><h2>Two agents, two outcomes</h2><p>You shoot a condo on Monday for an agent who has used you twice before. Both earlier listings had enquiries forwarded without a problem. You publish Monday night, send the links, and she launches Tuesday. Wednesday evening a buyer submits the form asking for a Saturday showing. The enquiry goes to her, she replies Thursday morning, and you only hear about it because she mentions it when booking the next shoot.</p><p>Now the counter-example. A new agent, first listing. You publish and send links but do not mention verification. Friday a buyer submits a form. It sits in your inbox over the weekend because you were shooting. Monday you forward it by hand. The buyer has moved on. The agent blames the page. The fix was one sentence in the delivery message.</p><h2>What you should and should not do with the inbox</h2><p>While the listing is in your workspace, you can see its enquiries. That is useful for checking that forwarding works, and nothing else. Do not reply to buyers yourself on a client's listing, and do not use client enquiries for your own marketing. Your role is to make sure the lead moved. If you find one that did not, forward it that day and fix the verification so the next one does.</p><h2>Things that break the chain</h2><ul><li><strong>The agent's details are not presented on the listing.</strong> Then the page shows the publisher's card. Check the live page before sending links.</li><li><strong>The wrong email.</strong> A brokerage address the agent does not check is as bad as none. Ask which address.</li><li><strong>Nobody replies.</strong> A buyer who fills in a form with a date expects an answer that day, so the agent needs to know the enquiry is coming.</li><li><strong>The listing is marked sold too early or left live too long.</strong> Mark it sold or archived when the agent tells you, and the page says so.</li></ul><p>Next step: add one line to your delivery template that names the enquiry email and asks the agent to verify it before the MLS goes live, then check your inbox for that listing on launch day.</p>",
+  "faq": [
+    {
+      "q": "Where do enquiries go if the agent has not verified their email?",
+      "a": "They land in the Rendprop inbox of the workspace that published the listing, which is yours. You can see them per listing and all together. Forward any that arrive by hand and ask the agent to verify so the next one goes straight to them."
+    },
+    {
+      "q": "What is different about the MLS link?",
+      "a": "The unbranded link has no name, no contact details and no Rendprop branding, and it is made for the MLS virtual-tour field. Check your MLS's current rules on what that field may contain. The branded page is the one with the contact card, and it is the one the agent uses in their own marketing."
+    },
+    {
+      "q": "What does the enquiry form ask for?",
+      "a": "The visitor's details and the date they want to visit the home. That date gives the agent a clear next action rather than an open-ended message."
+    },
+    {
+      "q": "Can I see the agent's enquiries after forwarding is set up?",
+      "a": "The listing is still in your workspace, so its enquiries remain visible in your inbox. Use that only to confirm the chain works. Replying to a client's buyers is the agent's job."
+    }
+  ],
+  "related": [
+    "presenting-the-agents-contact-details-on-a-listing-you-shot",
+    "where-listing-enquiries-should-land-your-inbox-not-three-other-agents",
+    "where-enquiries-appear-in-rendprop-and-how-to-reply"
+  ],
+  "published": "2026-10-28"
+}

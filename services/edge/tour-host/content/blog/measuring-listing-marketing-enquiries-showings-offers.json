@@ -1,0 +1,40 @@
+{
+  "slug": "measuring-listing-marketing-enquiries-showings-offers",
+  "title": "Measuring listing marketing: enquiries, showings, offers",
+  "description": "Measure listing marketing with three weekly counts per listing: enquiries, showings and offers, each with its source. Views and likes stay out of the file.",
+  "category": "business",
+  "keywords": [
+    "measure listing marketing",
+    "real estate marketing metrics",
+    "enquiries showings offers",
+    "listing performance tracking",
+    "how to know if listing marketing works"
+  ],
+  "tldr": "Measure listing marketing with three counts per listing per week: enquiries, showings and offers, each noted with where it came from. Views and likes do not go in the file. Low enquiries means media or exposure; enquiries without showings means the reply; showings without offers means price or the home.",
+  "html": "<p>Measure listing marketing with three counts per listing per week: enquiries, showings and offers, each written down with where it came from. Views, likes, reach and impressions do not go in the file. Those three counts, read together, tell you what to change: low enquiries means the media or the exposure is wrong; enquiries that do not become showings means the reply or the page is wrong; showings that do not become offers means the price or the home is. Nothing else you can measure points as clearly.</p><h2>The three counts and what each one tells you</h2><ul><li><strong>Enquiries.</strong> A person with a name who asked to see the home or asked a question about it. Form submissions, portal messages, texts and calls all count; a like does not. This number measures whether the first impression (main photo, hook, video opening) is stopping anyone, and whether enough people are seeing it.</li><li><strong>Showings.</strong> A person who walked through the house, including open-house visitors who then booked a private viewing. This measures whether enquiries are being answered fast and well, and whether the page answered the questions that would otherwise stop someone booking.</li><li><strong>Offers.</strong> Written offers, at any price. This measures whether the home as seen matched the home as shown, and whether the price is where buyers think it is.</li></ul><h2>Noting the source</h2><p>Beside each enquiry write where it came from: the property page form, a portal, the sign, a text from someone who got the link forwarded, the open house. After two or three listings the pattern is obvious and specific to you. Some agents find most page enquiries come from the sign's QR code; others find the database email does the work and social does little. Spend the next listing's effort where the enquiries came from, not where the posting felt productive.</p><h2>Reading the numbers: three patterns</h2><ol><li><strong>Few enquiries, whatever the showings.</strong> Change what buyers see first: the main photo, the opening of the video, the first line of the post. Then check exposure: is the unbranded link live in the MLS tour field, did the email go out, is the sign up.</li><li><strong>Enquiries but few showings.</strong> Look at your reply time and your reply content, then at the page. Are the details complete, does the video answer the question people ask, is the form asking for a date so the reply has something to confirm.</li><li><strong>Showings but no offers.</strong> Read the showing feedback and talk to the seller about price. If feedback says the home looked different from the photos, that is a presentation problem of a different kind: an edit or a wide lens oversold a room.</li></ol><h2>Two listings, four weeks</h2><p>A townhouse and a split-level listed the same week. Week one: the townhouse gets nine enquiries (five from the page form, three from a portal, one from the sign), four showings, no offers. The split-level gets two enquiries, both from a portal, one showing, no offers. The split-level has an exposure or presentation problem; its main photo is a grey front exterior and the database email went out with the townhouse's link only. Week two: the split-level gets a new main photo (the kitchen), a new vertical cut, and its own email. Enquiries go to seven. Week three: the townhouse has had eleven showings and one low offer; the feedback says the third bedroom is smaller than the video suggested. The video is rebuilt without the wide frame of that room, and the next showing's feedback is about price instead. Week four: the townhouse goes under contract; the split-level has four showings and an offer coming. Nothing in those four weeks needed a view count.</p><h2>What not to measure</h2><ul><li><strong>Views and reach.</strong> They go up when you post more and tell you nothing about buyers.</li><li><strong>Likes.</strong> Mostly other agents and your aunt.</li><li><strong>Days on market as a performance number.</strong> It is an outcome, not a lever; the three counts are the levers.</li><li><strong>Anything you cannot attach a name to.</strong> If the number is not a person who did something toward buying, it is not in the file.</li></ul><h2>Keeping the file</h2><p>One note per listing with four lines per week: the date, the three counts, and the sources. Update it on the same morning each week. Share the counts with the seller in a two-line text; sellers who hear real numbers weekly stop asking whether anything is happening, and when the price conversation comes, they have already seen the data that leads to it.</p><h2>Counting enquiries in Rendprop</h2><p>Enquiries from a Rendprop property page land in the app's inbox, per listing and all together, each with the visitor's details and the date they asked for. That makes the first count a matter of opening the inbox for the listing on review morning and writing the number down; the source for those is the page, and the others (portals, sign, texts) you add from your phone. Showings and offers come from your showing service and your file. See <a href=\"/features#leads\">where enquiries land</a>, and pair this with <a href=\"/blog/the-weekly-review-fifteen-minutes-that-keep-listings-moving\">the weekly review</a>.</p><p>Next step: open a note for each live listing tonight and write this week's three counts with sources, even if one of them is zero. The second week's numbers are the first ones that tell you anything, so start now.</p>",
+  "faq": [
+    {
+      "q": "What counts as an enquiry?",
+      "a": "A person with a name who asked to see the home or asked a question about it, by form, portal, text or call. Likes, saves and views do not count because no one has done anything toward buying."
+    },
+    {
+      "q": "How often should I review the three counts?",
+      "a": "Once a week, same morning, per listing. Weekly is often enough to see a pattern and rare enough that one slow day does not look like a crisis."
+    },
+    {
+      "q": "Should I share the counts with the seller?",
+      "a": "Yes, in a two-line text each week. Sellers who see real numbers stop wondering whether anything is happening, and if a price conversation is coming, they have already seen the data behind it."
+    },
+    {
+      "q": "What if enquiries are high but showings are low?",
+      "a": "Look at your reply speed and content first, then at the page. A reply that confirms the date they asked for and offers one alternative, sent within the hour, usually fixes it. A page with missing details is the next suspect."
+    }
+  ],
+  "related": [
+    "the-weekly-review-fifteen-minutes-that-keep-listings-moving",
+    "follow-up-from-a-listing-enquiry-the-first-reply-and-the-first-call",
+    "marketing-a-listing-that-has-been-sitting",
+    "where-listing-enquiries-should-land-your-inbox-not-three-other-agents"
+  ],
+  "published": "2026-10-28"
+}

@@ -1,0 +1,40 @@
+{
+  "slug": "open-house-sign-in-that-follows-up-itself",
+  "title": "Open house sign-in that follows up itself",
+  "description": "A paper sheet records who came. The property page link on a card at the door lets serious visitors ask for a time, and the enquiry lands in your inbox.",
+  "category": "openhouse",
+  "keywords": [
+    "open house sign-in",
+    "open house follow up",
+    "open house lead capture",
+    "open house sign in sheet alternative",
+    "property page link at open house"
+  ],
+  "tldr": "The sign-in that follows up itself is not a cleverer sheet; it is the property page link printed on a card at the door. Visitors open it on their own phone, and the ones who want more use the enquiry form, which arrives in your inbox with the date they want to come back. Keep the paper sheet for the record of who was in the house.",
+  "html": "<p>The sign-in that follows up itself is the property page link, printed large on a card at the door and spoken out loud as people walk in. Visitors open the page on their own phone. The ones who are serious use the enquiry form, and that enquiry arrives in your inbox with the date they want to come back. You did not chase it; they asked.</p><p>The paper sheet still has a job. It records who was in the house, which the seller and your own records want. But a name and a misspelt email on a clipboard is a cold lead you have to warm up. A visitor who typed a question into the form is a warm one who expects a reply.</p><h2>Two things at the door, each doing one job</h2><p>Put them side by side on the hall table.</p><ul><li><strong>The sheet.</strong> Name, phone, agent if they have one. Short, because people are standing up. This is the attendance record.</li><li><strong>The card.</strong> A printed card with the property page address in plain text and a QR code that opens the same link. Above it, one line: <em>Full gallery, video and details. Ask for a second visit here.</em></li></ul><p>Then say it. “The sheet is for the seller. The card opens the page with the video and everything, and if you want to come back during the week there is a form on it.” Most people will do the first because you asked. The ones who do the second are telling you something.</p><h2>A Sunday at Alder Court</h2><p>A two-storey townhouse at 212 Alder Court, open Sunday 1 to 3. Say fourteen groups come through. Twelve sign the sheet, because it is in front of them. Perhaps five open the card link while they are in the house, because the hall is where they wait for the group ahead to clear the stairs. Of those, two want a second look and say so on the form before they have reached their car. A third sends an enquiry on Monday evening after showing the page to a partner who could not come.</p><p>Monday morning you have three enquiries in the inbox for that listing, each with a preferred date, and a sheet with twelve names for the seller report. You reply to the three first, because they asked, and you text the other nine with the same link and a line about the week's showing times.</p><p>None of that required a tablet, an app for visitors to download, or a form they had to fill in while you watched. It required a card and a sentence.</p><h2>What goes on the card and what stays off</h2><p>The card is small. Put the property page link, the QR code, the address and the one-line instruction. Leave off your bio, the brokerage boilerplate and a second QR code to your website. One destination, one action.</p><p>Use the branded link, not the unbranded one. The unbranded link exists for the MLS virtual tour field and shows no name and no contact card. A visitor who opens it from your card has nowhere to ask.</p><h2>Where this falls over</h2><ul><li><strong>Expecting the link to replace the sheet.</strong> It will not. Fewer people will scan than will sign. The scan is a filter; the sheet is a record. You want both.</li><li><strong>A QR code that opens a portal page.</strong> The visitor lands on a page that shows them six other homes and a button that contacts whoever bought the ad. Build the code from your property page link.</li><li><strong>Nobody saying it out loud.</strong> A card on a table is decoration. The sentence at the door is what makes people pick it up.</li><li><strong>Replying on Wednesday.</strong> A visitor who asked for a Tuesday evening visit on Sunday at 2 p.m. has been to two other houses by Wednesday. Reply Sunday night or Monday first thing.</li><li><strong>A tiny code on a glossy card.</strong> In a bright hallway the glare beats the camera. Matte stock, a code at least the size of a postage stamp twice over, and the written link beside it for people who will not scan.</li></ul><h2>How this works in Rendprop</h2><p>Rendprop does not have a sign-in sheet feature, and it does not generate QR codes. What it gives you is the property page and the link to it. Copy the branded link from the Share sheet, print it on the card, and build the QR code in whatever tool you already use. The page shows the gallery, the details, the listing video (it plays when the visitor taps it) and an enquiry form that asks for the date the visitor wants. Each enquiry lands in the app's inbox for that listing, and all listings' enquiries are also shown together. Read about <a href=\"/features#leads\">enquiries</a> and the <a href=\"/features#listing-site\">property website</a>, or open the <a href=\"/f/estate-demo\">demo listing</a> on your phone and scroll to the form to see what a visitor gets.</p><h2>What to do before Sunday</h2><p>Print the card with the branded link and a QR code, write the one sentence you will say at the door, and put both next to the sheet. The follow-up on Monday starts in the inbox, with the people who asked. For what to send them, read <a href=\"/blog/after-the-open-house-the-monday-follow-up\">after the open house: the Monday follow-up</a>.</p>",
+  "faq": [
+    {
+      "q": "Should I stop using a paper sign-in sheet at open houses?",
+      "a": "No. The sheet records who was in the house, which the seller and your own records want. The property page link on a card does a different job: it lets the serious visitors ask for a second visit on their own phone. Use both, side by side, and say what each is for."
+    },
+    {
+      "q": "Which link goes on the card at the door, branded or unbranded?",
+      "a": "The branded property page link. It shows your contact card and the enquiry form. The unbranded link is made for the MLS virtual tour field and carries no name and no way to contact you, so a visitor who opens it has nowhere to ask."
+    },
+    {
+      "q": "Does Rendprop have a digital sign-in or QR code feature for open houses?",
+      "a": "No. Rendprop publishes the property page and gives you its link. You print the link, make the QR code in a tool you already use, and the page's enquiry form does the follow-up part by sending each enquiry to your inbox with the visitor's preferred date."
+    },
+    {
+      "q": "How quickly should I reply to an enquiry sent from the open house?",
+      "a": "The same day, or first thing Monday. A visitor who asked for a Tuesday evening visit while standing in your hallway has seen other homes by midweek. The enquiry includes the date they want, so the reply can be a confirmation rather than a question."
+    }
+  ],
+  "related": [
+    "property-website-links-for-open-houses-the-sign-in-that-follows-up-itsel",
+    "qr-codes-on-the-yard-sign-and-the-flyer-send-people-to-the-property-page",
+    "after-the-open-house-the-monday-follow-up",
+    "contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries"
+  ],
+  "published": "2026-10-28"
+}

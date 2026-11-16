@@ -1,0 +1,40 @@
+{
+  "slug": "where-listing-enquiries-should-land-your-inbox-not-three-other-agents",
+  "title": "Where listing enquiries should land: your inbox, not other agents",
+  "description": "An enquiry about your listing should reach you directly, in one place, with the listing attached. Portal forms route buyers elsewhere; yours should not.",
+  "category": "website",
+  "keywords": [
+    "where do listing enquiries go",
+    "real estate lead routing",
+    "listing enquiries inbox",
+    "portal leads go to other agents",
+    "own your listing leads"
+  ],
+  "tldr": "An enquiry about your listing should go to you, in one inbox, with the listing attached, and nowhere else. Portal contact forms often route buyers to whichever agent paid for the zip code; a form on your own property page sends them to the person who listed the home. Keep every listing's enquiries in one place so a busy week does not mean a lost showing.",
+  "html": "<p>An enquiry about your listing should reach you, in one inbox, with the listing attached, and nobody else. That sounds obvious until you look at where enquiries actually go: portal forms that route to the agent who paid for the zip code, a brokerage website that drops leads into a shared queue, an email alias three people check, and a text to your personal number that gets buried under a Saturday of showings. A form on your own property page is the one path that sends the buyer straight to the person who listed the home.</p><h2>The three leaks</h2><p><strong>Portal forms.</strong> A buyer finds your listing on a portal, taps the contact button and fills in the form. On some portals, that form may not go to you at all; it can go to an advertising agent, who calls the buyer, who is now being represented by someone who has never seen the home. You marketed the listing; someone else got the buyer.</p><p><strong>Brokerage round-robins.</strong> Office websites often pool enquiries and distribute them. Sometimes the listing agent gets priority, sometimes not. Either way, there is a delay and a handoff, and buyers cool off in handoffs.</p><p><strong>Scattered channels.</strong> Even when the enquiry reaches you, it arrives as an email in one place, a text in another, a DM in a third. On a quiet Tuesday that is fine. On a Saturday with three open houses, the Sunday showing request from the first open house is the one you find on Monday.</p><h2>What \"one inbox\" should mean</h2><p>Every enquiry from every listing page, in one list, sorted by time, with the listing name on each. You can filter to one listing when you are working that home, and see everything together when you are planning the day. The buyer's name, their contact method, their message and the date they asked for are all visible without opening anything.</p><p>That is the whole requirement. It is not a CRM. It is the place the enquiry lands before it becomes a phone call.</p><h2>A worked example: three listings, one Saturday</h2><p>You have a condo, a townhouse and a 4-bed on the market. Saturday morning, four enquiries arrive before you have finished coffee. In one inbox they look like this: condo, Maya, wants Sunday; 4-bed, Tom, no date, asking about the HOA; townhouse, Priya, wants today after four; 4-bed, Dev, wants Monday evening.</p><p>You call Priya first because today is today. You text Maya to confirm Sunday. You email Tom the HOA details. You confirm Dev for Monday. Fifteen minutes, done, and nothing fell through a gap between three different apps.</p><p>Now picture the same morning with the condo enquiries going to a portal advertiser, the townhouse enquiry in a brokerage queue, and the 4-bed enquiries in your email under forty other messages. Priya's four o'clock showing happens with another agent.</p><h2>What goes wrong when enquiries are shared</h2><ul><li><strong>A buyer gets two calls</strong> from two agents about the same home and concludes nobody is in charge.</li><li><strong>The seller asks how many enquiries came in</strong> and you cannot answer because half of them went elsewhere.</li><li><strong>Follow-up stalls</strong> because each person assumes someone else replied.</li><li><strong>You cannot measure</strong> which marketing produced the showing, because the trail is broken.</li></ul><p>Sellers, in particular, notice this. A seller who learns that enquiries about their home were routed to an agent who had never seen it will not list with you again.</p><h2>How this works in Rendprop</h2><p>Every property page Rendprop publishes includes an enquiry form, and every submission lands in the app's inbox, per listing and all together. The form asks the buyer for the date they want, so each enquiry arrives with the one detail you need to reply usefully. Both the branded and the unbranded page send enquiries to the same inbox, so a buyer who arrives through the MLS tour link and a buyer who tapped your Instagram bio end up in the same list. When a photographer publishes the page on an agent's behalf, enquiries can be forwarded to the agent once the agent's email is verified. The <a href=\"/features#leads\">leads feature page</a> covers it, and <a href=\"/blog/where-enquiries-appear-in-rendprop-and-how-to-reply\">where enquiries appear in Rendprop and how to reply</a> walks through the inbox.</p><h2>The audit worth doing this week</h2><p>Take your most recent listing and trace each path a buyer could use to enquire: the portal listing, the brokerage site, your own page, your social profile, the sign. For each, ask where the enquiry goes and how long before you see it. Any path that does not end with you, quickly, is a path to close or fix.</p><p>The next step: make sure your own property page is the link you share everywhere, so the path that leads to you is the one buyers find. For the form itself, read <a href=\"/blog/contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries\">contact forms on a listing page: the fields that get real enquiries</a>, and for the reply, see <a href=\"/blog/follow-up-from-a-listing-enquiry-the-first-reply-and-the-first-call\">follow-up from a listing enquiry</a>.</p>",
+  "faq": [
+    {
+      "q": "Why do portal enquiries about my listing go to another agent?",
+      "a": "Some portals sell the contact button on a listing to advertising agents in that area, so the buyer thinks they are contacting the listing agent and may not be. The fix is to give buyers a direct path, which is your own property page link, used everywhere you can control."
+    },
+    {
+      "q": "Is one inbox for all listings better than one per listing?",
+      "a": "You want both views from the same data: everything together when planning the day, one listing when working that home. The problem is separate systems, not separate views. If each listing lives in a different tool, something gets missed."
+    },
+    {
+      "q": "Should a team share one enquiry inbox?",
+      "a": "A shared inbox works if one person owns the first reply for each listing and that is written down. A shared inbox with no owner is where enquiries go to wait. Assign the listing, not the inbox."
+    },
+    {
+      "q": "What if a photographer published the page for me?",
+      "a": "Ask them how enquiries reach you. A good setup forwards each submission to your email once it is verified, so you reply directly rather than waiting for the photographer to pass it on."
+    }
+  ],
+  "related": [
+    "contact-forms-on-a-listing-page-the-fields-that-get-real-enquiries",
+    "follow-up-from-a-listing-enquiry-the-first-reply-and-the-first-call",
+    "where-enquiries-appear-in-rendprop-and-how-to-reply",
+    "enquiry-forwarding-for-photographers-how-the-agent-gets-the-lead"
+  ],
+  "published": "2026-10-28"
+}

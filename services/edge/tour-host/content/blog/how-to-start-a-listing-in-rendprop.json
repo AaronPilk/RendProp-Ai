@@ -1,0 +1,39 @@
+{
+  "slug": "how-to-start-a-listing-in-rendprop",
+  "title": "How to start a listing in Rendprop",
+  "description": "Start a listing from Home, choose the mode in the mode chooser, then add photos. One listing per property, and you can begin before you sign in.",
+  "category": "howto",
+  "keywords": [
+    "start a listing in rendprop",
+    "rendprop new listing",
+    "create a property listing on iphone",
+    "rendprop mode chooser",
+    "rendprop home screen"
+  ],
+  "tldr": "Open Rendprop, start a listing from Home, and choose the mode in the mode chooser (real estate for a home). That is the listing; photos, edits, video and the website follow in order. One listing per property, and you can start one anywhere, signed in or not.",
+  "html": "<p>Start a listing from Home, the first screen in Rendprop, and choose its mode in the mode chooser: for a home, that is real estate. From there the listing moves through photos, the photo studio, the video step and the website step in that order. One listing per property, and you can start one in the driveway before you have signed in or found a signal.</p><h2>Decide two things before you tap anything</h2><p><strong>Which property this is.</strong> Sounds obvious, but a photographer with four shoots on Saturday has four sets of photos on one phone by 4pm. Start the listing for the house you are about to add photos for, add those photos, then start the next listing. Do not stack two properties into one listing and sort it out later.</p><p><strong>Which mode it needs.</strong> The mode chooser is set when you create the listing or the workspace. Real estate is the primary mode. Event venues, restaurants and bars, gyms and studios, retail, and other businesses (offices, studios, workshops) are the others. The fields, the wording and the sample content follow the mode, so a restaurant gets hours, menu and capacity where a home gets price, beds, baths and square feet. Pick the right one at the start; if you realise you chose wrong before you have added much, the clean fix is to start a fresh listing in the right mode.</p><h2>Starting the listing, step by step</h2><ol><li>Open Rendprop. You land on Home.</li><li>Start a new listing from Home.</li><li>Choose the mode in the mode chooser. Real estate for a home, condo, rental or land.</li><li>Add the photos you want in this listing. Landscape photos go toward the listing video, portrait photos toward the vertical social video. The <a href=\"/blog/how-to-add-property-photos-to-a-listing-in-rendprop\">photo post</a> covers what to select.</li><li>Carry on into the photo studio, the video step and the website step when you are ready. Nothing forces you to finish in one go.</li></ol><h3>What to check before you move past this screen</h3><p>Only that the mode is right and the photos are from this property. Everything else, including the price and the details, can be typed later in the website step. If you are on a train or in a car with poor signal, keep working; publishing is the step that needs a connection and a connected workspace.</p><h2>A Tuesday example</h2><p>An agent lists a 3-bed in a cul-de-sac on Tuesday, open house Saturday. The photographer sends the files Tuesday at 2pm. The agent opens Rendprop in the office car park, starts a listing from Home, picks real estate, and adds 20 landscape photos and 5 portrait photos. Nothing else yet. The listing now exists and holds the photos.</p><p>That evening, at home with wifi, the agent opens the same listing, runs a blue sky edit on the front exterior in the photo studio, compares it with the original, and keeps it. Wednesday morning the agent builds the landscape video in the video step, types the details in the website step, publishes, and copies the two links from the Share sheet. Starting the listing on Tuesday afternoon cost two minutes and meant the rest could happen in pieces.</p><h2>When the listing is not a home</h2><p>A venue manager starting a listing for a 200-seat event space picks event venues in the mode chooser. The website step then asks for capacity and hours instead of beds and baths, and the enquiry form still asks for the date the visitor wants, which for a venue is the question that matters. The <a href=\"/features#industries\">industries section</a> lists the modes; the <a href=\"/blog/how-to-switch-business-modes-in-rendprop\">mode post</a> explains what changes between them.</p><h2>Mistakes at the start that cost time later</h2><ul><li><strong>Starting one listing and reusing it for the next property.</strong> Each property gets its own listing from Home. The published page, the links and the enquiries all hang off that one listing.</li><li><strong>Picking a business mode for a home because the client is a business.</strong> A builder selling a spec home is still real estate. Choose by what the page needs to show, not by who is paying.</li><li><strong>Adding every photo on the phone.</strong> Choose the ones that belong. You can add more later.</li><li><strong>Waiting for a full signal to start.</strong> Content can be prepared locally. Start now, publish when connected.</li><li><strong>Not signing in before you need to publish.</strong> Sign in with Apple creates the account; do it before the moment you need the link, not during.</li></ul><h2>Where this fits in the whole flow</h2><p>The listing is the container. Photos, edits, the video, the page and the enquiries all belong to it. Everything you do next in the <a href=\"/features\">app</a> refers back to the listing you started here, which is why starting it cleanly matters more than it looks.</p><p>Next step: open Home, start a listing for the most recent property you have photos for, choose the mode, and add the photos. Then stop, if you like. It will be there when you come back.</p>",
+  "faq": [
+    {
+      "q": "Can I start a listing without a signal?",
+      "a": "Yes. You can prepare content locally, including starting the listing and adding photos. Publishing the property website is the step that needs a connection and a connected workspace."
+    },
+    {
+      "q": "Do I have to sign in to start a listing?",
+      "a": "No. You can prepare a listing before you sign in. Sign in with Apple creates the account, and you need it when you publish."
+    },
+    {
+      "q": "Can I change the mode after I start the listing?",
+      "a": "The mode is set when you create the listing or the workspace. If you realise early that you chose the wrong one, the reliable fix is to start a fresh listing in the right mode before you have added much."
+    },
+    {
+      "q": "Should a duplex or a two-unit property be one listing or two?",
+      "a": "Match the MLS. If it is listed as one property with one price, make one listing. If each unit is listed and priced separately, make a listing for each so the page, links and enquiries stay separate."
+    }
+  ],
+  "related": [
+    "getting-started-with-rendprop-from-download-to-a-published-listing",
+    "how-to-add-property-photos-to-a-listing-in-rendprop",
+    "how-to-switch-business-modes-in-rendprop"
+  ],
+  "published": "2026-10-28"
+}

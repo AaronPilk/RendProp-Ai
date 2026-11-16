@@ -1,0 +1,40 @@
+{
+  "slug": "virtual-staging-rules-what-to-label-and-what-your-mls-expects",
+  "title": "Virtual staging rules: what to label and what your MLS expects",
+  "description": "Label every staged photo, keep the unstaged original available, and do not hide anything permanent. Then check your board's exact wording and placement.",
+  "category": "photos",
+  "keywords": [
+    "virtual staging rules",
+    "virtual staging MLS disclosure",
+    "virtually staged label",
+    "virtual staging real estate rules",
+    "is virtual staging allowed"
+  ],
+  "tldr": "Label every virtually staged photo as virtually staged, keep the unstaged original available to buyers, and do not use staging to hide or remove anything permanent. Those three habits are the baseline; your own board's current rules set the exact wording and placement, so check them before posting.",
+  "html": "<p>Label every virtually staged photo as virtually staged, keep the unstaged original available to buyers, and do not use staging to hide or remove anything permanent. Those three habits are the baseline, and they are what a buyer expects when they walk into an empty room they saw furnished online. Check your own board's rules before posting, because the exact wording and placement differ.</p><h2>Why the label matters more for staging than for any other edit</h2><p>A blue sky edit changes the weather. Staging changes what is in the room. A buyer who saw a sofa, a rug and two lamps and walks into bare carpet feels, for a second, that something was taken away. The label removes that second. It says: the room is this size and this light, and here is one way it could be furnished.</p><p>The label also protects you. If a buyer later says the listing was misleading, a clear label on the photo and a note in the remarks is a short conversation. No label is a long one.</p><h2>Three habits that hold up under any board's wording</h2><p>Rules vary by board and change, so read yours. The habits that hold up whatever the wording:</p><ul><li>A visible disclosure on the staged image itself, usually a watermark or caption reading Virtually staged or similar</li><li>A note in the public or agent remarks that some photos are virtually staged</li><li>The unstaged original of each staged photo also in the listing, or available on request</li><li>No removal or alteration of permanent features: walls, windows, flooring, fixtures, built-ins, visible damage</li><li>Staged furnishings that are plausible for the room, not oversized or floating</li></ul><p>Boards can also differ on staged main photos, so if yours has a view on it, the front exterior is the safer lead.</p><h2>A worked example: a vacant 2-bed condo</h2><p>The unit has been empty since the tenant left. Beige carpet, white walls, a living room that looks small because there is nothing in it to give scale. The agent stages three photos: the living room, the primary bedroom and the dining nook. Each one gets the label. The gallery runs the staged living room, then the original living room right after it. Same for the bedroom and the nook. The remarks say three photos are virtually staged and the unit is vacant.</p><p>A buyer who tours the unit on Saturday walks in knowing it is empty. The staged frames did their job, which was to get the showing, and the originals did theirs, which was to stop the showing from being a surprise.</p><h2>The staging edits that break the rules</h2><p><strong>Removing a radiator or a ceiling fan to fit the furniture.</strong> Those are permanent. The staging has to work around them.</p><p><strong>Covering a stain with a rug.</strong> If the carpet has a water mark, a staged rug on top of it is an alteration of condition, not decoration. Disclose the stain or do not stage that frame.</p><p><strong>Adding a window.</strong> AI staging sometimes adds light sources that do not exist. Count the windows in the edit and in the original. They must match.</p><p><strong>Staging the exterior.</strong> Patio furniture on a deck is fine if the deck exists. A deck that does not exist is a different problem. Keep staging inside the walls that are there.</p><p><strong>Oversized furniture.</strong> A sectional that would not fit through the door makes the room look bigger than it is. Pick pieces a real person would buy for that space.</p><h2>Cost, for context</h2><p>Virtual staging from a vendor runs $5–15 per photo at typical U.S. rates as of August 2026. At that price there is no reason to stage ten frames. Three or four, chosen for the rooms that look smallest when empty, is enough to get the showing.</p><h2>How Rendprop labels a staged photo</h2><p>The add furniture edit in the <a href=\"/features#photo-studio\">photo studio</a> produces a separate version of the photo labelled Virtually staged. The original stays in the photo history untouched, so you can put both in the gallery. Before you choose the staged version, compare it against the original and check that the walls, windows, flooring and fixtures are unchanged, because AI can change or invent details. Then check your MLS rules on where the disclosure needs to appear beyond the image itself.</p><p>For the shooting side, <a href=\"/blog/photographing-a-vacant-home-so-virtual-staging-looks-right\">photographing a vacant home so virtual staging looks right</a> covers the angles that give the AI a floor to put furniture on.</p><h2>The one thing to do today</h2><p>Find your board's current rule on virtual staging and copy the exact wording it requires into a note on your phone. Use that wording on every staged photo and in the remarks. It takes five minutes once and saves the argument later. The companion piece <a href=\"/blog/virtually-staged-the-two-words-that-keep-a-listing-honest\">virtually staged: the two words that keep a listing honest</a> covers the buyer side of the same label.</p>",
+  "faq": [
+    {
+      "q": "Do I have to show the unstaged photo as well as the staged one?",
+      "a": "Your board's current rules decide that, and buyers prefer it regardless. The simplest approach is to run the staged frame and the original back to back in the gallery. It costs nothing and removes the surprise at the showing."
+    },
+    {
+      "q": "Can virtual staging remove a ceiling fan or radiator?",
+      "a": "No. Those are permanent features and removing them changes the room, not the decoration. Staging has to work around what is there. If the AI edit removed one, use the original or run the edit again with a prompt that names the fixture to keep."
+    },
+    {
+      "q": "Where does the virtually staged label go?",
+      "a": "Start with your board's current wording, which usually covers both the image and the remarks. Rendprop labels the staged version Virtually staged, and running the original right after it in the gallery covers the buyer side. The remarks wording is yours to prepare from the board's rule."
+    },
+    {
+      "q": "How many photos should be virtually staged?",
+      "a": "Three or four, chosen for the rooms that look smallest when empty: usually the living room, the primary bedroom and a dining area. Kitchens and bathrooms rarely need it. More than that makes the listing look furnished when it is not."
+    }
+  ],
+  "related": [
+    "photographing-a-vacant-home-so-virtual-staging-looks-right",
+    "add-furniture-to-an-empty-living-room-photo-styles-that-read-as-real",
+    "virtually-staged-the-two-words-that-keep-a-listing-honest",
+    "decluttered-versus-staged-labelling-two-different-edits"
+  ],
+  "published": "2026-10-28"
+}

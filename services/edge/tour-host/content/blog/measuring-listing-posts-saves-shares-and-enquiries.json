@@ -1,0 +1,40 @@
+{
+  "slug": "measuring-listing-posts-saves-shares-and-enquiries",
+  "title": "Measuring listing posts: saves, shares and enquiries",
+  "description": "Measure listing posts in order of value: enquiries first, then saves and shares, then views. Keep a per-listing tally and change one thing at a time.",
+  "category": "social",
+  "keywords": [
+    "measuring real estate social media",
+    "listing post metrics",
+    "saves and shares real estate reel",
+    "social media enquiries tracking agent",
+    "which listing posts work"
+  ],
+  "tldr": "Measure listing posts in order of value: enquiries first, because a form submission or a DM with a real question is the only metric that becomes a showing; then saves and shares, because they mean someone sent the home to a partner; then views, last. Keep a simple per-listing tally, read it once a week, and change one thing at a time so you know what moved it.",
+  "html": "<p>Measure listing posts in order of what they are worth: enquiries first, because a form submission, a DM with a real question or a call is the only number that turns into a showing; saves and shares second, because they mean someone sent the home to the person they decide with; views last, because a view is a thumb pausing. Keep a simple tally per listing, read it once a week, and change one thing at a time so you can tell what moved it.</p><h2>Three tiers, and why the order matters</h2><h3>Enquiries</h3><p>An enquiry is a person who took an action that cost them something: filled in the form on the property page with a date they want to visit, sent a message asking about the HOA, called. Count them per listing and note where each came from. When someone enquires, ask: where did you see it. Most people tell you, and that answer is the most useful piece of measurement you will get all week.</p><h3>Saves and shares</h3><p>A share on a listing post usually means one thing: someone sent the home to a partner, a parent or a friend who is also looking. A save means they want to find it again. Both are stronger signals than a like, which costs nothing and means little. Your platform's own analytics report these in whatever form they currently offer; what the platform calls them and how it counts them changes, so read your own numbers and do not compare them with someone else's screenshots.</p><h3>Views</h3><p>Views tell you whether the first three seconds worked, and not much else. A reel with many views and no saves had a good opening and nothing behind it. Use views to judge openings, not posts.</p><h2>Two reels, one listing, one week</h2><p>A three-bed bungalow with a detached garage. The agent posts two reels from the same photo set, five days apart, changing only the first line and the opening frame.</p><ul><li><strong>Reel A.</strong> Opens on the front exterior. First line: Just listed, three beds, two baths, on a quiet street.</li><li><strong>Reel B.</strong> Opens on the garage interior with the door up. First line: Three-ninety-five with a garage you could actually work in.</li></ul><p>The tally after a week, in the agent's own notebook: Reel A, more views, two saves, no shares, no enquiries that mentioned it. Reel B, fewer views, nine saves, four shares, three form submissions where the visitor said they saw the garage video, and one DM asking about the garage's power supply.</p><p>The conclusion is not that garages sell houses. It is that for this listing, leading with the specific feature and the price produced people who wanted to visit, and leading with the generic opening produced people who paused. The next listing's reel opens with its own specific feature and its price, and the tally starts again.</p><h2>The weekly tally</h2><p>One line per post, filled in once a week, on paper or in a note. Post, date, platform, opening frame, first line, saves, shares, enquiries that mentioned it. Eight columns, thirty seconds per post. After a month you can see which first lines produced enquiries and which produced views, and that is the only analysis you need to change what you post next.</p><p>Do not build a dashboard. The point is the habit of looking, and a note you actually fill in beats a spreadsheet you abandon.</p><h2>What goes wrong in measurement</h2><ul><li><strong>Chasing views.</strong> A viral reel of a kitchen that produced no enquiries was entertainment, and it taught you to make more entertainment.</li><li><strong>Comparing across platforms.</strong> Each platform counts differently and changes how it counts. Compare a post with your own previous posts on the same platform, not with another platform or another agent.</li><li><strong>Changing three things at once.</strong> New opening, new music, new caption shape, all on the same post. Whatever happened, you do not know why. One change per post.</li><li><strong>Counting likes.</strong> They cost nothing. Saves, shares and enquiries cost something.</li><li><strong>Never asking where did you see it.</strong> The form tells you a person enquired. The question tells you which post did it.</li><li><strong>Quoting view counts in a listing presentation.</strong> A seller hears a big number and expects it to mean buyers. Show them enquiries and showings instead; see <a href=\"/blog/measuring-listing-marketing-enquiries-showings-offers\">enquiries, showings, offers</a>.</li><li><strong>Judging a post after a day.</strong> Give it a week before it goes in the tally. Saves and shares arrive slowly.</li></ul><h2>How this works in Rendprop</h2><p>Enquiries from a Rendprop property page land in the app's inbox, per listing and all together, which gives you the first tier of the tally without any setup: the form asks the visitor for the date they want, and each submission is attached to its listing. The vertical social video that drives those enquiries is built from the listing's portrait photos with word-by-word captions and a voiceover, and the first line of your script is the variable most worth testing across posts. Saves, shares and views come from each platform's own analytics; Rendprop does not post to platforms or report their numbers. See <a href=\"/features#leads\">enquiries</a>.</p><h2>Start the tally today</h2><p>Start the tally today with your last five listing posts: opening frame, first line, saves, shares, enquiries that mentioned the post. Then, on the next reel, change only the first line and see what the tally says a week later.</p>",
+  "faq": [
+    {
+      "q": "Which metric matters most for a listing post?",
+      "a": "Enquiries: a form submission with a visit date, a message with a real question, or a call. They are the only numbers that become showings. Saves and shares come second, views last."
+    },
+    {
+      "q": "Why are saves and shares better signals than likes?",
+      "a": "A share usually means someone sent the home to the person they decide with, and a save means they want to come back to it. A like costs nothing and tells you little about intent."
+    },
+    {
+      "q": "How long should I wait before judging a listing post?",
+      "a": "A week. Saves, shares and enquiries arrive more slowly than views. Fill in the tally once a week rather than checking numbers daily."
+    },
+    {
+      "q": "How do I know which post produced an enquiry?",
+      "a": "Ask. When someone fills in the form or messages, ask where they saw the home. Most people answer, and over a month those answers tell you more than any analytics screen."
+    }
+  ],
+  "related": [
+    "measuring-listing-marketing-enquiries-showings-offers",
+    "open-house-metrics-worth-tracking",
+    "turning-a-listing-reel-into-a-lead-the-comment-the-dm-the-form",
+    "the-hook-first-lines-that-keep-a-listing-reel-playing"
+  ],
+  "published": "2026-10-28"
+}

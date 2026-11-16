@@ -1,0 +1,40 @@
+{
+  "slug": "tidy-the-room-decluttering-a-listing-photo-without-misleading-buyers",
+  "title": "Tidy the room: decluttering a listing photo honestly",
+  "description": "Remove only what the seller could remove by hand before a showing. Clutter leaves, condition stays. Where tidy edits go wrong and how to prompt them.",
+  "category": "photos",
+  "keywords": [
+    "declutter listing photo",
+    "remove clutter real estate photo AI",
+    "tidy the room edit",
+    "virtual decluttering real estate",
+    "remove objects from listing photo"
+  ],
+  "tldr": "A tidy-the-room edit should remove only what the seller could remove by hand before a showing: dishes, toys, cords, mail. It should not remove anything that will still be there when the buyer walks in, such as a stain, a crack, a radiator or an outlet. Keep it to movable clutter, disclose it, and compare against the original.",
+  "html": "<p>A tidy-the-room edit should remove only what the seller could remove by hand before a showing: dishes, toys, cords, a laundry basket, the papers on the counter. It should not remove anything that will still be there when the buyer walks in, such as a stain, a crack, a radiator, an outlet, a dated fixture or the neighbour's fence outside the window. Keep the edit to movable clutter, disclose it, and compare it against the original before publishing.</p><h2>The line is permanence, not size</h2><p>A cereal box is small and movable, so removing it is fine. A hairline crack in the ceiling is small and permanent, so removing it is not. Buyers do not care how big the thing was. They care whether it is still there on Saturday.</p><p>Make a short mental list for each photo: what in this frame will be gone when the house is shown, and what will not. Clutter leaves. Condition stays.</p><h2>A worked example: the family kitchen on a Thursday shoot</h2><p>The sellers have two kids and a dog. The photographer arrives at 10am and the kitchen counter has a coffee maker, a fruit bowl, a stack of mail, a drying rack with six plates, a bottle of dish soap, a phone charger and a school permission slip under a magnet on the fridge. The photographer shoots it because the seller is on a call and the schedule is tight.</p><p>A tidy-the-room edit should remove the mail, the drying rack, the soap, the charger and the paperwork on the fridge. The coffee maker and the fruit bowl can stay or go. A kitchen with nothing on the counter reads as a show home, and a show home is fine.</p><p>What the edit must not remove: the chip in the countertop by the sink, the discoloured grout behind the range, the slightly bent vent hood. Those are the house. A buyer at the showing will see them and the photo should have warned them.</p><h2>Where tidy-the-room edits go wrong</h2><ul><li><strong>The edit fills the gap with something new.</strong> Remove a basket from the corner and the AI may put a plant there. A plant is an addition, not a tidy. Compare and check.</li><li><strong>The edit takes the furniture too.</strong> A broad prompt can clear the coffee table and then the coffee table. If the room ends up emptier than it will be at the showing, you have drifted into staging, which needs a different label.</li><li><strong>The edit smooths the wall.</strong> Removing a poster sometimes removes the nail holes, the sun fade and the outlet below it. The outlet matters. Count fixtures before and after.</li><li><strong>It is used on a messy house instead of a cleaning.</strong> If every room needs the edit, the seller needs a weekend, not an app. Edits cover one bad counter, not a house that was not ready.</li></ul><h2>Prompts that keep it honest</h2><p>If you are writing your own instruction rather than running the tidy edit as it comes, name the objects. Remove the dish rack, the mail and the charger from the counter. Keep everything else exactly as it is. That last sentence does more work than the first. A vague instruction to clean up the kitchen gives the model permission to decide what counts as mess, and it may decide the grout does.</p><p>There is a longer treatment of this in <a href=\"/blog/writing-a-custom-edit-prompt-for-a-property-photo\">writing a custom edit prompt for a property photo</a>.</p><h2>What the disclosure should say</h2><p>A decluttered photo is an altered photo. It is not staging, so the Virtually staged label is the wrong one, but it still needs an AI-alteration disclosure so a buyer knows the frame was changed. Check your MLS rules on where that disclosure goes, because boards differ and the wording changes. <a href=\"/blog/decluttered-versus-staged-labelling-two-different-edits\">Decluttered versus staged</a> covers why the two labels differ.</p><h2>Running tidy the room in Rendprop</h2><p>Tidy the room is one of the optional edits in the <a href=\"/features#photo-studio\">photo studio</a>. It produces a separate version with an AI-alteration disclosure, and the untouched original stays in the photo history. Compare the two side by side before choosing which version the listing uses. If the edit removed something permanent, choose the original or try a custom prompt that names only the clutter. Suggest can propose edits for a photo, but the decision on what counts as clutter is yours, not the model's.</p><h2>Before you reach for the edit</h2><p>Ask the seller to clear the counters before the shoot. A text the night before with a list of five things to put away costs nothing and leaves the edit for the one frame that still needs it. Then run tidy the room on that frame, compare, and keep the version that still looks like the house a buyer will walk into.</p>",
+  "faq": [
+    {
+      "q": "Is removing clutter from a listing photo misleading?",
+      "a": "Not if the clutter could be removed by hand before a showing and the edit is disclosed. Mail, dishes, toys and cords are movable, so a buyer expects them to differ. Removing a stain, a crack or a fixture is a different thing, because the buyer will see it at the showing."
+    },
+    {
+      "q": "Does a decluttered photo need the virtually staged label?",
+      "a": "No. Virtually staged means furniture was added. A decluttered photo had objects removed, so it carries an AI-alteration disclosure instead. Your MLS may have rules on where that disclosure appears."
+    },
+    {
+      "q": "What if the tidy edit removed an outlet or a radiator?",
+      "a": "Use the original, or run the edit again with a prompt that names the clutter to remove and says to keep everything else exactly as it is. Count outlets, switches and fixtures in the edit against the original before choosing it."
+    },
+    {
+      "q": "Can I use a tidy edit on every room in a messy house?",
+      "a": "You can, but you should not. If every room needs the edit, the house was not ready for the shoot. Ask the seller to clear the rooms and reshoot the worst ones. Edits are for the one frame that still has a problem."
+    }
+  ],
+  "related": [
+    "decluttered-versus-staged-labelling-two-different-edits",
+    "writing-a-custom-edit-prompt-for-a-property-photo",
+    "how-to-compare-an-ai-edited-listing-photo-against-the-original",
+    "kitchen-photos-that-sell-angles-light-and-what-to-remove"
+  ],
+  "published": "2026-10-28"
+}

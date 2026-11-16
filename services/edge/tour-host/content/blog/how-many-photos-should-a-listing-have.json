@@ -1,0 +1,40 @@
+{
+  "slug": "how-many-photos-should-a-listing-have",
+  "title": "How many photos should a listing have",
+  "description": "Enough to show every room and the exterior once, well: usually 20 to 30 for a typical home, fewer for a condo, more for a large house. Order beats count.",
+  "category": "questions",
+  "keywords": [
+    "how many photos should a listing have",
+    "number of photos real estate listing",
+    "listing photo count",
+    "how many pictures for house listing",
+    "MLS photo limit"
+  ],
+  "tldr": "Enough to show every room and the exterior once, well, with a second angle on the rooms that sell the house. For a typical three-bed that is 20 to 30 photos; a one-bed condo needs 12 to 18; a large home with grounds can justify 40. Your MLS may set a maximum, so check its current rules. Past the point where every space is covered, more photos dilute the good ones.",
+  "html": "<p>Enough to show every room and the exterior once, well, with a second angle on the rooms that sell the house. For a typical three-bed that works out at 20 to 30 photos; a one-bed condo needs 12 to 18; a large home with grounds can justify 40. Your MLS may cap the gallery, so check its current rules before you plan the shoot, and past the point where every space is covered, more photos dilute the good ones.</p><h2>Count by rooms, not by a target number</h2><p>The right number falls out of a list. Walk the home and write down each space a buyer will want to see, then decide how many frames each one earns.</p><ul><li><strong>Front exterior:</strong> one straight on, one angled. Two.</li><li><strong>Living room:</strong> from the entrance and toward the window. Two.</li><li><strong>Kitchen:</strong> the wide view, the working side, one detail if the finishes are the story. Two or three.</li><li><strong>Dining:</strong> one, unless it is a separate room with a view.</li><li><strong>Primary bedroom:</strong> one wide, one toward the en suite or the window. Two.</li><li><strong>En suite and main bath:</strong> one each.</li><li><strong>Other bedrooms:</strong> one each.</li><li><strong>Garden or outdoor space:</strong> one from the house, one back toward the house. Two.</li><li><strong>The feature:</strong> the office, the workshop, the view, the pool. One or two.</li><li><strong>Utility, garage, hallway:</strong> only if they answer a question a buyer would ask.</li></ul><p>For a three-bed, two-bath with a garden, that list lands at 22 to 26. That is the number for that house. A different house gives a different number, and that is the point.</p><h2>A worked example: the same house at 9, 24 and 58 photos</h2><p>At nine photos, the three-bed on a corner lot shows the front, the kitchen, the living room, two bedrooms, one bath and the garden. Buyers wonder what the third bedroom and the second bath look like, and some assume the worst. Showings drop among the cautious.</p><p>At 24 photos, every room is there, the kitchen and living room get a second angle, and the garden is shown from both directions. A buyer can walk the house in their head. The listing video uses 14 of these, and the gallery on the property page holds all 24.</p><p>At 58 photos, the set includes the inside of the linen closet, four angles of the hallway, the water heater and three near-identical shots of the garden. The buyer scrolls, loses the thread, and the strong kitchen photo is buried at position 31. The listing looks padded, which reads as insecure.</p><h2>Where photo count goes wrong</h2><ol><li><strong>Too few because the home is small.</strong> A one-bed still needs every space shown. Twelve good frames beat six.</li><li><strong>Too many because the photographer delivered them.</strong> The delivery is the raw material, not the gallery. Choose.</li><li><strong>Duplicates.</strong> Two frames a step apart are one photo. Keep the better one.</li><li><strong>Filler to hit an imagined minimum.</strong> Closets, the boiler, the side passage. Each one lowers the average.</li><li><strong>Hitting the MLS maximum as a goal.</strong> The maximum is a ceiling, not a target. Check your MLS's current rules for the number, then use what the house earns.</li><li><strong>Order that ignores the count.</strong> Twenty-four good photos in a bad order still lose buyers at photo six. The first five decide whether anyone reaches the rest.</li></ol><p>The post on <a href=\"/blog/listing-photo-order-the-sequence-that-keeps-buyers-scrolling\">listing photo order</a> covers the sequence, and <a href=\"/blog/how-many-photos-does-a-listing-video-need\">how many photos a listing video needs</a> covers the smaller number that goes into the video.</p><h2>How this works in Rendprop</h2><p>In Rendprop the photos you add to a listing become the gallery on the property website, with the photo you select as the main photo shown first. The listing video is built from a chosen subset of the landscape photos, so you can keep the full gallery while the video stays short. Sections of the page appear when filled in and hide when empty. The <a href=\"/features#listing-site\">property website</a> section of the features page shows the gallery, and the <a href=\"/f/estate-demo\">demo listing</a> is a live example of a finished set.</p><h2>Walk the house with a list</h2><p>Before the next shoot, walk the home with the list above and write the number next to each room. Hand that list to the photographer. The count on the paper is the count for the listing, and anything beyond it needs a reason.</p>",
+  "faq": [
+    {
+      "q": "Is there a minimum number of photos for a listing?",
+      "a": "Your MLS may set one, so check its current rules. As a practical matter, every room and the exterior should be shown at least once, which puts even a small condo at around twelve photos."
+    },
+    {
+      "q": "Do more photos get more showings?",
+      "a": "More coverage does; more duplicates do not. Buyers want to see every space before they commit to a visit. Once that is done, extra frames push the strong photos further down the gallery and make the listing look padded."
+    },
+    {
+      "q": "Should I include photos of closets, the garage and the utility room?",
+      "a": "Only when they answer a question buyers ask about that home: a walk-in closet in a primary suite, a garage with workshop space, a utility room in a house where laundry location matters. Otherwise leave them out."
+    },
+    {
+      "q": "How many of the listing photos should go into the video?",
+      "a": "Fewer than the gallery, usually 12 to 18 for a typical home. The video is a tour of the best rooms in order; the gallery is the complete record. Keep them separate jobs."
+    }
+  ],
+  "related": [
+    "listing-photo-order-the-sequence-that-keeps-buyers-scrolling",
+    "how-many-photos-does-a-listing-video-need",
+    "the-listing-page-gallery-how-many-photos-and-in-what-order",
+    "which-photo-should-be-the-main-photo-of-a-listing"
+  ],
+  "published": "2026-10-28"
+}

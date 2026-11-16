@@ -1,0 +1,40 @@
+{
+  "slug": "can-i-publish-a-listing-from-my-phone",
+  "title": "Can I publish a listing from my phone",
+  "description": "Yes. Photos, AI edits, the video, the property page and both share links can all be done on an iPhone. What matters is reviewing before you publish.",
+  "category": "questions",
+  "keywords": [
+    "publish listing from phone",
+    "real estate marketing on iPhone",
+    "create property website from phone",
+    "listing video on phone",
+    "mobile listing workflow agent"
+  ],
+  "tldr": "Yes. The whole chain, from the photographer's files to a published property page with a video and two share links, can be done on an iPhone without opening a laptop. The things that go wrong on a phone are review mistakes, not capability gaps: a typo in the price, an AI edit nobody compared, a page published before the details were filled in.",
+  "html": "<p>Yes. The whole chain, from the photographer's files arriving to a published property page with a video and two share links, can be done on an iPhone without a laptop. What goes wrong on a phone is not capability but review: a typo in the price, an AI edit nobody compared at full size, a page published with the square footage still blank. Build the review into the habit and the phone is enough.</p><h2>What publishing from a phone actually involves</h2><p>Strip the process to its parts and none of them needs a desk. Photos arrive by AirDrop, a shared album or a download link and land in the camera roll. You add them to a listing. You type the price, beds, baths and square feet. You pick the main photo. You choose which photos make the video, record a short voiceover in the car or the kitchen, and review the result. You publish, and the page gets its branded and unbranded links. You text the branded link to the first buyer from the same device.</p><p>The desktop still has a place: reading a long description for typos on a bigger screen, checking the page at laptop width, batch work across several listings. A web companion that shares the same listing lets you move between the two without starting over.</p><h2>A worked example: the driveway publish</h2><p>A three-bed goes on the market Tuesday. The photographer shoots Monday at 2 p.m. and sends 26 landscape photos and 7 portrait photos by 5 p.m. The agent is at a showing across town and opens the files on the phone in the car park at 5:20.</p><p>By 5:45 the photos are in the listing, the front exterior is set as the main photo and two edits are queued: a blue sky on the front and a tidy-the-room on the garage. By 6:10 both edits have been compared with the originals at full size; the sky is kept, the garage edit is discarded because it removed a shelf that is actually there. By 6:30 fourteen photos are in the video, a 40-second voiceover is recorded in the parked car with the windows up, and captions are on. The agent watches the video twice, once with sound and once without.</p><p>At 6:40 the details go in. At 6:45 the page is published. The agent opens the branded link on the same phone, scrolls the whole page, checks the price, taps the phone number on the contact card to confirm it dials, and submits a test enquiry with tomorrow's date. At 6:55 the unbranded link is copied for the MLS entry in the morning, and the branded link goes to the first three buyers by text. Total: ninety minutes in a car park, and the listing is live with a video the evening before the MLS entry goes in.</p><h2>Where phone publishing goes wrong</h2><ul><li><strong>Fat-finger details.</strong> $4,250,000 instead of $425,000. Read every number aloud before publishing.</li><li><strong>Skipping the comparison.</strong> An AI edit looks fine as a thumbnail and wrong at full size. Compare every edit against the original, on the phone, zoomed in.</li><li><strong>Publishing half a page.</strong> A page with photos and no details, or details and no video, sent to a buyer because it was faster. Fill it in first; sections that are empty should stay hidden, not published blank.</li><li><strong>A bad upload connection.</strong> Car parks and basements drop signal. Prepare everything, then publish somewhere with a stable connection.</li><li><strong>Not seeing it at desktop width.</strong> Most buyers are on phones, but the seller will open it on a laptop. Check it once at that size, from the web companion or any browser.</li></ul><p>The post on <a href=\"/blog/listing-media-on-a-phone-a-workflow-for-agents-without-a-laptop\">a workflow for agents without a laptop</a> sets this out as a repeatable routine, and <a href=\"/blog/checking-a-property-page-before-you-share-it-a-two-minute-review\">the two-minute page review</a> is the checklist for the last step.</p><h2>How this works in Rendprop</h2><p>Rendprop runs on an iPhone with iOS 16 or later. You start a listing, add photos, review optional AI edits in the photo studio and compare each with the original, create the video in the video step, fill in the details and publish the property website from the phone. The Share sheet gives you the branded link and the unbranded MLS link. Content can be prepared locally before you sign in, but publishing needs a connection and a connected workspace. The web Studio at studio.rendprop.com gives continuity between phone and desktop for the same listing. Check the App Store listing for device support beyond iPhone. The <a href=\"/features\">features page</a> covers each step, and the <a href=\"/features#listing-site\">property website</a> section shows what gets published.</p><h2>One rule to add</h2><p>On your next listing, publish from the phone on purpose, but add one rule: open the published link on the same phone and read the whole page before you send it to anyone. That single habit covers most of what goes wrong.</p>",
+  "faq": [
+    {
+      "q": "Do I need a laptop at any point to publish a listing?",
+      "a": "No. Photos, AI edits, the video, the details, publishing and sharing the links can all happen on the phone. A desktop or web companion is useful for proofreading long text and checking the page at laptop width, not required."
+    },
+    {
+      "q": "Can I publish without a signal?",
+      "a": "You can usually prepare everything offline: add photos, write the script, fill in details. Publishing needs a connection, so finish the build wherever you are and publish once you have stable signal."
+    },
+    {
+      "q": "Is the quality lower when I publish from a phone?",
+      "a": "The published page and video are the same whichever device you used. Quality drops when review is skipped, which is easier to do on a small screen. Compare edits at full size and read the page back before sharing."
+    },
+    {
+      "q": "Which iPhone do I need?",
+      "a": "Rendprop runs on an iPhone with iOS 16 or later. For devices other than iPhone, check the App Store listing for current support rather than assuming."
+    }
+  ],
+  "related": [
+    "listing-media-on-a-phone-a-workflow-for-agents-without-a-laptop",
+    "do-i-need-an-account-to-try-a-listing-marketing-app",
+    "checking-a-property-page-before-you-share-it-a-two-minute-review",
+    "how-to-use-rendprop-studio-on-the-web-alongside-the-iphone-app"
+  ],
+  "published": "2026-10-28"
+}
