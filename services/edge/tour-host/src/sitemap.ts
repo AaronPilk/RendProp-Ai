@@ -74,7 +74,8 @@ const SITE_PAGES: SitemapEntry[] = [
   // static file in public/ served by the assets binding, like /pricing.
   { loc: "/listing-video-from-photos", lastmod: "2026-11-12", changefreq: "monthly", priority: "0.8" },
   { loc: "/single-property-website", lastmod: "2026-11-12", changefreq: "monthly", priority: "0.8" },
-  { loc: "/real-estate-photo-editing-app", lastmod: "2026-11-12", changefreq: "monthly", priority: "0.8" },
+  // 2026-11-16: link to the new virtual staging objections post.
+  { loc: "/real-estate-photo-editing-app", lastmod: "2026-11-16", changefreq: "monthly", priority: "0.8" },
   { loc: "/support", lastmod: "2026-10-29", changefreq: "monthly", priority: "0.7" },
   { loc: "/terms", lastmod: "2026-10-29", changefreq: "yearly", priority: "0.3" },
   { loc: "/privacy", lastmod: "2026-11-12", changefreq: "yearly", priority: "0.3" },

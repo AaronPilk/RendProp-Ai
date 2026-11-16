@@ -173,6 +173,28 @@ Any later tour-host deploy from a different branch has to include this
 branch, or it will put the old sitemap and titles back, drop the product pages
 and remove the analytics snippet.
 
+## Changes made 2026-11-16 (same branch)
+
+- **Internal link pass.** 107 new contextual links in 104 blog posts: 32 to
+  `/listing-video-from-photos`, 31 to `/single-property-website`, 32 to
+  `/real-estate-photo-editing-app`, 6 to `/pricing`, 4 to `/compare` and 2 to
+  the new staging post. Each wraps words already in a sentence about that
+  topic; no post gets more than two new links or more than five internal
+  links. The full table is `docs/seo/internal-links-20261116.md`.
+- **Objection page.** `/blog/is-ai-virtual-staging-worth-it-for-listings`
+  answers the virtual staging objections that keep coming up in buyer threads,
+  with the MLS, state and fair housing points traced to sources. Research notes
+  and thread URLs: `docs/seo/objections-20261116.md`. Linked from
+  `/real-estate-photo-editing-app` (lastmod bumped), `/blog/what-is-virtual-staging`
+  and `/blog/is-virtual-staging-allowed-in-listing-photos`.
+- **Footer.** The Tract link and both Tract wordmark images are gone from the
+  `foot-brands` block on every static page and the blog (TRACT was retired on
+  13 Nov 2026). "Part of the Pilk.ai family" and the Wholesale Mortgage Lending
+  link stay. The `.tract-*` CSS rules and the two `tract-word-*.png` files were
+  removed because nothing references them now.
+- **Click depth.** Every URL in the site and blog sitemaps is within 3 clicks
+  of `/` (home, `/blog`, topic page, post).
+
 ## Known follow-ups
 
 1. **Dated property URLs redirect.** The property sitemap lists
@@ -200,3 +222,13 @@ and remove the analytics snippet.
    none, check the browser console on `/` for a CSP error.
 7. **Tampa Bay service page** needs the owner's real jobs and photos first
    (see the keyword plan).
+8. **Customer listings are not linked from the marketing site.** The two URLs
+   in `/sitemap-properties.xml` (checked 2026-11-16) are reachable only through
+   the sitemap and the agents' own sharing. Linking them, for example from a
+   Worker-rendered "listings made with Rendprop" page, would put agents' names
+   and numbers on Rendprop's own marketing, which the indexing opt-in did not
+   ask them about. Decide that first; it is not done here.
+9. **Tract partner card on customer listings.** `src/player.ts` still has a
+   house-partner card for Tract (`tractrealestate.com`), and
+   `scripts/check-unbranded.mjs` expects it on branded pages. The 2026-11-16
+   footer change did not touch it.

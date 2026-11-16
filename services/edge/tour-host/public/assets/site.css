@@ -617,15 +617,6 @@ footer .brand { background: none; border: 0; box-shadow: none; -webkit-backdrop-
 .foot-brands a { color: var(--dim); text-decoration: none; display: inline-flex; align-items: center; min-height: 44px; opacity: .85; transition: opacity .15s var(--ease-out); }
 .foot-brands a:hover { opacity: 1; }
 .foot-brands img { height: 15px; width: auto; display: block; }
-.foot-brands .tract-logo { height: 22px; width: auto; }
-.foot-brands .tract-on-dark { display: none; }
-.foot-brands .tract-on-light { display: block; }
-html[data-theme="dark"] .foot-brands .tract-on-light { display: none; }
-html[data-theme="dark"] .foot-brands .tract-on-dark { display: block; }
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .foot-brands .tract-on-light { display: none; }
-  html:not([data-theme="light"]) .foot-brands .tract-on-dark { display: block; }
-}
 .foot-brands .wml-logo { height: 20px; width: auto; }
 img.brand-dot { background: none; object-fit: contain; padding: 0; }
 
