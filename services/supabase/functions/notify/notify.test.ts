@@ -651,3 +651,88 @@ Deno.test("one authorized device success still wins after another device is deni
     assertEquals(calls, 1); assertEquals(result.state, "sent"); assertEquals(pushNeedsEmailFallback(row(), result), false);
   } finally { clearSecrets(); }
 });
+
+Deno.test("push fanout reaches the current token after an earlier token is accepted", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const current = { ...device, device_token: "bbccddee00112233445566778899aabb" };
+    const attempted: string[] = [];
+    const fake: typeof fetch = (url) => {
+      attempted.push(String(url).split("/3/device/")[1]);
+      return Promise.resolve(new Response("", { status: 200, headers: { "apns-id": `accepted-${attempted.length}` } }));
+    };
+    const outcome = await deliverPush(row(), [device, current], BASE, fake, async () => true);
+    assertEquals(attempted, [device.device_token, current.device_token]);
+    assertEquals(outcome, { state: "sent", reason: null, providerId: "accepted-1", deadTokens: [] });
+    assertEquals(pushNeedsEmailFallback(row(), outcome), false);
+  } finally { clearSecrets(); }
+});
+
+Deno.test("push fanout retires a later dead token after an earlier success", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const retired = { ...device, device_token: "deadbeef00000000" };
+    const attempted: string[] = [];
+    const fake: typeof fetch = (url) => {
+      const token = String(url).split("/3/device/")[1]; attempted.push(token);
+      return Promise.resolve(token === retired.device_token ? apnsResponse(410, "Unregistered") : apnsResponse(200));
+    };
+    const outcome = await deliverPush(row(), [device, retired], BASE, fake, async () => true);
+    assertEquals(attempted, [device.device_token, retired.device_token]);
+    assertEquals(outcome.state, "sent"); assertEquals(outcome.providerId, "APNS-MSG-1");
+    assertEquals(outcome.deadTokens, [retired.device_token]);
+    assertEquals(pushNeedsEmailFallback(row(), outcome), false);
+  } finally { clearSecrets(); }
+});
+
+Deno.test("push fanout keeps confirmed success when a later device is transiently unavailable", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const second = { ...device, device_token: "bbccddee00112233445566778899aabb" };
+    const attempted: string[] = [];
+    const fake: typeof fetch = (url) => {
+      const token = String(url).split("/3/device/")[1]; attempted.push(token);
+      return Promise.resolve(token === second.device_token ? apnsResponse(503, "ServiceUnavailable") : apnsResponse(200));
+    };
+    const outcome = await deliverPush(row(), [device, second], BASE, fake, async () => true);
+    assertEquals(attempted, [device.device_token, second.device_token]);
+    assertEquals(outcome, { state: "sent", reason: null, providerId: "APNS-MSG-1", deadTokens: [] });
+    assertEquals(pushNeedsEmailFallback(row(), outcome), false);
+  } finally { clearSecrets(); }
+});
+
+Deno.test("push fanout never sends to a later unverified device or discards earlier success", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const second = { ...device, device_token: "bbccddee00112233445566778899aabb" };
+    for (const lookupThrows of [false, true]) {
+      const attempted: string[] = []; const checked: string[] = [];
+      const fake: typeof fetch = (url) => { attempted.push(String(url).split("/3/device/")[1]); return Promise.resolve(apnsResponse(200)); };
+      const outcome = await deliverPush(row(), [device, second], BASE, fake, async (d) => {
+        checked.push(d.device_token);
+        if (d.device_token === device.device_token) return true;
+        if (lookupThrows) throw new Error("lookup unavailable");
+        return false;
+      });
+      assertEquals(checked, [device.device_token, second.device_token]);
+      assertEquals(attempted, [device.device_token]); assertEquals(outcome.state, "sent");
+      assertEquals(outcome.deadTokens, []); assertEquals(pushNeedsEmailFallback(row(), outcome), false);
+    }
+  } finally { clearSecrets(); }
+});
+
+Deno.test("push fanout retries an access lookup failure when no device accepted", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const second = { ...device, device_token: "bbccddee00112233445566778899aabb" };
+    const attempted: string[] = [];
+    const fake: typeof fetch = (url) => { attempted.push(String(url).split("/3/device/")[1]); return Promise.resolve(apnsResponse(410, "Unregistered")); };
+    const outcome = await deliverPush(row(), [device, second], BASE, fake, async (d) => {
+      if (d.device_token === second.device_token) throw new Error("lookup unavailable");
+      return true;
+    });
+    assertEquals(attempted, [device.device_token]); assertEquals(outcome.state, "failed");
+    assertEquals(outcome.providerId, null); assertEquals(outcome.deadTokens, [device.device_token]);
+    assertEquals(pushNeedsEmailFallback(row(), outcome), false);
+  } finally { clearSecrets(); }
+});

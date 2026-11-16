@@ -119,8 +119,18 @@ export async function deliverPush(
 
   let authorizedDevices=0;
   let authorizationDenied = false;
+  let authorizationLookupFailed = false;
+  let sent = false;
+  let providerId: string | null = null;
   for (const device of ownDevices) {
-    if(authorizeDevice&&!await authorizeDevice(device)){authorizationDenied = true;continue;}
+    try {
+      if(authorizeDevice&&!await authorizeDevice(device)){authorizationDenied = true;continue;}
+    } catch {
+      // Never send to a device whose current access could not be verified.
+      // Keep checking other devices without losing an earlier APNs receipt.
+      authorizationLookupFailed = true;
+      continue;
+    }
     authorizedDevices++;
     const result = await apns.send({
       deviceToken: device.device_token,
@@ -135,13 +145,24 @@ export async function deliverPush(
     }, fetchImpl);
 
     if (result.ok) {
-      return { state: "sent", reason: null, providerId: result.id, deadTokens };
+      if (!sent) providerId = result.id;
+      sent = true;
+      continue;
     }
     lastReason = result.reason;
     // 410 Unregistered / 400 BadDeviceToken: the app is gone from that device.
     // Retrying is how a queue fills with rows that can never succeed.
     if (result.dead) deadTokens.push(device.device_token);
   }
+
+  // A cached or other-device token may be accepted before the current phone's
+  // token. Visit every authorized device before closing the shared outbox row.
+  // One success remains success; a later failure must not retry that receipt.
+  if (sent) return { state: "sent", reason: null, providerId, deadTokens };
+  if (authorizationLookupFailed) return {
+    state: "failed", reason: "Current notification device access could not be verified.",
+    providerId: null, deadTokens,
+  };
 
   // EVERY token this person has is gone. Retrying cannot help, so the row is
   // closed as skipped rather than left to burn its five attempts against
