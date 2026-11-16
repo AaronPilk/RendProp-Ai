@@ -50,11 +50,15 @@ methods = '\n'.join(block(review, x).replace('private ', '', 1) for x in [
     'private func startSinglePhotoWork(', 'private func receiveSinglePhotoWork(', 'private func clearSinglePhotoEdit()'])
 actual = enum + '\n' + context + '\n' + methods
 fixture = FIXTURE.read_text()
+earlier_source_guard = 'if !viewed.originalVerified, viewed.isRetainedOriginalSource {'
+earlier_source_fallback = '!viewed.isRetainedOriginalSource,\n              index.isVisible(viewed.id)'
+assert history.count(earlier_source_guard) == 1 and history.count(earlier_source_fallback) == 1
+unverified_earlier_source = history.replace(earlier_source_guard, 'if false {').replace(earlier_source_fallback, 'true,\n              true')
 variants = [
     ('actual', methods, history, None),
     ('wrong-displayed-file', methods.replace('index.versions[viewed.id]?.imageFile == viewed.enhancedURL.lastPathComponent', 'true'), history, 'a displayed file from another family cannot borrow this version ID'),
     ('unverified-capture', methods, history.replace('&& effects.isEmpty && originalVerified && sourceHistoryKnown', '&& effects.isEmpty && true && sourceHistoryKnown'), 'a broken capture cannot impersonate an enhanced source'),
-    ('unverified-earlier-source', methods, history.replace('!viewed.isRetainedOriginalSource,\n              index.isVisible(viewed.id)', 'true,\n              true'), 'unverified earlier source cannot become an enhanced capture'),
+    ('unverified-earlier-source', methods, unverified_earlier_source, 'earlier-source policy refusal reaches the visible alert without opening edits'),
     ('stale-start', methods.replace('let context = editContext, context.isCurrent,', 'let context = editContext, true,'), history, 'actor change cannot dispatch from retained sheet'),
     ('revoked-regrant', methods.replace('editConsentRevision == AIConsent.shared.revocationRevision,', 'true,'), history, 'revoked and regranted consent cannot revive old action'),
     ('declutter-review-bypassed', methods.replace('if action == .declutter, declutterApprovals == nil {', 'if false {'), history, 'declutter opens an exact enhanced assessment before any paid image edit'),

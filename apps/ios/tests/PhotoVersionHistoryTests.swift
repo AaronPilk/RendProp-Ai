@@ -689,6 +689,62 @@ struct PhotoVersionHistoryTests {
         rejected("unverified staged pixels cannot replace a missing enhanced capture by default") {
             _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: unverifiedStage.id, directory: legacyEditDir)
         }
+        let importedEditDir = root.appendingPathComponent("imported-earlier-source-edit")
+        try FileManager.default.createDirectory(at: importedEditDir, withIntermediateDirectories: true)
+        let importedOriginal = importedEditDir.appendingPathComponent("orig-cloud-import.jpg")
+        let importedDisplay = importedEditDir.appendingPathComponent("cloud-photo-import.jpg")
+        try captured.write(to: importedOriginal)
+        try brightened.write(to: importedDisplay)
+        try PhotoVersionHistory.registerImport(id: "cloud-import", imageFile: importedDisplay.lastPathComponent,
+            originalFile: importedOriginal.lastPathComponent, staged: false, altered: false, directory: importedEditDir)
+        let importedHistory = try Data(contentsOf: importedEditDir.appendingPathComponent(".photo-history.json"))
+        do {
+            _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: "cloud-import-source", directory: importedEditDir)
+            preconditionFailure("an unverified earlier source must not become an editable capture")
+        } catch PhotoVersionHistory.Failure.unverifiedEarlierSource(let hasEditableDisplay) {
+            check(hasEditableDisplay, "the imported source refusal identifies its usable display version")
+            check(PhotoVersionHistory.Failure.unverifiedEarlierSource(hasEditableDisplay: hasEditableDisplay)
+                .localizedDescription.contains("Select Enhanced"), "the refusal guides to the existing Enhanced choice")
+        }
+        let importedEditable = try PhotoVersionHistory.enhancedCaptureForEditing(id: "cloud-import", directory: importedEditDir)
+        check(importedEditable.id == "cloud-import" && !importedEditable.originalVerified && !importedEditable.sourceHistoryKnown,
+              "the imported display remains editable without certifying its source or history")
+        check((try? Data(contentsOf: importedEditDir.appendingPathComponent(".photo-history.json"))) == importedHistory,
+              "source refusal and display lookup do not rewrite imported provenance or listing choices")
+        check((try? Data(contentsOf: importedOriginal)) == captured && (try? Data(contentsOf: importedDisplay)) == brightened,
+              "source refusal and display lookup leave both retained files unchanged")
+        try FileManager.default.removeItem(at: importedDisplay)
+        do {
+            _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: "cloud-import-source", directory: importedEditDir)
+            preconditionFailure("an unverified source remains refused when its display file is absent")
+        } catch PhotoVersionHistory.Failure.unverifiedEarlierSource(let hasEditableDisplay) {
+            check(!hasEditableDisplay, "do not guide to a missing Enhanced file")
+            check(!PhotoVersionHistory.Failure.unverifiedEarlierSource(hasEditableDisplay: hasEditableDisplay)
+                .localizedDescription.contains("Select Enhanced"), "missing display has a usable original-import instruction")
+        }
+        do {
+            _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: "cloud-import", directory: importedEditDir)
+            preconditionFailure("a genuinely missing display file must still report missing bytes")
+        } catch PhotoVersionHistory.Failure.missingImage { checks += 1 }
+        try brightened.write(to: importedDisplay)
+        try FileManager.default.removeItem(at: importedOriginal)
+        do {
+            _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: "cloud-import-source", directory: importedEditDir)
+            preconditionFailure("a genuinely missing earlier source must not be reported as present but unverified")
+        } catch PhotoVersionHistory.Failure.missingImage { checks += 1 }
+        // An unrelated editable photo cannot justify an Enhanced instruction
+        // for a family whose only displayed output is an imported AI edit.
+        try captured.write(to: importedOriginal)
+        try captured.write(to: importedEditDir.appendingPathComponent("orig-cloud-staged.jpg"))
+        try brightened.write(to: importedEditDir.appendingPathComponent("cloud-photo-staged.jpg"))
+        try PhotoVersionHistory.registerImport(id: "cloud-staged", imageFile: "cloud-photo-staged.jpg",
+            originalFile: "orig-cloud-staged.jpg", staged: true, altered: true, directory: importedEditDir)
+        do {
+            _ = try PhotoVersionHistory.enhancedCaptureForEditing(id: "cloud-staged-source", directory: importedEditDir)
+            preconditionFailure("an imported AI output cannot certify its earlier source")
+        } catch PhotoVersionHistory.Failure.unverifiedEarlierSource(let hasEditableDisplay) {
+            check(!hasEditableDisplay, "Enhanced guidance is restricted to an editable display in the same family")
+        }
         let removedDir = root.appendingPathComponent("listing-removal")
         for id in ["room", "neighbor"] {
             try PhotoVersionHistory.saveCapture(original: original, enhanced: enhanced, id: id, directory: removedDir)

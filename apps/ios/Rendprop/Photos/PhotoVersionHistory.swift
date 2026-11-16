@@ -337,10 +337,15 @@ enum PhotoVersionHistory {
 
     enum Failure: LocalizedError {
         case invalidHistory, missingImage, duplicate, changedVersion, reviewRequired, customReviewRequired, coverNotSelected
+        case unverifiedEarlierSource(hasEditableDisplay: Bool)
         var errorDescription: String? {
             switch self {
             case .invalidHistory: return "This photo's saved history couldn't be read. Its files are still safe. Reopen Photos or contact support before editing it."
             case .missingImage: return "A source photo is missing from this phone. Import it again before editing."
+            case .unverifiedEarlierSource(let hasEditableDisplay):
+                return hasEditableDisplay
+                    ? "This earlier source isn't verified for editing. Select Enhanced to edit the saved photo."
+                    : "This earlier source isn't verified for editing. Add the original photo to start a new edit."
             case .duplicate: return "That photo version is already saved. Reopen Photos to see it."
             case .changedVersion: return "This photo changed while the edit was running. Reopen Photos before editing again."
             case .reviewRequired: return "This photo changed before we could finish, so we stopped. Open Photos and try again."
@@ -572,6 +577,18 @@ enum PhotoVersionHistory {
             try requireImage(capture.imageFile, directory: directory)
             try requireImage(capture.originalFile!, directory: directory)
             return capture
+        }
+        if !viewed.originalVerified, viewed.isRetainedOriginalSource {
+            // An imported earlier source may be present but lack certified
+            // capture history. Keep that restriction distinct from lost bytes.
+            try requireImage(viewed.imageFile, directory: directory)
+            let hasEditableDisplay = index.versions.values.contains {
+                $0.familyID == viewed.familyID && !$0.originalVerified
+                    && $0.edit == "legacy" && $0.effects.isEmpty && !$0.isRetainedOriginalSource
+                    && index.isVisible($0.id)
+                    && (try? requireImage($0.imageFile, directory: directory)) != nil
+            }
+            throw Failure.unverifiedEarlierSource(hasEditableDisplay: hasEditableDisplay)
         }
         guard !viewed.originalVerified, viewed.edit == "legacy", viewed.effects.isEmpty,
               !viewed.isRetainedOriginalSource,

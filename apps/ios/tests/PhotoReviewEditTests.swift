@@ -224,6 +224,30 @@ __METHODS__
         check(failure.editContext == nil, "finished failed edit releases family navigation fence")
         failure.clearSinglePhotoEdit()
         check(failure.editContext == nil && failure.editOriginal == nil && failure.pendingEdit == nil && failure.singleEditJobID == nil && failure.editConnection.cancelled, "dismissal clears the deferred edit context")
+        reset()
+        let cloudOriginal = dir.appendingPathComponent("orig-cloud-menu.jpg")
+        let cloudDisplay = dir.appendingPathComponent("cloud-photo-menu.jpg")
+        try original.write(to: cloudOriginal); try enhanced.write(to: cloudDisplay)
+        try PhotoVersionHistory.registerImport(id: "cloud-menu", imageFile: cloudDisplay.lastPathComponent,
+            originalFile: cloudOriginal.lastPathComponent, staged: false, altered: false, directory: dir)
+        let cloudHistory = try Data(contentsOf: dir.appendingPathComponent(".photo-history.json"))
+        let earlierSource = Harness(EnhancedPhoto(id: "cloud-menu-source", originalURL: cloudOriginal,
+            enhancedURL: cloudOriginal), model)
+        earlierSource.openSinglePhotoEdit()
+        check(!earlierSource.showEditActions && earlierSource.selectionError ==
+              PhotoVersionHistory.Failure.unverifiedEarlierSource(hasEditableDisplay: true).localizedDescription,
+              "earlier-source policy refusal reaches the visible alert without opening edits")
+        let cloudImage = Harness(EnhancedPhoto(id: "cloud-menu", originalURL: cloudOriginal,
+            enhancedURL: cloudDisplay), model)
+        cloudImage.openSinglePhotoEdit()
+        check(cloudImage.showEditActions && cloudImage.editOriginal?.id == "cloud-menu"
+              && cloudImage.editOriginal?.enhancedURL == cloudDisplay && cloudImage.selectionError == nil,
+              "the imported Enhanced choice still opens edits for that exact display file")
+        check(PhotoEditService.calls.isEmpty && earlierSource.singleEditJobID == nil && cloudImage.singleEditJobID == nil,
+              "earlier-source refusal and opening the Enhanced menu never dispatch paid work")
+        check((try? Data(contentsOf: dir.appendingPathComponent(".photo-history.json"))) == cloudHistory
+              && (try? Data(contentsOf: cloudOriginal)) == original && (try? Data(contentsOf: cloudDisplay)) == enhanced,
+              "actual menu routing preserves imported history and both immutable files")
         let unknownDir = dir.appendingPathComponent("unknown"); try FileManager.default.createDirectory(at: unknownDir, withIntermediateDirectories: true)
         try Data("unknown source".utf8).write(to: unknownDir.appendingPathComponent("orig-old.jpg"))
         try Data("unknown image".utf8).write(to: unknownDir.appendingPathComponent("enh-old.jpg"))
