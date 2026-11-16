@@ -42,6 +42,7 @@ import {
   uploadRPC,
 } from "./transport.ts";
 import { sweepUploads } from "./maintenance.ts";
+import { prepareAcceptedGalleryUpload } from "./accepted-photo.ts";
 import {
   choosePartSize,
   completeMultipartUpload,
@@ -406,7 +407,11 @@ Deno.serve(async (req) => {
       });
     }
     assert(seg[1] === "complete", 405, "Unsupported uploads path");
-    if (asset.uploaded === true) return json(await reloadAsset(admin, assetId));
+    if (asset.uploaded === true) {
+      const saved = await reloadAsset(admin, assetId);
+      await prepareAcceptedGalleryUpload(admin, user.id, saved, req.signal);
+      return json(saved);
+    }
     assert(
       asset.transport_version === 2,
       409,
@@ -440,7 +445,10 @@ Deno.serve(async (req) => {
         throw new HttpError(503, "We couldn't confirm this upload. Try again in a minute.");
       }
       const frozen = data ?? await reloadAsset(admin, assetId);
-      if (frozen.uploaded === true) return json(frozen);
+      if (frozen.uploaded === true) {
+        await prepareAcceptedGalleryUpload(admin, user.id, frozen, req.signal);
+        return json(frozen);
+      }
       assert(
         frozen.upload_aborted !== true &&
           sameParts(
@@ -504,7 +512,10 @@ Deno.serve(async (req) => {
           await settleReservation(admin, assetId, false);
         } catch (error) {
           const winner = await reloadAsset(admin, assetId);
-          if (winner.uploaded === true) return json(winner);
+          if (winner.uploaded === true) {
+            await prepareAcceptedGalleryUpload(admin, user.id, winner, req.signal);
+            return json(winner);
+          }
           throw error;
         }
         throw new HttpError(
@@ -528,12 +539,12 @@ Deno.serve(async (req) => {
         },
       );
     }
-    return json(
-      await settleReservation(admin, assetId, true, String(completed.id), {
-        ...metadataPatch(body),
-        content_type: String(completed.content_type ?? asset.content_type),
-      }),
-    );
+    const saved = await settleReservation(admin, assetId, true, String(completed.id), {
+      ...metadataPatch(body),
+      content_type: String(completed.content_type ?? asset.content_type),
+    });
+    await prepareAcceptedGalleryUpload(admin, user.id, saved, req.signal);
+    return json(saved);
   } catch (error) {
     return respondError(error);
   }
@@ -700,7 +711,8 @@ async function requireAsset(db: any, assetId: string) {
 
 /** A presenter's media gate may hide an unapproved AI master after its bytes
  * were stored. Only its original v2 reservation owner may finish that transport;
- * completion never certifies publication, QC or media-read permission. */
+ * this lookup never certifies publication, QC or media-read permission. The
+ * separate canonical preparation after completion must still verify all bytes. */
 // deno-lint-ignore no-explicit-any
 async function requireCompletionAsset(db: any, admin: any, actor: string, assetId: string, action: string) {
   try { return await requireAsset(db, assetId); }
